@@ -1,0 +1,62 @@
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary Files
+*.log
+*.tmp
+*.temp
+
+# Build and Output
+_site/
+dist/
+build/
+out/
+
+# Dependencies
+node_modules/
+vendor/
+.bundle/
+
+# Environment and Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Personal Notes
+*.private
+*.personal
+NOTES.md
+
+# Backup Files
+*.bak
+*.backup
+*.old
+
+# Media Source Files
+*.psd
+*.ai
+*.sketch
+
+# Large Media (suggest using Git LFS instead)
+*.mp4
+*.mov
+*.wmv
+*.avi
+*.mkv
+
+# Compressed Archives
+*.zip
+*.rar
+*.7z
+*.tar.gz
+*.tgz
