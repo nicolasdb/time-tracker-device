@@ -1,31 +1,53 @@
-# Community Repository Template
+# NFC Time Tracking Device with M5Stamp C3U
 
-A template for creating clear, collaborative, and well-governed community content repositories.
+## Overview
+
+This project implements an NFC-based time tracking device using the M5Stamp C3U microcontroller and PN532 RFID module. The device tracks work sessions by detecting NFC tags and sends event data to n8n via webhooks.
 
 ## Why This Matters
 
-Managing community content and contributions can be challenging. Communities need clear structures for documentation, decision-making processes, and collaboration guidelines. This template provides a foundation that promotes engagement while maintaining quality and organization.
+Tracking work sessions accurately is crucial for productivity and project management. This device provides a reliable and automated way to log work hours using NFC technology.
 
 ## Our Approach
 
 We focus on three key elements:
 
-1. **Clear Structure**: Organized documentation and intuitive navigation
-2. **Community Governance**: Templates for surfacing tensions, ideas, and improvements
-3. **Quality Control**: Peer review processes and contribution guidelines
+1. **Real-time NFC Detection**: Immediate response to NFC tag interactions
+2. **WiFi Connectivity**: Seamless integration with web services
+3. **Health Monitoring**: Continuous device health metrics
 
-## What We Do
+## Features
 
-- Provide templates for common community needs (README, issues, pull requests)
-- Structure documentation for clarity and maintainability
-- Guide communities in establishing effective governance
+- Real-time NFC tag detection with multiple tag type support
+- Multi-network WiFi connectivity with automatic selection
+- LED status indicators for visual feedback
+- Webhook integration with n8n for workflow automation
+- Automatic health metrics in every event
+- NTP time synchronization
 
-## Join Us
+## Current Status
 
-- 🤝 [Getting Started Guide](docs/guides/getting-started.md)
-- 📜 [Community Standards](CODE_OF_CONDUCT.md)
-- 💡 Share Ideas : Go to the Issues tab and select the "Idea" template.
-- ❓ Ask Questions: Go to the Issues tab and select the "Question" template.
+The project is currently in Phase 2 of development. See [progress.md](./progress.md) for detailed implementation status and upcoming features.
+
+## Documentation
+
+- [Getting Started Guide](./docs/guides/getting-started.md) - Setup instructions and configuration
+- [Progress Tracking](./progress.md) - Development phases and implementation status
+- [Database Setup](./SQLquery.md) - Supabase integration for event storage
+
+## License
+
+Copyright 2025 Nicolas de Barquin
+
+Licensed under the Apache License, Version 2.0. See `./LICENSE` for the full license text.
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](./docs/CONTRIBUTING.md) for guidelines.
+
+For community standards and expectations, refer to [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 ## Contact
 

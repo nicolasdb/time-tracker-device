@@ -1,4 +1,4 @@
-# Contributing to {{project_name}}
+# Contributing to NFC Time Tracking Device
 
 We welcome contributions! This guide will help you understand how to contribute effectively.
 

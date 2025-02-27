@@ -1,30 +1,23 @@
 ---
 name: 💡 Idea
-about: Propose a new idea for content or community
-labels: idea
+about: Propose a new idea or feature for the NFC Time Tracking Device
+title: '[IDEA] '
+labels: 'idea'
+assignees: ''
 ---
-# a new idea for content
 
-## Overview
+## Idea Description
 
-[Describe your idea]
+<!-- Describe your idea in detail -->
 
-## Value Proposition
+## Problem It Solves
 
-[How does this benefit the community?]
+<!-- What problem does this idea solve? -->
 
 ## Implementation Thoughts
 
-[Initial thoughts on how to implement]
+<!-- Any initial thoughts on how to implement this? -->
 
-## Discussion Points
+## Additional Context
 
-[Areas where you'd like community input]
-
-## Resources Needed
-
-[Optional: What would help implement this idea?]
-
-## Success Criteria
-
-[How will we know if this idea is successful?]
+<!-- Add any other context, screenshots, diagrams, etc. -->

@@ -1,32 +1,27 @@
 ---
 name: ✨ Improvement
-about: Suggest improvements to existing content
-labels: improvement
+about: Suggest an improvement to existing functionality
+title: '[IMPROVEMENT] '
+labels: 'improvement'
+assignees: ''
 ---
-# Suggest improvements
 
-## Current Content
+## Current Functionality
 
-[What content needs improvement?]
+<!-- Describe the current functionality that needs improvement -->
 
-## Suggested Changes
+## Proposed Improvement
 
-[Your proposed improvements]
+<!-- Describe your suggested improvement in detail -->
 
-## Rationale
+## Benefits
 
-[Why these changes would be better]
+<!-- What benefits would this improvement bring? -->
 
-## Impact Assessment
+## Implementation Approach
 
-[How will this affect existing content/processes?]
+<!-- Any thoughts on how to implement this improvement? -->
 
 ## Additional Context
 
-[Any other relevant information, examples, or references]
-
-## Checklist
-
-- [ ] I have reviewed the existing documentation
-- [ ] This improvement aligns with community guidelines
-- [ ] I have considered potential challenges
+<!-- Add any other context, code examples, screenshots, etc. -->

@@ -1,33 +1,23 @@
 ---
 name: ❓ Question
-about: Ask for clarification or guidance
-labels: question
+about: Ask a question about the NFC Time Tracking Device
+title: '[QUESTION] '
+labels: 'question'
+assignees: ''
 ---
-# Ask for clarification or guidance
 
 ## Question
 
-[Your question]
+<!-- Ask your question clearly and concisely -->
 
 ## Context
 
-[Background information that helps understand your question]
+<!-- Provide any relevant context for your question -->
 
-## What I've Already Checked
+## What I've Tried
 
-- [ ] Documentation
-- [ ] Previous issues
-- [ ] Community guides
-- [ ] Related discussions
-
-## Expected Outcome
-
-[What kind of answer would help you move forward?]
+<!-- Describe what you've already tried or researched -->
 
 ## Additional Information
 
-[Any other context, screenshots, or examples that might help]
-
-## My Role/Involvement
-
-[Optional: How are you involved with the project/community?]
+<!-- Any other information that might help answer your question -->

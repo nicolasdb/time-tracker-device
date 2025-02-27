@@ -1,26 +1,23 @@
 ---
 name: 🤔 Tension
-about: Surface a tension or opportunity in the community or content organization
-labels: tension
+about: Something feels off or could be improved
+title: '[TENSION] '
+labels: 'tension'
+assignees: ''
 ---
-# Surface a tension or opportunity
 
-## Tension Description
+## What's the Tension?
 
-[What's not working optimally?]
+<!-- Describe what feels off or could be improved -->
 
-## Impact
+## Context
 
-[How does this affect the community/content?]
+<!-- Add any context about the tension -->
 
-## Ideal Resolution
+## Possible Solutions
 
-[What would better serve the community?]
+<!-- If you have ideas on how to resolve this tension, add them here -->
 
-## Proposed Solution
+## Additional Information
 
-[Optional: Your ideas for resolving this tension]
-
-## Additional Context
-
-[Any other relevant information, screenshots, etc.]
+<!-- Any other information, screenshots, etc. -->

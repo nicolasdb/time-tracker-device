@@ -1,42 +1,30 @@
-## Content Changes
+# Pull Request
 
-[Summary of changes]
+## Description
 
-## Type of Change
-
-- [ ] New content
-- [ ] Content update
-- [ ] Reorganization
-- [ ] Documentation improvement
-- [ ] Other (please describe)
-
-## Review Checklist
-
-- [ ] Content is clear and well-organized
-- [ ] Grammar and spelling checked
-- [ ] Links are valid
-- [ ] Images/media (if any) are properly referenced
-- [ ] Follows community guidelines
-- [ ] Maintains consistent tone and style
-
-## Community Impact
-
-[How does this change benefit the community?]
+<!-- Describe the changes you've made -->
 
 ## Related Issues
 
-[Link to related issues if any]
+<!-- Link to any related issues (e.g., "Closes #123") -->
 
-## Peer Review Notes
+## Type of Change
 
-[Specific areas where you'd like reviewer attention]
+- [ ] Documentation update
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Code refactoring
+- [ ] Performance improvement
+- [ ] Other (please describe)
 
-## Additional Context
+## Checklist
 
-[Any other information that would help reviewers]
+- [ ] I have read the [CONTRIBUTING](../docs/CONTRIBUTING.md) document
+- [ ] My code follows the project's coding style
+- [ ] I have tested my changes
+- [ ] I have updated documentation as needed
+- [ ] My changes don't introduce new warnings or errors
 
-## Post-Merge Tasks
+## Additional Notes
 
-- [ ] Update related documentation
-- [ ] Notify relevant community members
-- [ ] Archive outdated content (if applicable)
+<!-- Any additional information that might be helpful -->
