@@ -147,13 +147,28 @@ bool WiFiManager::reconnectIfNeeded() {
     return true;
 }
 
+bool WiFiManager::isDST(struct tm timeinfo) {
+    // Implement your logic to determine if DST is in effect
+    // For example, in Brussels, DST starts on the last Sunday of March and ends on the last Sunday of October
+    if (timeinfo.tm_mon > 2 && timeinfo.tm_mon < 9) {
+        return true;
+    }
+    if (timeinfo.tm_mon == 2 && (timeinfo.tm_mday - timeinfo.tm_wday) >= 25) {
+        return true;
+    }
+    if (timeinfo.tm_mon == 9 && (timeinfo.tm_mday - timeinfo.tm_wday) < 25) {
+        return true;
+    }
+    return false;
+}
+
 bool WiFiManager::syncTime() {
     if (!_isConnected) {
         DEBUG_SERIAL.println("Cannot sync time: WiFi not connected");
         return false;
     }
     
-    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+    configTime(GMT_OFFSET_SEC, 0, NTP_SERVER);
     
     // Wait for sync with timeout
     int retry = 0;
@@ -168,6 +183,18 @@ bool WiFiManager::syncTime() {
     DEBUG_SERIAL.println();
     
     if (time(&now) > 1000000000) {
+        // Check if DST is in effect and adjust the offset
+        struct tm timeinfo;
+        gmtime_r(&now, &timeinfo);
+        
+        if (isDST(timeinfo)) {
+            configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+            DEBUG_SERIAL.println("Daylight Saving Time is in effect.");
+        } else {
+            configTime(GMT_OFFSET_SEC, 0, NTP_SERVER);
+            DEBUG_SERIAL.println("Standard Time is in effect.");
+        }
+        
         _timeIsSynced = true;
         _lastSyncTime = now;
         
@@ -178,7 +205,7 @@ bool WiFiManager::syncTime() {
         
         return true;
     }
-    
+
     DEBUG_SERIAL.println("Time sync failed!");
     _timeIsSynced = false;
     return false;

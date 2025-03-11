@@ -44,6 +44,7 @@ public:
     bool syncTime();  // Force NTP sync
     bool isTimeSynced() const { return _timeIsSynced; }
     time_t getLastSyncTime() const { return _lastSyncTime; }
+    bool isDST(struct tm timeinfo); // Check for Daylight Saving Time
     
     // Time getters
     String getFormattedTime() const;  // Returns current time as string
