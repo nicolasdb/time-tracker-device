@@ -22,7 +22,7 @@ String lastTagId = "";
 unsigned long lastReadTime = 0;
 unsigned long lastWifiCheckTime = 0;
 const int I2C_RECOVERY_TIME = 100;  // ms between I2C operations
-const int TAG_READ_TIMEOUT = 100;   // ms (increased for better detection)
+const int TAG_READ_TIMEOUT = 1000;   // ms (increased for better detection)
 const int MAX_UID_LENGTH = 7;       // Maximum UID length we'll handle
 const int WIFI_CHECK_INTERVAL = 5000; // Check WiFi every 5 seconds
 
