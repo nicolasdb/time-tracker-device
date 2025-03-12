@@ -10,6 +10,7 @@ class WebhookManager {
     private:
         HTTPClient http;
         String webhookUrl;
+        bool testConnection(const String& host, int port);
 
     public:
         WebhookManager();
@@ -17,6 +18,7 @@ class WebhookManager {
         bool sendPollResult(bool tagPresent, String currentTagId, String lastTagId, 
                           String tagType, String wifiStatus, String timeStatus,
                           String timestamp);
+        void printWebhookStatus();
 };
 
 #endif // WEBHOOK_MANAGER_H

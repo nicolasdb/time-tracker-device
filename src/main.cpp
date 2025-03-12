@@ -121,6 +121,9 @@ void setup() {
     // Initialize webhook manager
     if (!webhookManager.begin()) {
         DEBUG_SERIAL.println("Failed to initialize webhook manager!");
+    } else {
+        // Print detailed webhook status
+        webhookManager.printWebhookStatus();
     }
     
     DEBUG_SERIAL.println("Setup complete!");
