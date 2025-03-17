@@ -123,7 +123,7 @@ void WebhookManager::printWebhookStatus() {
 
 bool WebhookManager::sendPollResult(bool tagPresent, String currentTagId, String lastTagId,
                                   String tagType, String wifiStatus, String timeStatus,
-                                  String timestamp) {
+                                  String timestamp, String deviceId) {
     DEBUG_SERIAL.println("\n--- Webhook Call ---");
     DEBUG_SERIAL.printf("Webhook URL: %s\n", webhookUrl.c_str());
     
@@ -135,6 +135,7 @@ bool WebhookManager::sendPollResult(bool tagPresent, String currentTagId, String
     rfidPollResult["event_type"] = tagPresent ? "tag_insert" : "tag_removed";
     rfidPollResult["tag_present"] = tagPresent;
     rfidPollResult["tag_id"] = tagPresent ? currentTagId : lastTagId;
+    rfidPollResult["device_id"] = deviceId;
     
     if (tagPresent) {
         rfidPollResult["tag_type"] = tagType;

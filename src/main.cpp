@@ -5,6 +5,19 @@
 #include "wifi_manager.h"
 #include "webhook_manager.h"
 
+/**
+ * Generates a unique device ID based on the ESP32 chip ID
+ */
+String getDeviceId() {
+  uint64_t chipId = ESP.getEfuseMac();
+  char deviceIdBuffer[13];
+  snprintf(deviceIdBuffer, sizeof(deviceIdBuffer), "NFC_%06X", (uint32_t)chipId);
+  return String(deviceIdBuffer);
+}
+
+// Store device ID
+String deviceId = "";
+
 // Initialize PN532 using I2C (with IRQ and RESET pins disabled)
 Adafruit_PN532 nfc(-1, -1);  // Use I2C, disable IRQ and RESET pins
 
@@ -91,9 +104,10 @@ void initializeRFID() {
 }
 
 void setup() {
+    delay(1000); // Delay for a few seconds to allow USB serial to connect
+    
     // Initialize Serial for debugging
     DEBUG_SERIAL.begin(SERIAL_BAUD);
-    DEBUG_SERIAL.println("\nRFID Switch - Phase 2");
     DEBUG_SERIAL.println("Initializing...");
     
     // Initialize NeoPixel
@@ -101,6 +115,10 @@ void setup() {
     pixels.setBrightness(LED_BRIGHTNESS);
     pixels.setPixelColor(0, COLOR_WIFI_CONNECTING);
     pixels.show();
+    
+    // Get device ID
+    deviceId = getDeviceId();
+    DEBUG_SERIAL.printf("Device ID: %s\n", deviceId.c_str());
     
     // Initialize RFID
     initializeRFID();
@@ -223,7 +241,8 @@ void loop() {
                 tagType,
                 wifiStatus,
                 timeStatus,
-                wifiManager.getFormattedTime()
+                wifiManager.getFormattedTime(),
+                deviceId
             );
         }
     }

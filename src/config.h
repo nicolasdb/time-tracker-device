@@ -2,12 +2,12 @@
 #define CONFIG_H
 
 // Pin Definitions
-#define BUILTIN_LED_PIN 2
+#define BUILTIN_LED_PIN 10
 #define BUTTON_PIN 9
 
 // PN532 NFC Module I2C Pins
-#define PN532_SDA 4
-#define PN532_SCL 3
+#define PN532_SDA 1
+#define PN532_SCL 0
 
 // Time Configuration
 #define NTP_SERVER "pool.ntp.org"

@@ -76,6 +76,7 @@ Building on validated RFID switch:
 - [x] Basic webhook defined in credentials.h
 - [x] Simple POST on tag detection
 - [x] Enhanced webhook debugging and error reporting
+- [x] Device identification with unique ID
 
 Validation Checkpoints:
 
@@ -87,6 +88,7 @@ Validation Checkpoints:
 - [x] Detailed webhook debugging information
 - [x] Connection testing to webhook server
 - [x] Comprehensive error handling for webhook calls
+- [x] Device ID correctly generated and included in payload
 - [x] System remains stable
 
 Implementation Notes:
@@ -97,7 +99,11 @@ Implementation Notes:
 - Visual feedback for time sync (purple LED flash)
 - Added WebhookManager for handling POST requests
 - Implemented JSON payload for RFID events (tag_insert/tag_removed)
-- Created Supabase table structure for event logging
+- Created Supabase database structure:
+  - rfid_events: Records all tag events with timestamps
+  - tag_assignments: Links RFID tags to projects and tasks
+  - device_assignments: Tracks device information and locations
+- Added device identification using ESP32 chip ID for unique device tracking
 
 ### Phase 3: Storage Implementation
 
@@ -160,6 +166,7 @@ Implementation Details:
        String wifi_status;
        String time_status;
        String webhook_status;
+       String device_id;
    };
    ```
 
@@ -271,6 +278,12 @@ Implementation Details:
      - Webhook retrying (purple pulse)
      - Low memory warning (orange blink)
 
+6. **Startup Tag Detection Handling**
+   - Implement robust handling for tags present during boot
+   - Add initialization state to prevent system failure when tag is already present
+   - Create recovery mechanism if RFID reader initialization is affected by tag presence
+   - Add diagnostic information for startup tag detection issues
+
 ## Current Status
 
 Phase 2 completed ✅, moving to Phase 3:
@@ -283,8 +296,9 @@ Phase 2 completed ✅, moving to Phase 3:
 - Enhanced debug output with timestamps
 - Validated WiFi connection and time sync
 - Implemented webhook functionality with JSON payload
-- Created Supabase database structure
+- Created Supabase database structure (rfid_events, tag_assignments, device_assignments)
 - Validated webhook POST requests for tag events
+- Added device identification with unique ESP32 chip ID
 - Added comprehensive webhook debugging:
   - Detailed logging of webhook calls with HTTP response codes
   - Connection testing to webhook server

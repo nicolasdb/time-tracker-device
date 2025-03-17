@@ -17,7 +17,7 @@ class WebhookManager {
         bool begin();
         bool sendPollResult(bool tagPresent, String currentTagId, String lastTagId, 
                           String tagType, String wifiStatus, String timeStatus,
-                          String timestamp);
+                          String timestamp, String deviceId);
         void printWebhookStatus();
 };
 
