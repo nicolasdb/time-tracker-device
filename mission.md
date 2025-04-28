@@ -24,13 +24,16 @@
 ## 🔵 Phase 1 — Montage SPIFFS (filesystem interne)
 
 **Objectif** :  
+
 - ESP32 doit pouvoir monter un système de fichier SPIFFS.
 
 **Actions :**
+
 1. Ajouter `spiffs` comme composant dans `CMakeLists.txt`.
 2. Initialiser SPIFFS au boot (`esp_vfs_spiffs_register`).
 
 **Critères de validation :**
+
 - À chaque boot, tu vois dans la console : `"SPIFFS mounted successfully"`.
 - Aucun crash même si la mémoire SPIFFS est vide.
 
