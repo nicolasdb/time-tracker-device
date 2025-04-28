@@ -42,17 +42,21 @@
 ## 🔵 Phase 2 — Gestion fichier SSID/PWD sur SPIFFS
 
 **Objectif** :  
+
 - Lire un fichier `wifi_config.txt` stocké dans SPIFFS.
 
 **Actions :**
+
 1. Si le fichier existe, lire ligne par ligne (`fgets`).
 2. Stocker SSID/PWD en mémoire (parsing `;`).
 
 **Critères de validation :**
+
 - Console affiche chaque SSID/PWD trouvé.
 
 Exemple de log attendu :
-```
+
+```txt
 Found WiFi credentials:
 SSID: HomeWifi, PASSWORD: secret1
 SSID: OfficeNet, PASSWORD: secret2
@@ -60,18 +64,23 @@ SSID: OfficeNet, PASSWORD: secret2
 
 ---
 
-## 🔵 Phase 3 — Saisie UART interactive si fichier absent
+## 🔵 Phase 3 — Configuration interactive et test de connexion WiFi
 
 **Objectif** :  
-- Si pas de fichier wifi_config.txt ➔ demander à l'utilisateur via USB/UART.
+- Activer le WiFi, rechercher le fichier `wifi_config.txt` sur SPIFFS, et s'assurer qu'une connexion WiFi est possible.
 
 **Actions :**
-1. Attendre entrée utilisateur pour SSID et PASSWORD.
-2. Écrire dans SPIFFS un nouveau fichier `wifi_config.txt`.
+1. Monter SPIFFS et vérifier la présence de `wifi_config.txt`.
+2. Si le fichier existe, lire les identifiants SSID/PASSWORD.
+3. Si aucun SSID n'est trouvé, demander à l'utilisateur de saisir SSID et PASSWORD via USB/UART.
+4. Enregistrer les identifiants saisis dans `wifi_config.txt` sur SPIFFS.
+5. Tenter une connexion WiFi avec les identifiants disponibles.
+6. Afficher le résultat de la connexion sur la console.
 
 **Critères de validation :**
-- Après saisie, fichier visible dans SPIFFS.
-- Redémarrage → fichier est relu correctement.
+- Après saisie, le fichier est bien créé et visible dans SPIFFS.
+- Après redémarrage, les identifiants sont relus et utilisés automatiquement.
+- La connexion WiFi est testée et le résultat affiché.
 
 ---
 
@@ -195,7 +204,7 @@ Et dans ton code C tu utilises :
 | 0           | Projet de base           | Aucun            | Compile, USB OK |
 | 1           | SPIFFS                   | Base             | Montage OK |
 | 2           | Lecture fichier SSID     | SPIFFS           | Lecture OK |
-| 3           | UART entrée manuelle     | SPIFFS           | Fichier créé |
+| 3           | Configuration interactive et test de connexion WiFi | SPIFFS | Fichier créé, Connexion testée |
 | 4           | Connexion WiFi            | Fichier SSID     | Connexion réussie |
 | 5           | NTP Sync                  | WiFi connecté    | Heure valide |
 | 6           | RFID Lecture              | Base             | UID détecté |
