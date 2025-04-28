@@ -1,18 +1,21 @@
-# 📋 Voici la **feuille de route** structurée que je te propose :
+# 📋 Voici la **feuille de route** structurée que je te propose
 
 ---
 
 ## 🔵 Phase 0 — Base de projet ESP-IDF sous PlatformIO
 
 **Objectif** :  
+
 - Avoir un projet qui compile/flash proprement sur ton ESP32-C3.
 
 **Actions :**
+
 1. Créer un projet PlatformIO basé sur `framework = espidf`.
 2. S'assurer que `/src/main.c` compile même avec juste un `app_main()` vide.
 3. Configurer l'upload via USB (UART).
 
 **Critères de validation :**
+
 - La commande `platformio run -t upload` fonctionne sans erreur.
 - Ton ESP32C3 boote et tu vois "Hello World" en UART console.
 
