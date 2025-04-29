@@ -1,0 +1,9 @@
+menu "LittleFS Configuration"
+
+    config LITTLEFS_OBJ_NAME_LEN
+        int "Maximum length of LittleFS object name"
+        default 64
+        help
+            Maximum length of name of objects (files or directories) in LittleFS.
+            
+endmenu

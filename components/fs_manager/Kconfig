@@ -1,0 +1,22 @@
+menu "Filesystem Manager Configuration"
+
+    config FS_MANAGER_MOUNT_POINT
+        string "Filesystem Mount Point"
+        default "/littlefs"
+        help
+            Mount point for LittleFS filesystem.
+
+    config FS_MANAGER_FORMAT_IF_MOUNT_FAILED
+        bool "Format filesystem if mount failed"
+        default y
+        help
+            Enable automatic formatting if mounting fails.
+
+    config FS_MANAGER_MAX_FILE_SIZE
+        int "Maximum file size (KB)"
+        default 64
+        range 4 1024
+        help
+            Maximum size for files in KB.
+
+endmenu

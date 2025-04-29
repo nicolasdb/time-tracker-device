@@ -1,2 +1,0 @@
-HomeWifi;secret1
-OfficeNet;secret2

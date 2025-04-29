@@ -1,217 +1,356 @@
-# 📋 Voici la **feuille de route** structurée que je te propose
+# 📋 Feuille de route Time Tracker ESP32-C3
 
----
+## Prérequis
 
-## 🔵 Phase 0 — Base de projet ESP-IDF sous PlatformIO
+- ESP32-C3 "esp32-c3-devkitm-1"
+- PlatformIO (VS Code) avec ESP-IDF ≥ v5.x
+- Python ≥ 3.7
+- Modules matériels : RC522 (SPI), PN532 (I2C/SPI), 1 NeoPixel, etc.
+- Librairies externes : cJSON, led_strip, esp_http_client, etc.
+- Drivers USB/serial pour ESP32 installés sur votre OS
 
-**Objectif** :  
+### Configurer les dépendances ESP-IDF
 
-- Avoir un projet qui compile/flash proprement sur ton ESP32-C3.
+- Les librairies externes nécessaires (cJSON, led_strip, esp_http_client, etc.) sont soit incluses dans ESP-IDF, soit à ajouter dans `platformio.ini` ou `idf_component.yml` si besoin.
+- Pour les modules RFID, voir :
+  - [esp-idf-rc522](https://github.com/abobija/esp-idf-rc522)
+  - [esp-idf-pn532](https://github.com/garag/esp-idf-pn532)
 
-**Actions :**
+### Configurer les fichiers de configuration
 
-1. Créer un projet PlatformIO basé sur `framework = espidf`.
-2. S'assurer que `/src/main.c` compile même avec juste un `app_main()` vide.
-3. Configurer l'upload via USB (UART).
+- Adapter `sdkconfig.defaults` et `Kconfig` selon votre matériel (GPIO, modules actifs).
+- Placer vos identifiants WiFi dans `/data/wifi.json` (voir exemple plus bas).
 
-**Critères de validation :**
+## Architecture du projet
 
-- La commande `platformio run -t upload` fonctionne sans erreur.
-- Ton ESP32C3 boote et tu vois "Hello World" en UART console.
+Le projet est organisé pour séparer clairement chaque fonctionnalité dans des composants indépendants, selon les bonnes pratiques ESP-IDF :
 
----
+- `main/` : point d’entrée du firmware, orchestration générale.
+- `components/fs_manager/` : gestion du système de fichiers (LittleFS).
+- `components/wifi_manager/` : gestion WiFi, multi-SSID, NTP.
+- `components/ap_webserver/` : mode Access Point, serveur HTTP, pages HTML.
+- `components/webhook_manager/` : gestion de l’envoi des événements JSON.
+- `components/feedback_manager/` : gestion des LEDs NeoPixel et autres feedbacks.
+- `components/rfid/rc522/` et `components/rfid/pn532/` : gestion des modules RFID selon le protocole.
+- `sdkconfig.defaults`, `Kconfig` : configuration compile-time.
+- `platformio.ini` : configuration PlatformIO.
 
-## 🔵 Phase 1 — Montage SPIFFS (filesystem interne)
-
-**Objectif** :  
-
-- ESP32 doit pouvoir monter un système de fichier SPIFFS.
-
-**Actions :**
-
-1. Ajouter `spiffs` comme composant dans `CMakeLists.txt`.
-2. Initialiser SPIFFS au boot (`esp_vfs_spiffs_register`).
-
-**Critères de validation :**
-
-- À chaque boot, tu vois dans la console : `"SPIFFS mounted successfully"`.
-- Aucun crash même si la mémoire SPIFFS est vide.
-
----
-
-## 🔵 Phase 2 — Gestion fichier SSID/PWD sur SPIFFS
-
-**Objectif** :  
-
-- Lire un fichier `wifi_config.txt` stocké dans SPIFFS.
-
-**Actions :**
-
-1. Si le fichier existe, lire ligne par ligne (`fgets`).
-2. Stocker SSID/PWD en mémoire (parsing `;`).
-
-**Critères de validation :**
-
-- Console affiche chaque SSID/PWD trouvé.
-
-Exemple de log attendu :
+Chaque composant expose une interface claire (header) et peut être activé/désactivé via Kconfig.
 
 ```txt
-Found WiFi credentials:
-SSID: HomeWifi, PASSWORD: secret1
-SSID: OfficeNet, PASSWORD: secret2
+/ (racine du projet)
+├── main/
+│   ├── main.c
+│   └── ... (autres fichiers d’entrée, ex: app_main.c)
+├── components/
+│   ├── fs_manager/           # Gestion LittleFS, lecture/écriture fichiers
+│   │   ├── fs_manager.c
+│   │   ├── fs_manager.h
+│   │   └── ...
+│   ├── wifi_manager/         # Connexion WiFi, multi-SSID, NTP
+│   │   ├── wifi_manager.c
+│   │   ├── wifi_manager.h
+│   │   └── ...
+│   ├── ap_webserver/         # Mode AP, serveur HTTP, gestion HTML
+│   │   ├── ap_webserver.c
+│   │   ├── ap_webserver.h
+│   │   └── html/             # Fichiers HTML statiques
+│   │       └── index.html
+│   ├── webhook_manager/      # Transmission JSON vers serveur distant
+│   │   ├── webhook_manager.c
+│   │   ├── webhook_manager.h
+│   │   └── ...
+│   ├── feedback_manager/     # Gestion LED NeoPixel, buzzer, etc.
+│   │   ├── feedback_manager.c
+│   │   ├── feedback_manager.h
+│   │   └── ...
+│   ├── rfid/
+│   │   ├── rc522/            # Support RC522 (SPI)
+│   │   │   ├── rc522.c
+│   │   │   ├── rc522.h
+│   │   │   └── ...
+│   │   ├── pn532/            # Support PN532 (I2C/SPI)
+│   │   │   ├── pn532.c
+│   │   │   ├── pn532.h
+│   │   │   └── ...
+│   │   └── rfid_common.h     # Interface commune si besoin
+│   └── ...
+├── sdkconfig.defaults        # Configurations Kconfig par défaut
+├── Kconfig                  # Racine Kconfig pour options globales
+├── CMakeLists.txt           # Racine
+├── platformio.ini           # Config PlatformIO
+└── README.md
 ```
 
----
+**Principes :**
 
-## 🔵 Phase 3 — Configuration interactive et test de connexion WiFi
+- Chaque composant a son dossier dans `/components` (modularité, testabilité, réutilisation).
+- Les modules RFID sont séparés par type/protocole, mais peuvent partager une interface commune.
+- Les fichiers HTML sont dans un sous-dossier dédié du composant webserver.
+- Les fichiers de config (Kconfig, sdkconfig.defaults) sont à la racine.
+- `main/` ne contient que le point d’entrée et l’orchestration.
 
-**Objectif** :  
-- Activer le WiFi, rechercher le fichier `wifi_config.txt` sur SPIFFS, et s'assurer qu'une connexion WiFi est possible.
+**Bonnes pratiques ESP-IDF :**
 
-**Actions :**
-1. Monter SPIFFS et vérifier la présence de `wifi_config.txt`.
-2. Si le fichier existe, lire les identifiants SSID/PASSWORD.
-3. Si aucun SSID n'est trouvé, demander à l'utilisateur de saisir SSID et PASSWORD via USB/UART.
-4. Enregistrer les identifiants saisis dans `wifi_config.txt` sur SPIFFS.
-5. Tenter une connexion WiFi avec les identifiants disponibles.
-6. Afficher le résultat de la connexion sur la console.
+- Utiliser les composants pour isoler les fonctionnalités.
+- Prévoir des interfaces claires (headers) pour chaque composant.
+- Préparer la configuration via Kconfig pour activer/désactiver des modules (ex: RC522/PN532).
+- Garder le code métier hors de `main.c` autant que possible.
 
-**Critères de validation :**
-- Après saisie, le fichier est bien créé et visible dans SPIFFS.
-- Après redémarrage, les identifiants sont relus et utilisés automatiquement.
-- La connexion WiFi est testée et le résultat affiché.
+Exemple de structure de CMakeLists.txt ou de Kconfig pour cette organisation:
 
----
+- CMakeLists pour `components/fs_manager/`
 
-## 🔵 Phase 4 — Connexion WiFi Multi-SSID
+```txt
+idf_component_register(SRCS "fs_manager.c"
+                      INCLUDE_DIRS ".")
+```
 
-**Objectif** :  
-- Connecter l'ESP32 à un des SSID listés dans le fichier.
+- Kconfig pour `components/rfid/`
 
-**Actions :**
-1. Essayer chaque SSID/PASSWORD.
-2. Si succès, arrêter la boucle.
-
-**Critères de validation :**
-- Console affiche `"Connected to HomeWifi"` ou `"Connected to OfficeNet"`.
-- Récupérer une IP.
-
----
-
-## 🔵 Phase 5 — Synchro NTP
-
-**Objectif** :  
-- Synchroniser l'horloge du module avec un serveur NTP.
-
-**Actions :**
-1. Appeler `esp_sntp_init()`.
-2. Attendre que `time()` retourne une date valide.
-
-**Critères de validation :**
-- La console affiche la date/heure correcte (UTC).
-
----
-
-## 🔵 Phase 6 — Lecture RFID (RC522 ou PN532)
-
-**Objectif** :  
-- Lire un UID de tag RFID.
-
-**Actions :**
-1. Choisir en fonction de `#ifdef CONFIG_USE_RC522` ou `CONFIG_USE_PN532`.
-2. Init SPI ou I2C selon le module.
-3. Lire l'UID.
-
-**Critères de validation :**
-- Lorsqu'un tag est scanné, console affiche `"Tag detected: 0xAABBCCDD"`.
-
----
-
-## 🔵 Phase 7 — Envoi JSON via Webhook
-
-**Objectif** :  
-- Poster l'évènement tag (UID, timestamp) sur un serveur Webhook.
-
-**Actions :**
-1. Construire payload JSON.
-2. Envoyer HTTP POST avec `esp_http_client`.
-
-**Critères de validation :**
-- Console : `"Event sent successfully"`.
-- Côté serveur : JSON reçu correctement.
-
----
-
-## 🔵 Phase 8 — Gestion LED Neopixel (feedback)
-
-**Objectif** :  
-- Donner un retour visuel (LED) sur état WiFi / RFID détecté.
-
-**Actions :**
-1. Piloter LED avec `rmt` + `led_strip.h` officiel de ESP-IDF.
-2. Bleu pour "WiFi ok", vert pour "Tag détecté", rouge si erreur.
-
-**Critères de validation :**
-- La LED change de couleur selon l'état sans bloquer les autres tâches.
-
----
-
-# 🔶 À propos de la config (Kconfig vs config.h)
-
-En ESP-IDF :
-- **`Kconfig`** sert à générer un `sdkconfig` automatiquement via `menuconfig` ou via PlatformIO directement.
-- C'est **plus propre** qu'un `config.h` manuel.
-
-Typiquement tu ajoutes dans ton composant un fichier `Kconfig` du genre :
-
-```kconfig
-menu "My Application Configuration"
-
-config WIFI_MAX_RETRY
-    int "Maximum WiFi retries"
-    default 5
+```txt
+menu "RFID Options"
 
 config USE_RC522
-    bool "Use RC522 RFID Module"
+    bool "Activer le support RC522"
     default y
 
 config USE_PN532
-    bool "Use PN532 RFID Module"
+    bool "Activer le support PN532"
     default n
 
 endmenu
 ```
 
-Et dans ton code C tu utilises :
+- Kconfig racine
 
-```c
-#if CONFIG_USE_RC522
-// Code pour RC522
-#elif CONFIG_USE_PN532
-// Code pour PN532
-#endif
+```txt
+source "components/rfid/Kconfig"
+source "components/fs_manager/Kconfig"
+# Ajouter d'autres sources de Kconfig ici
 ```
 
-**Dans PlatformIO**, tu peux modifier `sdkconfig.defaults` pour avoir des valeurs par défaut ou utiliser la commande `pio run -t menuconfig`.
+---
+
+## Phase 0 — Base de projet ESP-IDF sous PlatformIO ✅
+
+**Objectif :**
+
+- Projet qui compile/flash correctement sur ESP32-C3.
+
+**Actions :**
+
+- `platformio run -t upload` fonctionne sans erreur.
+- "Hello World" s'affiche sur la console UART.
+
+**Validation :**
+
+✅ Compilation et upload OK.
+✅ Message UART visible.
 
 ---
 
-# 🛠️ Résumé final de ta stratégie de dev
+## Phase 1 — Passage à LittleFS et montage au boot ✅
 
-| Phase       | Fonctionnalité         | Dépend de        | Validation clé |
-|-------------|-------------------------|------------------|----------------|
-| 0           | Projet de base           | Aucun            | Compile, USB OK |
-| 1           | SPIFFS                   | Base             | Montage OK |
-| 2           | Lecture fichier SSID     | SPIFFS           | Lecture OK |
-| 3           | Configuration interactive et test de connexion WiFi | SPIFFS | Fichier créé, Connexion testée |
-| 4           | Connexion WiFi            | Fichier SSID     | Connexion réussie |
-| 5           | NTP Sync                  | WiFi connecté    | Heure valide |
-| 6           | RFID Lecture              | Base             | UID détecté |
-| 7           | Webhook POST              | WiFi + RFID      | POST OK |
-| 8           | LED feedback              | Tout             | LED changement |
+**Objectif :**
+
+- Utiliser LittleFS comme système de fichiers interne par défaut.
+
+**Actions :**
+
+- Ajouter `littlefs` comme composant dans CMakeLists.txt.
+- Remplacer `esp_vfs_spiffs_register` par `esp_vfs_littlefs_register`.
+- Configurer `board_build.filesystem = littlefs` dans platformio.ini.
+- Préparer un fichier `wifi.json` dans /data.
+- `pio run --target buildfs` + `uploadfs` à tester par l'usager.
+
+**Validation :**
+
+✅ LittleFS monté avec succès au boot ("LittleFS mounted successfully" dans les logs).
+✅ Lecture d'un fichier `wifi.json` affichée sur le terminal.
 
 ---
 
-Veux-tu aussi que je t'aide à rédiger un premier `platformio.ini` propre pour ce projet (avec partition spiffs déjà configuré, sdkconfig.defaults de base et tout clean) ?  
-Ça peut te faire gagner du temps et te donner une base solide pour suivre cette feuille de route. 🚀
+## Phase 2 — Lecture et parsing de `wifi.json`
+
+**Objectif :**
+
+- Lire les identifiants WiFi depuis un fichier JSON
+
+**Actions :**
+
+- Charger le fichier depuis LittleFS.
+- Utiliser `cJSON` pour parser les données (tableau de couples SSID/PWD).
+- Stocker en RAM les infos parsées.
+- Afficher les paires SSID/PWD en UART.
+
+**Validation :**
+
+- Console affiche chaque couple SSID/Mdp trouvé.
+
+**Exemple de `wifi.json` :**
+
+```json
+{
+  "networks": [
+    { "ssid": "HomeWifi", "password": "secret1" },
+    { "ssid": "OfficeNet", "password": "secret2" }
+  ]
+}
+```
+
+---
+
+## Phase 3 — Mode Access Point + Mini Webserver (WebConfig)
+
+**Objectif :**
+
+- Fournir une méthode de configuration WiFi via navigateur.
+
+**Actions :**
+
+- Charger le fichier `wifi.json` depuis LittleFS.
+- Etablir la connection WiFi.
+- Si aucun réseau connu n’est joignable ➔ Démarrer en AP (ex: SSID `time-tracker-setup`).
+- Démarrer un serveur HTTP local.
+- Servir une page HTML depuis LittleFS permettant d’ajouter/supprimer des SSID.
+- Enregistrer les données soumises dans `wifi.json`.
+
+**Validation :**
+
+- On peut se connecter au point d’accès via téléphone/ordi.
+- Accès à une interface web minimale (formulaire de SSID/mdp).
+- Données correctement sauvegardées dans le fichier.
+
+---
+
+## Phase 4 — Connexion WiFi Multi-SSID
+
+**Objectif :**
+
+- Se connecter automatiquement à un réseau parmi la liste.
+
+**Actions :**
+
+- Lire `wifi.json`.
+- Tenter les connexions une par une.
+- Afficher IP en cas de succès.
+
+**Validation :**
+
+- Connexion réussie avec l’un des réseaux listés.
+- Adresse IP affichée dans le terminal.
+
+---
+
+## Phase 5 — Synchronisation de l’heure avec NTP
+
+**Objectif :**
+
+- Obtenir une heure système précise après connexion.
+
+**Actions :**
+
+- Appeler `esp_sntp_init()`.
+- Vérifier l'heure locale avec DST.
+- Vérifier que `time()` retourne une valeur valide, format 24h.
+
+**Validation :**
+
+- Console affiche une date/heure locale correcte.
+
+---
+
+## Phase 6 — Lecture RFID (RC522 ou PN532)
+
+**Objectif :**
+
+- Lire des tags RFID via SPI ou I2C.
+
+**Actions :**
+
+- Ajouter configuration via `Kconfig` pour choisir le module RFID et les gpio utilisé.
+- Lire l’UID du tag détecté.
+- Obtenir l'UID de la puce ESP32C3.
+
+**Validation :**
+
+- UID affiché en hexadécimal dans le terminal pour tag_id et device_id
+- Passage dans les différentes configuration fluide via kconfig, (SPI/I2C - RC522/PN532)
+- fonctionne avec différent type de tags 4bits, 7bits, 10bits
+- résultats concluants dans les différentes configurations
+
+**Ressources :**
+
+- https://github.com/abobija/esp-idf-rc522
+- https://github.com/garag/esp-idf-pn532
+
+---
+
+## Phase 7 — Transmission JSON vers Webhook
+
+**Objectif :**
+
+- Envoyer l’info tag (UID, timestamp, device ID) à un serveur.
+
+**Actions :**
+
+- Construire un payload JSON.
+- Poster les données via HTTP (avec `esp_http_client`).
+
+**Validation :**
+
+- Console : "Event sent successfully".
+- Webhook distant reçoit le JSON.
+
+**Ressources :**
+
+- /migration/webhook_manager
+
+---
+
+## Phase 8 — Feedback utilisateur via LED NeoPixel
+
+**Objectif :**
+
+- Indiquer l’état du système via couleur LED.
+
+**Actions :**
+
+- Intégrer `led_strip.h` et RMT.
+- Couleurs :
+  - Bleu : WiFi OK
+  - Vert : tag détecté
+  - Rouge : erreur / pas de WiFi
+
+**Validation :**
+
+- LED change dynamiquement selon l’état.
+
+**Ressources :**
+
+- /migration/
+
+---
+
+## Annexe : gestion de config via Kconfig
+
+- Utiliser des `Kconfig` pour gérer les options compile-time.
+- Ajouter par exemple `CONFIG_USE_RC522`, `CONFIG_USE_PN532`, `CONFIG_WEBHOOK_URL`.
+- PlatformIO lit sdkconfig.defaults à la compilation.
+
+---
+
+## Résumé des dépendances
+
+| Phase | Nom                  | Dépendances      |
+|-------|----------------------|------------------|
+| 0     | Base projet          | —                |
+| 1     | LittleFS             | 0                |
+| 2     | Lecture config       | 1                |
+| 3     | WebConfig            | 1, 2             |
+| 4     | Connexion WiFi       | 2                |
+| 5     | NTP                  | 4                |
+| 6     | Lecture RFID         | 0                |
+| 7     | Webhook              | 4, 5, 6          |
+| 8     | LED feedback         | 4, 6, 7          |
