@@ -223,6 +223,7 @@ source "components/fs_manager/Kconfig"
 ✅ On peut se connecter au point d’accès via téléphone/ordi.
 ✅ Accès à une interface web minimale (formulaire de SSID/mdp).
 ✅ Données correctement sauvegardées dans le fichier.
+❌ (option) Force RTS reset - similar to what happens during firmware upload
 
 ---
 

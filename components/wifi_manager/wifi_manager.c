@@ -303,46 +303,38 @@ static esp_err_t wifi_manager_start_ap_mode(void)
     }
 }
 
+static void reboot_task(void *arg)
+{
+    ESP_LOGI(TAG, "Rebooting in 3 seconds...");
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    esp_restart();
+    vTaskDelete(NULL);
+}
+
 static esp_err_t wifi_manager_exit_ap_mode_callback(void)
 {
-    ESP_LOGI(TAG, "Exiting AP mode");
-    
+    ESP_LOGI(TAG, "Exiting AP mode; applying new settings and rebooting");
+
     // Stop the web server
     ap_webserver_stop();
     
     // Stop WiFi
     ESP_ERROR_CHECK(esp_wifi_stop());
     
-    // Reset AP mode flag
+    // Reset AP mode flag and event group bits
     s_ap_mode_active = false;
-    
-    // Clear event flags
     xEventGroupClearBits(s_wifi_event_group, WIFI_AP_STARTED_BIT);
     
-    // Parse the updated configuration
+    // Optionally re-parse config and print (if needed)
     esp_err_t ret = wifi_manager_parse_config(s_wifi_json_path, &s_wifi_config);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to parse updated WiFi configuration");
-        return ret;
+        ESP_LOGE(TAG, "Failed to parse updated configuration");
+    } else {
+        wifi_manager_print_config(&s_wifi_config);
     }
     
-    // Print the new configuration
-    wifi_manager_print_config(&s_wifi_config);
-    
-    // Reset connection counters
-    s_retry_count = 0;
-    s_current_network_index = 0;
-    
-    // Try to connect to the first network
-    ret = wifi_manager_try_connect_to_next_network();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to restart WiFi connection");
-        return ret;
-    }
-    
-    // Restart the device after a short delay to ensure settings are applied
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-    esp_restart();
+    // Spawn a dedicated reboot task
+    xTaskCreate(reboot_task, "reboot_task", 2048, NULL, 5, NULL);
     
     return ESP_OK;
 }
