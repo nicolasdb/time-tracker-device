@@ -171,7 +171,7 @@ source "components/fs_manager/Kconfig"
 
 ---
 
-## Phase 2 — Lecture et parsing de `wifi.json`
+## Phase 2 — Lecture et parsing de `wifi.json` ✅
 
 **Objectif :**
 
@@ -186,7 +186,7 @@ source "components/fs_manager/Kconfig"
 
 **Validation :**
 
-- Console affiche chaque couple SSID/Mdp trouvé.
+✅ Console affiche chaque couple SSID/PWD trouvé.
 
 **Exemple de `wifi.json` :**
 
