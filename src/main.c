@@ -6,7 +6,8 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_vfs.h"
-#include "fs_manager.h"
+#include "esp_littlefs.h"
+#include "wifi_manager.h"
 #include <sys/stat.h>
 #include <dirent.h>
 
@@ -26,17 +27,34 @@ void app_main(void) {
     ESP_LOGI(TAG, "Hello World from ESP32-C3 Time Tracker Device!");
     
     // Phase 1: Initialize LittleFS
-    esp_err_t ret = fs_manager_init(MOUNT_POINT, NULL, true);
+    ESP_LOGI(TAG, "Initializing LittleFS");
+    
+    esp_vfs_littlefs_conf_t conf = {
+        .base_path = MOUNT_POINT,
+        .partition_label = NULL,
+        .format_if_mount_failed = true
+    };
+    
+    esp_err_t ret = esp_vfs_littlefs_register(&conf);
+    
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize LittleFS");
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find LittleFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize LittleFS (%s)", esp_err_to_name(ret));
+        }
         return;
     }
     
+    ESP_LOGI(TAG, "LittleFS mounted successfully");
+    
     // Get filesystem info
     size_t total_bytes = 0, used_bytes = 0;
-    ret = fs_manager_info(NULL, &total_bytes, &used_bytes);
+    ret = esp_littlefs_info(NULL, &total_bytes, &used_bytes);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Partition size - total: %d bytes, used: %d bytes, free: %d bytes", 
+        ESP_LOGI(TAG, "Partition size: total: %d bytes, used: %d bytes, free: %d bytes", 
                 total_bytes, used_bytes, total_bytes - used_bytes);
     }
     
@@ -48,7 +66,7 @@ void app_main(void) {
         struct dirent* entry;
         while ((entry = readdir(dir)) != NULL) {
             struct stat st;
-            char fullpath[512]; // Increased buffer size
+            char fullpath[512];
             snprintf(fullpath, sizeof(fullpath), "%s/%s", MOUNT_POINT, entry->d_name);
             
             if (stat(fullpath, &st) == 0) {
@@ -64,30 +82,19 @@ void app_main(void) {
         ESP_LOGE(TAG, "Failed to open directory");
     }
     
-    // Check if the wifi.json file exists
-    struct stat st;
-    if (stat(WIFI_JSON_PATH, &st) == 0) {
-        ESP_LOGI(TAG, "Found wifi.json file");
+    // Phase 2: Parse WiFi configuration from JSON
+    ESP_LOGI(TAG, "Initializing WiFi Manager");
+    wifi_networks_config_t wifi_networks;
+    esp_err_t result = wifi_manager_parse_config(WIFI_JSON_PATH, &wifi_networks);
+    
+    if (result == ESP_OK) {
+        // Print the parsed configuration
+        wifi_manager_print_config(&wifi_networks);
         
-        // Read the file content
-        FILE* f = fopen(WIFI_JSON_PATH, "r");
-        if (f != NULL) {
-            char buffer[BUFFER_SIZE];
-            size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, f);
-            
-            // Null-terminate the buffer
-            buffer[bytes_read] = '\0';
-            
-            // Display the file content
-            ESP_LOGI(TAG, "wifi.json content (%d bytes):", bytes_read);
-            ESP_LOGI(TAG, "%s", buffer);
-            
-            fclose(f);
-        } else {
-            ESP_LOGE(TAG, "Failed to open wifi.json for reading");
-        }
+        // At this point, we've successfully parsed the WiFi configuration
+        ESP_LOGI(TAG, "Successfully parsed WiFi configuration");
     } else {
-        ESP_LOGW(TAG, "wifi.json not found");
+        ESP_LOGE(TAG, "Failed to parse WiFi configuration");
     }
     
     // Main loop

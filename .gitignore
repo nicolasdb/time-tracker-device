@@ -3,7 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode*
-migrations/
+migration/
 data/
 # Fichiers générés par l'ESP-IDF
 sdkconfig*
