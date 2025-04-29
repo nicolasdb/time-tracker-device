@@ -36,6 +36,30 @@ typedef struct {
 esp_err_t wifi_manager_init(const char *json_path);
 
 /**
+ * @brief Start the WiFi manager
+ * This will attempt to connect to known networks, and if unsuccessful,
+ * it will start in AP mode with a configuration web server
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t wifi_manager_start(void);
+
+/**
+ * @brief Start the device in Access Point mode
+ * @param ap_ssid SSID for the access point
+ * @param ap_password Password for the access point (NULL for open AP)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t wifi_manager_start_ap(const char *ap_ssid, const char *ap_password);
+
+/**
+ * @brief Save WiFi configuration to JSON file
+ * @param json_path Path to the JSON configuration file
+ * @param config Pointer to the wifi_networks_config_t structure
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t wifi_manager_save_config(const char *json_path, const wifi_networks_config_t *config);
+
+/**
  * @brief Parse WiFi configuration from JSON file
  * @param json_path Path to the JSON configuration file
  * @param config Pointer to the wifi_networks_config_t structure to store the configuration

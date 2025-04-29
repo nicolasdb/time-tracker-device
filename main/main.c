@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_vfs.h"
 #include "esp_littlefs.h"
+#include "nvs_flash.h"
 #include "wifi_manager.h"
 #include <sys/stat.h>
 #include <dirent.h>
@@ -82,19 +83,35 @@ void app_main(void) {
         ESP_LOGE(TAG, "Failed to open directory");
     }
     
-    // Phase 2: Parse WiFi configuration from JSON
-    ESP_LOGI(TAG, "Initializing WiFi Manager");
-    wifi_networks_config_t wifi_networks;
-    esp_err_t result = wifi_manager_parse_config(WIFI_JSON_PATH, &wifi_networks);
+    // Initialize NVS for WiFi - this is required
+    ESP_LOGI(TAG, "Initializing NVS for WiFi");
+    esp_err_t nvs_ret = nvs_flash_init();
+    if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGI(TAG, "NVS needs to be erased");
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_ret);
+    ESP_LOGI(TAG, "NVS initialized successfully");
     
-    if (result == ESP_OK) {
-        // Print the parsed configuration
-        wifi_manager_print_config(&wifi_networks);
-        
-        // At this point, we've successfully parsed the WiFi configuration
-        ESP_LOGI(TAG, "Successfully parsed WiFi configuration");
-    } else {
-        ESP_LOGE(TAG, "Failed to parse WiFi configuration");
+    // Phase 2 & 3: Initialize and start WiFi Manager
+    ESP_LOGI(TAG, "Initializing WiFi Manager");
+    
+    // Initialize the WiFi manager
+    esp_err_t result = wifi_manager_init(WIFI_JSON_PATH);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize WiFi manager");
+        // Continue anyway, the AP mode will still work
+    }
+    
+    // Start the WiFi manager
+    // This will:
+    // 1. Try to connect to known networks
+    // 2. If no connection is possible, start in AP mode
+    // 3. In AP mode, serve a web page for configuration
+    result = wifi_manager_start();
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start WiFi manager");
     }
     
     // Main loop

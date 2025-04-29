@@ -20,6 +20,8 @@
 
 - Adapter `sdkconfig.defaults` et `Kconfig` selon votre matériel (GPIO, modules actifs).
 - Placer vos identifiants WiFi dans `/data/wifi.json` (voir exemple plus bas).
+- folder `src/` renommé `main/` pour respecter le default ESP-IDF
+- mise à jour plateformio.ini : `src_dir = main`
 
 ## Architecture du projet
 
@@ -201,7 +203,7 @@ source "components/fs_manager/Kconfig"
 
 ---
 
-## Phase 3 — Mode Access Point + Mini Webserver (WebConfig)
+## Phase 3 — Mode Access Point + Mini Webserver (WebConfig) ✅
 
 **Objectif :**
 
@@ -218,13 +220,13 @@ source "components/fs_manager/Kconfig"
 
 **Validation :**
 
-- On peut se connecter au point d’accès via téléphone/ordi.
-- Accès à une interface web minimale (formulaire de SSID/mdp).
-- Données correctement sauvegardées dans le fichier.
+✅ On peut se connecter au point d’accès via téléphone/ordi.
+✅ Accès à une interface web minimale (formulaire de SSID/mdp).
+✅ Données correctement sauvegardées dans le fichier.
 
 ---
 
-## Phase 4 — Connexion WiFi Multi-SSID
+## Phase 4 — Connexion WiFi Multi-SSID ✅
 
 **Objectif :**
 
@@ -238,8 +240,8 @@ source "components/fs_manager/Kconfig"
 
 **Validation :**
 
-- Connexion réussie avec l’un des réseaux listés.
-- Adresse IP affichée dans le terminal.
+✅ Connexion réussie avec l’un des réseaux listés.
+✅ Adresse IP affichée dans le terminal.
 
 ---
 
