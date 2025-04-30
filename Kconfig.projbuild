@@ -1,0 +1,6 @@
+menu "Time Tracker Device Configuration"
+
+    # Include RFID Manager Configuration
+    source "$PROJECT_PATH/components/rfid_manager/Kconfig"
+
+endmenu

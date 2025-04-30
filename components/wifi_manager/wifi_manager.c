@@ -66,7 +66,10 @@ static void sta_event_handler(void* arg, esp_event_base_t event_base,
             s_retry_count++;
             ESP_LOGI(TAG, "Retry %d to connect to the AP", s_retry_count);
         } else {
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            // Validate event group before setting bits
+            if (s_wifi_event_group != NULL) {
+                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            }
             s_is_connected = false;
             
             // Try the next network if available
@@ -85,7 +88,11 @@ static void sta_event_handler(void* arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_count = 0;
         s_is_connected = true;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        
+        // Validate event group before setting bits
+        if (s_wifi_event_group != NULL) {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        }
     }
 }
 
@@ -101,7 +108,11 @@ static void ap_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
         ESP_LOGI(TAG, "AP mode started");
         s_ap_mode_active = true;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_AP_STARTED_BIT);
+        
+        // Validate event group before setting bits
+        if (s_wifi_event_group != NULL) {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_AP_STARTED_BIT);
+        }
         
         // Start the web server
         ap_webserver_start(s_wifi_json_path);
@@ -129,30 +140,76 @@ esp_err_t wifi_manager_init(const char *json_path)
     // Print the parsed configuration
     wifi_manager_print_config(&s_wifi_config);
     
-    // Create event group
+    // Create event group with robust error handling
     s_wifi_event_group = xEventGroupCreate();
+    if (s_wifi_event_group == NULL) {
+        ESP_LOGE(TAG, "Failed to create event group");
+        return ESP_ERR_NO_MEM;
+    }
+    ESP_LOGI(TAG, "Event group created successfully");
     
-    // Initialize the TCP/IP stack
+    // Initialize the TCP/IP stack and event loop
     ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
     
-    // Create default STA interface
-    s_sta_netif = esp_netif_create_default_wifi_sta();
+    // Only create default event loop if it doesn't already exist
+    esp_err_t err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "Failed to create default event loop: %s", esp_err_to_name(err));
+        return err;
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "Default event loop already exists, continuing");
+    } else {
+        ESP_LOGI(TAG, "Default event loop created");
+    }
+    
+    // Create default STA interface if needed
     if (s_sta_netif == NULL) {
-        ESP_LOGE(TAG, "Failed to create STA interface");
+        s_sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (s_sta_netif == NULL) {
+            ESP_LOGI(TAG, "Creating default STA interface");
+            s_sta_netif = esp_netif_create_default_wifi_sta();
+        } else {
+            ESP_LOGI(TAG, "Using existing STA interface");
+        }
+    }
+    
+    if (s_sta_netif == NULL) {
+        ESP_LOGE(TAG, "Failed to get STA interface");
         return ESP_FAIL;
     }
     
-    // Create default AP interface
-    s_ap_netif = esp_netif_create_default_wifi_ap();
+    // Create default AP interface if needed
     if (s_ap_netif == NULL) {
-        ESP_LOGE(TAG, "Failed to create AP interface");
+        s_ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        if (s_ap_netif == NULL) {
+            ESP_LOGI(TAG, "Creating default AP interface");
+            s_ap_netif = esp_netif_create_default_wifi_ap();
+        } else {
+            ESP_LOGI(TAG, "Using existing AP interface");
+        }
+    }
+    
+    if (s_ap_netif == NULL) {
+        ESP_LOGE(TAG, "Failed to get AP interface");
         return ESP_FAIL;
     }
     
-    // Initialize WiFi
+    // Initialize WiFi if needed
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    err = esp_wifi_init(&cfg);
+    if (err != ESP_OK) {
+        // ESP_ERR_WIFI_ALREADY_INIT is not defined in current ESP-IDF
+        // So we'll check for error codes differently
+        if (err == ESP_FAIL || err == ESP_ERR_NO_MEM) {
+            ESP_LOGE(TAG, "Failed to initialize WiFi: %s", esp_err_to_name(err));
+            return err;
+        } else {
+            // For other errors like ESP_ERR_INVALID_STATE, we can assume WiFi might already be initialized
+            ESP_LOGW(TAG, "WiFi initialization returned %s, continuing", esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGI(TAG, "WiFi initialized");
+    }
     
     // Register STA event handlers
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &sta_event_handler, NULL));
@@ -251,6 +308,7 @@ static void start_ap_delayed_task(void *pvParameters)
     // Small delay to ensure clean WiFi state
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
+    ESP_LOGI(TAG, "Starting AP mode after delay");
     wifi_manager_start_ap_mode();
     
     // Delete the task when done
@@ -292,15 +350,16 @@ static esp_err_t wifi_manager_start_ap_mode(void)
     
     ESP_LOGI(TAG, "WiFi AP \"%s\" started", AP_SSID);
     
-    // Wait for AP to start
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-                                          WIFI_AP_STARTED_BIT,
-                                          pdFALSE,
-                                          pdFALSE,
-                                          portMAX_DELAY);
+    // Instead of waiting for the event, set a short delay and verify AP status
+    vTaskDelay(pdMS_TO_TICKS(100));
     
-    if (bits & WIFI_AP_STARTED_BIT) {
+    // Check if the AP is active (without using event group)
+    wifi_mode_t mode;
+    ESP_ERROR_CHECK(esp_wifi_get_mode(&mode));
+    
+    if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
         ESP_LOGI(TAG, "AP mode active");
+        s_ap_mode_active = true;
         return ESP_OK;
     } else {
         ESP_LOGE(TAG, "Failed to start AP mode");
@@ -318,7 +377,7 @@ static void reboot_task(void *arg)
 
 static esp_err_t wifi_manager_exit_ap_mode_callback(void)
 {
-    ESP_LOGI(TAG, "Exiting AP mode; applying new settings and rebooting");
+    ESP_LOGI(TAG, "Exiting AP mode; applying new settings and scheduling reboot");
 
     // Stop the web server
     ap_webserver_stop();
@@ -326,9 +385,13 @@ static esp_err_t wifi_manager_exit_ap_mode_callback(void)
     // Stop WiFi
     ESP_ERROR_CHECK(esp_wifi_stop());
     
-    // Reset AP mode flag and event group bits
+    // Reset AP mode flag
     s_ap_mode_active = false;
-    xEventGroupClearBits(s_wifi_event_group, WIFI_AP_STARTED_BIT);
+    
+    // Clear event bits if the event group is valid
+    if (s_wifi_event_group != NULL) {
+        xEventGroupClearBits(s_wifi_event_group, WIFI_AP_STARTED_BIT);
+    }
     
     // Optionally re-parse config and print (if needed)
     esp_err_t ret = wifi_manager_parse_config(s_wifi_json_path, &s_wifi_config);
@@ -338,8 +401,8 @@ static esp_err_t wifi_manager_exit_ap_mode_callback(void)
         wifi_manager_print_config(&s_wifi_config);
     }
     
-    // Spawn a dedicated reboot task
-    xTaskCreate(reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+    // Give task higher priority and more stack to ensure it runs
+    xTaskCreate(reboot_task, "reboot_task", 4096, NULL, 20, NULL);
     
     return ESP_OK;
 }

@@ -246,7 +246,7 @@ source "components/fs_manager/Kconfig"
 
 ---
 
-## Phase 5 — Synchronisation de l’heure avec NTP
+## Phase 5 — Synchronisation de l’heure avec NTP ✅
 
 **Objectif :**
 
@@ -260,11 +260,11 @@ source "components/fs_manager/Kconfig"
 
 **Validation :**
 
-- Console affiche une date/heure locale correcte.
+✅ Console affiche une date/heure locale correcte.
 
 ---
 
-## Phase 6 — Lecture RFID (RC522 ou PN532)
+## Phase 6 — Lecture RFID (RC522 ✅ or PN532)
 
 **Objectif :**
 
@@ -274,14 +274,16 @@ source "components/fs_manager/Kconfig"
 
 - Ajouter configuration via `Kconfig` pour choisir le module RFID et les gpio utilisé.
 - Lire l’UID du tag détecté.
-- Obtenir l'UID de la puce ESP32C3.
+- Obtenir l'UID de ESP32C3.
 
 **Validation :**
 
-- UID affiché en hexadécimal dans le terminal pour tag_id et device_id
+✅ UID affiché en hexadécimal dans le terminal pour tag_id et device_id
 - Passage dans les différentes configuration fluide via kconfig, (SPI/I2C - RC522/PN532)
-- fonctionne avec différent type de tags 4bits, 7bits, 10bits
+✅ fonctionne avec différent type de tags 4bits, 7bits, 10bits
 - résultats concluants dans les différentes configurations
+  - RC522 ✅
+  - PN532 ❌
 
 **Ressources :**
 
