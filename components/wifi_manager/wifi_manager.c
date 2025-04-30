@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "../ap_webserver/ap_webserver.h"
 #include "esp_system.h"
+#include "esp_sntp.h"
 #include <string.h>
 #include <sys/stat.h>
 #include <stdio.h>
@@ -43,6 +44,10 @@ static wifi_networks_config_t s_wifi_config = {0};
 static char s_wifi_json_path[256] = {0};
 static esp_netif_t *s_sta_netif = NULL;
 static esp_netif_t *s_ap_netif = NULL;
+
+// Time synchronization status
+static bool s_time_synced = false;
+static time_t s_last_sync_time = 0;
 
 // Forward declarations
 static esp_err_t wifi_manager_try_connect_to_next_network(void);
@@ -616,4 +621,136 @@ esp_err_t wifi_manager_get_rssi(int8_t *rssi)
     }
     
     return ret;
+}
+
+// Callback function called when time is synchronized
+static void time_sync_notification_cb(struct timeval *tv)
+{
+    ESP_LOGI(TAG, "NTP time synchronized");
+    s_time_synced = true;
+    time_t now;
+    time(&now);
+    s_last_sync_time = now;
+    
+    // Get time info and check for DST
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    
+    // Set timezone with DST info
+    if (wifi_manager_is_dst(&timeinfo)) {
+        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+        tzset();
+        ESP_LOGI(TAG, "Daylight Saving Time is in effect");
+    } else {
+        setenv("TZ", "CET-1", 1);
+        tzset();
+        ESP_LOGI(TAG, "Standard Time is in effect");
+    }
+    
+    // Get the time again with the correct timezone
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+    ESP_LOGI(TAG, "Current time: %s", strftime_buf);
+}
+
+esp_err_t wifi_manager_sync_time(void)
+{
+    if (!s_is_connected) {
+        ESP_LOGE(TAG, "Cannot sync time: WiFi not connected");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Synchronizing time with NTP server %s", NTP_SERVER);
+    
+    // Set timezone to Brussels (GMT+1)
+    setenv("TZ", "CET-1", 1);
+    tzset();
+    
+    // Check if SNTP is already initialized
+    if (esp_sntp_enabled()) {
+        ESP_LOGI(TAG, "SNTP already initialized, skipping initialization");
+    } else {
+        // Configure SNTP before initialization
+        esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, NTP_SERVER);
+        esp_sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+        
+        // Initialize SNTP
+        esp_sntp_init();
+    }
+    
+    ESP_LOGI(TAG, "NTP request sent, waiting for sync (happens in background)");
+    return ESP_OK;
+}
+
+bool wifi_manager_is_time_synced(void)
+{
+    return s_time_synced;
+}
+
+time_t wifi_manager_get_time(void)
+{
+    time_t now;
+    time(&now);
+    return now;
+}
+
+esp_err_t wifi_manager_get_formatted_time(char *time_str, size_t len)
+{
+    if (!s_time_synced) {
+        snprintf(time_str, len, "Time not synchronized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    time_t now;
+    time(&now);
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    
+    // Format: YYYY-MM-DD HH:MM:SS (24h format)
+    strftime(time_str, len, "%Y-%m-%d %H:%M:%S", &timeinfo);
+    
+    return ESP_OK;
+}
+
+bool wifi_manager_is_dst(struct tm *timeinfo)
+{
+    // European DST rules (for Brussels timezone)
+    // DST starts on last Sunday of March at 2:00 and ends on last Sunday of October at 3:00
+    
+    if (timeinfo->tm_mon > 2 && timeinfo->tm_mon < 9) {
+        // April to September are definitely DST
+        return true;
+    }
+    
+    if (timeinfo->tm_mon == 2) {
+        // March - check if we're in the last Sunday or after
+        int days_in_month = 31;
+        int last_sunday = days_in_month - (timeinfo->tm_wday == 0 ? 7 : timeinfo->tm_wday);
+        while (last_sunday + 7 <= days_in_month) {
+            last_sunday += 7;
+        }
+        
+        // After last Sunday of March at 2:00
+        return (timeinfo->tm_mday > last_sunday || 
+                (timeinfo->tm_mday == last_sunday && timeinfo->tm_hour >= 2));
+    }
+    
+    if (timeinfo->tm_mon == 9) {
+        // October - check if we're before the last Sunday
+        int days_in_month = 31;
+        int last_sunday = days_in_month - (timeinfo->tm_wday == 0 ? 7 : timeinfo->tm_wday);
+        while (last_sunday + 7 <= days_in_month) {
+            last_sunday += 7;
+        }
+        
+        // Before last Sunday of October at 3:00
+        return (timeinfo->tm_mday < last_sunday || 
+                (timeinfo->tm_mday == last_sunday && timeinfo->tm_hour < 3));
+    }
+    
+    return false;
 }

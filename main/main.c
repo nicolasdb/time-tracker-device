@@ -9,6 +9,8 @@
 #include "esp_littlefs.h"
 #include "nvs_flash.h"
 #include "wifi_manager.h"
+#include "esp_efuse.h"
+#include "esp_mac.h"
 #include <sys/stat.h>
 #include <dirent.h>
 
@@ -114,10 +116,69 @@ void app_main(void) {
         ESP_LOGE(TAG, "Failed to start WiFi manager");
     }
     
+    // Phase 5: Sync time with NTP if WiFi is connected
+    if (wifi_manager_is_connected()) {
+        ESP_LOGI(TAG, "WiFi connected, syncing time with NTP...");
+        
+        // Sync time with NTP server
+        if (wifi_manager_sync_time() == ESP_OK) {
+            // Get and print the current time
+            char time_str[64];
+            wifi_manager_get_formatted_time(time_str, sizeof(time_str));
+            ESP_LOGI(TAG, "Current time: %s", time_str);
+        } else {
+            ESP_LOGE(TAG, "Failed to sync time with NTP");
+        }
+    }
+    
+    // Get Device ID similar to your original function
+    uint8_t chipid[6];
+    esp_efuse_mac_get_default(chipid);
+    unsigned int unique_id = ((unsigned int)chipid[0] << 16) | 
+                             ((unsigned int)chipid[1] << 8) | chipid[2];
+    char device_id_str[20];
+    snprintf(device_id_str, sizeof(device_id_str), "NFC_%06X", unique_id);
+    ESP_LOGI(TAG, "Device ID: %s", device_id_str);
+    
     // Main loop
     int count = 0;
     while (1) {
-        ESP_LOGI(TAG, "Running... count: %d", count++);
+        // Status update every 10 seconds
+        if (count % 10 == 0) {
+            ESP_LOGI(TAG, "=================== STATUS UPDATE ===================");
+            
+            // WiFi status
+            if (wifi_manager_is_connected()) {
+                char ip_str[16];
+                wifi_manager_get_ip(ip_str, sizeof(ip_str));
+                int8_t rssi;
+                wifi_manager_get_rssi(&rssi);
+                
+                ESP_LOGI(TAG, "WiFi: Connected | IP: %s | RSSI: %d dBm", 
+                         ip_str, rssi);
+                
+                // Time status
+                if (wifi_manager_is_time_synced()) {
+                    char time_str[64];
+                    wifi_manager_get_formatted_time(time_str, sizeof(time_str));
+                    ESP_LOGI(TAG, "Time: Synchronized | Local time: %s", time_str);
+                } else {
+                    ESP_LOGI(TAG, "Time: Not synchronized");
+                    // Try to sync if not done yet
+                    wifi_manager_sync_time();
+                }
+            } else {
+                ESP_LOGI(TAG, "WiFi: Disconnected");
+            }
+            
+            // Device info
+            ESP_LOGI(TAG, "Device: ID: %s | Free heap: %u bytes", 
+                     device_id_str, (unsigned int)esp_get_free_heap_size());
+            
+            ESP_LOGI(TAG, "====================================================");
+        }
+        
+        count++;
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
