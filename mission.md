@@ -292,7 +292,7 @@ source "components/fs_manager/Kconfig"
 
 ---
 
-## Phase 7 — Transmission JSON vers Webhook
+## Phase 7 — Transmission JSON vers Webhook ✅
 
 **Objectif :**
 
@@ -305,8 +305,8 @@ source "components/fs_manager/Kconfig"
 
 **Validation :**
 
-- Console : "Event sent successfully".
-- Webhook distant reçoit le JSON.
+✅ Console : "Event sent successfully".
+✅ Webhook distant reçoit le JSON.
 
 **Ressources :**
 

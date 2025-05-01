@@ -1,0 +1,36 @@
+menu "Webhook Manager Configuration"
+
+config WEBHOOK_MANAGER_URL
+    string "Webhook endpoint URL"
+    default "http://nicolasdb.eu/webhook"
+    help
+        The URL to which webhook events will be sent.
+
+config WEBHOOK_MANAGER_MAX_RETRIES
+    int "Maximum retry attempts"
+    default 3
+    range 1 10
+    help
+        Maximum number of retry attempts for failed webhook transmissions.
+
+config WEBHOOK_MANAGER_RETRY_DELAY_MS
+    int "Retry delay (ms)"
+    default 5000
+    range 1000 60000
+    help
+        Delay between retry attempts in milliseconds.
+
+config WEBHOOK_MANAGER_MAX_LOG_ENTRIES
+    int "Maximum log entries"
+    default 50
+    range 10 200
+    help
+        Maximum number of webhook events to store in the log.
+
+config WEBHOOK_MANAGER_DEBUG
+    bool "Enable debug logs"
+    default n
+    help
+        Enable additional debug logging for webhook operations.
+
+endmenu

@@ -10,10 +10,8 @@
 #include "esp_littlefs.h"
 #include "nvs_flash.h"
 #include "wifi_manager.h"
-#include "esp_efuse.h"
-#include "esp_mac.h"
-#include "esp_http_client.h"
 #include "rfid_manager.h"
+#include "webhook_manager.h"
 #include "driver/gpio.h"
 #include "cJSON.h"
 #include <sys/stat.h>
@@ -23,62 +21,52 @@
 #define RFID_TAG "rfid"
 #define MOUNT_POINT "/littlefs"
 #define WIFI_JSON_PATH "/littlefs/wifi.json"
-#define BUFFER_SIZE 1024
-#define WEBHOOK_URL "YOUR_WEBHOOK_URL"  // Replace with your actual webhook URL
-#define MAX_HTTP_RETRIES 2              // Maximum retry attempts for webhook send
+#define WEBHOOK_CONFIG_PATH "/littlefs/webhook_config.json"
+#define WEBHOOK_LOG_PATH "/littlefs/log.json"
 #define STATUS_LED_PIN 8
 
-// RFID tag event handlers
+// Handles and states
 static rfid_manager_handle_t rfid_handle = NULL;
+static webhook_manager_handle_t webhook_handle = NULL;
 static bool tag_present = false;
 static char last_tag_uid[32] = {0};
+static TaskHandle_t webhook_task_handle = NULL;
 
-// HTTP client event handler
-esp_err_t http_event_handler(esp_http_client_event_t *evt) {
-    switch(evt->event_id) {
-        case HTTP_EVENT_ERROR:
-            ESP_LOGE(TAG, "HTTP Client Error");
-            break;
-        case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGI(TAG, "HTTP Client Connected");
-            break;
-        case HTTP_EVENT_ON_FINISH:
-            ESP_LOGI(TAG, "HTTP Client Finished");
-            break;
-        default:
-            break;
-    }
-    return ESP_OK;
-}
-
-// Simplified webhook function to reduce code size
-static void send_webhook(const char* event_type, const char* tag_uid) {
-    if (!wifi_manager_is_connected()) {
-        return;
+// Task to periodically process pending webhook events
+void webhook_task(void *pvParameters) {
+    // Wait a bit to let the system stabilize
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    
+    // Load the event log in the background
+    if (webhook_handle != NULL) {
+        ESP_LOGI(TAG, "Loading webhook logs in background task");
+        webhook_manager_load_log_file(webhook_handle);
     }
     
-    char device_id[16];
-    rfid_manager_get_device_uid(device_id, sizeof(device_id));
+    // Main task loop
+    while (1) {
+        if (webhook_handle != NULL) {
+            // Check connectivity every 30 seconds when WiFi is available
+            static uint32_t last_connectivity_check = 0;
+            uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            
+            if (wifi_manager_is_connected() && (now - last_connectivity_check > 30000)) {
+                ESP_LOGI(TAG, "Checking webhook server connectivity...");
+                webhook_manager_check_connectivity(webhook_handle);
+                last_connectivity_check = now;
+            }
+            
+            // Process any pending webhook events when WiFi is available
+            if (wifi_manager_is_connected()) {
+                webhook_manager_process_pending(webhook_handle);
+            }
+        }
+        
+        // Check every 10 seconds
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+    }
     
-    char post_data[192];
-    snprintf(post_data, sizeof(post_data), 
-            "{\"event\":\"%s\",\"tag_uid\":\"%s\",\"device_id\":\"%s\",\"timestamp\":%lu}",
-            event_type, tag_uid, device_id, (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS));
-    
-    esp_http_client_config_t config = {
-        .url = WEBHOOK_URL,
-        .method = HTTP_METHOD_POST,
-        .event_handler = http_event_handler,
-        .timeout_ms = 5000,
-    };
-    
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (client == NULL) return;
-    
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_post_field(client, post_data, strlen(post_data));
-    esp_http_client_perform(client);
-    esp_http_client_cleanup(client);
+    vTaskDelete(NULL); // Should never reach here
 }
 
 // Handler for RFID tag detection events
@@ -98,8 +86,27 @@ static void tag_detected_handler(void* arg, esp_event_base_t base, int32_t event
     
     ESP_LOGI(RFID_TAG, "TAG: %s", uid_str);
     
-    // Send webhook in background
-    send_webhook("tag_placed", uid_str);
+    // Get tag type string based on tag type
+    char tag_type_str[16] = "unknown";
+    switch (event->tag.type) {
+        case 0:
+            strcpy(tag_type_str, "MIFARE_1K");
+            break;
+        case 1:
+            strcpy(tag_type_str, "MIFARE_4K");
+            break;
+        case 2:
+            strcpy(tag_type_str, "MIFARE_UL");
+            break;
+        default:
+            strcpy(tag_type_str, "unknown");
+            break;
+    }
+    
+    // Send webhook via the webhook manager
+    if (webhook_handle != NULL) {
+        webhook_manager_send_event(webhook_handle, WEBHOOK_EVENT_TAG_PLACED, uid_str, tag_type_str);
+    }
 }
 
 // Handler for tag removal events
@@ -110,8 +117,10 @@ static void tag_removed_handler(void* arg, esp_event_base_t base, int32_t event_
     
     ESP_LOGI(RFID_TAG, "TAG REMOVED");
     
-    // Send webhook
-    send_webhook("tag_removed", last_tag_uid);
+    // Send webhook via the webhook manager
+    if (webhook_handle != NULL && strlen(last_tag_uid) > 0) {
+        webhook_manager_send_event(webhook_handle, WEBHOOK_EVENT_TAG_REMOVED, last_tag_uid, NULL);
+    }
 }
 
 void app_main(void) {
@@ -278,6 +287,32 @@ void app_main(void) {
     rfid_manager_get_device_uid(device_id_str, sizeof(device_id_str));
     ESP_LOGI(TAG, "Device ID: %s", device_id_str);
     
+    // Phase 7: Initialize Webhook Manager
+    ESP_LOGI(TAG, "Initializing Webhook Manager");
+    webhook_handle = webhook_manager_init(WEBHOOK_CONFIG_PATH, WEBHOOK_LOG_PATH);
+    if (webhook_handle == NULL) {
+        ESP_LOGE(TAG, "Failed to initialize webhook manager");
+    } else {
+        // Start webhook task for processing pending webhooks with increased stack size
+        xTaskCreate(webhook_task, "webhook_task", 8192, NULL, 1, &webhook_task_handle);
+        
+        // Store the task handle in the webhook manager
+        webhook_manager_set_task_handle(webhook_handle, webhook_task_handle);
+        
+        // After initialization, try to load configuration and logs if needed
+        // (will be done in the background task to avoid stack issues)
+        
+        // Get webhook status
+        bool is_configured, is_connected;
+        if (webhook_manager_get_status(webhook_handle, &is_configured, &is_connected) == ESP_OK) {
+            ESP_LOGI(TAG, "Webhook status: configured=%s, connected=%s", 
+                    is_configured ? "true" : "false", 
+                    is_connected ? "true" : "false");
+        }
+    }
+
+    // Configuration and logs are loaded in the webhook_task
+    
     // Phase 6: Initialize RFID Manager
     ESP_LOGI(RFID_TAG, "Initializing RFID Manager");
     rfid_handle = rfid_manager_init();
@@ -348,6 +383,22 @@ void app_main(void) {
                          tag_present || strlen(last_tag_uid) > 0 ? last_tag_uid : "None");
             } else {
                 ESP_LOGI(TAG, "RFID: Not initialized");
+            }
+            
+            // Webhook status
+            if (webhook_handle != NULL) {
+                int pending_count = 0;
+                webhook_manager_get_pending_count(webhook_handle, &pending_count);
+                
+                bool is_configured, is_connected;
+                webhook_manager_get_status(webhook_handle, &is_configured, &is_connected);
+                
+                ESP_LOGI(TAG, "Webhook: %s | Connected: %s | Pending events: %d", 
+                         is_configured ? "Configured" : "Not configured",
+                         is_connected ? "Yes" : "No",
+                         pending_count);
+            } else {
+                ESP_LOGI(TAG, "Webhook: Not initialized");
             }
             
             // Device info
