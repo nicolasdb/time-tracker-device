@@ -112,10 +112,10 @@ esp_err_t rfid_manager_unregister_event_handler(
 esp_err_t rfid_manager_tag_uid_to_string(const rfid_tag_t* tag, char* str, size_t size);
 
 /**
- * @brief Get device UID from chip ID
+ * @brief Get device UID from chip MAC address
  * 
- * @param str Output string buffer to store device ID in format "NFC_XXXXXX"
- * @param size Size of the output buffer (should be at least 10 bytes)
+ * @param str Output string buffer to store device ID as full MAC address in format "XXXXXXXXXXXX"
+ * @param size Size of the output buffer (should be at least 13 bytes)
  * @return ESP_OK on success, error code otherwise
  */
 esp_err_t rfid_manager_get_device_uid(char* str, size_t size);

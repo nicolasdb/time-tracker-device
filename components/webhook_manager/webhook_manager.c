@@ -23,6 +23,7 @@ struct webhook_manager {
     char config_path[128];
     char log_path[128];
     char webhook_url[256];
+    char device_id[33];        // Store device ID for all events
     int max_retries;
     int retry_delay_ms;
     bool is_configured;
@@ -71,6 +72,7 @@ webhook_manager_handle_t webhook_manager_init(const char *config_path, const cha
     // Initialize with Kconfig values
     strncpy(handle->config_path, config_path, sizeof(handle->config_path) - 1);
     strncpy(handle->log_path, log_path, sizeof(handle->log_path) - 1);
+    handle->device_id[0] = '\0';  // Start with empty device ID
     handle->max_retries = DEFAULT_MAX_RETRIES;
     handle->retry_delay_ms = DEFAULT_RETRY_DELAY_MS;
     strncpy(handle->webhook_url, DEFAULT_WEBHOOK_URL, sizeof(handle->webhook_url) - 1);
@@ -322,8 +324,13 @@ esp_err_t webhook_manager_send_event(webhook_manager_handle_t handle,
     evt->event_type = event_type;
     strncpy(evt->tag_uid, tag_uid, sizeof(evt->tag_uid) - 1);
     
-    // Get a device ID - can be provided by caller through main app
-    sprintf(evt->device_id, "ESP32_%08lX", (unsigned long)esp_random()); // Generate a random ID if none available
+    // Use the stored device ID if available, otherwise use a placeholder
+    if (strlen(handle->device_id) > 0) {
+        strncpy(evt->device_id, handle->device_id, sizeof(evt->device_id) - 1);
+    } else {
+        strncpy(evt->device_id, "UNSET_DEVICE_ID", sizeof(evt->device_id) - 1);
+        ESP_LOGW(TAG, "Device ID not set! Using placeholder. Call webhook_manager_set_device_id()");
+    }
     
     // Set timestamp
     time_t now;
@@ -739,4 +746,14 @@ esp_err_t webhook_manager_check_connectivity(webhook_manager_handle_t handle) {
     esp_http_client_cleanup(client);
     
     return handle->is_connected ? ESP_OK : ESP_FAIL;
+}
+esp_err_t webhook_manager_set_device_id(webhook_manager_handle_t handle, const char *device_id) {
+    if (handle == NULL || device_id == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Setting device ID to: %s", device_id);
+    strncpy(handle->device_id, device_id, sizeof(handle->device_id) - 1);
+    
+    return ESP_OK;
 }

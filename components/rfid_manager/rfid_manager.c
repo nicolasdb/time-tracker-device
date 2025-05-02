@@ -313,20 +313,17 @@ esp_err_t rfid_manager_tag_uid_to_string(const rfid_tag_t* tag, char* str, size_
 
 // Get device UID from chip ID
 esp_err_t rfid_manager_get_device_uid(char* str, size_t size) {
-    if (str == NULL || size < 10) {
+    if (str == NULL || size < 13) {  // 12 hex chars + null terminator
         return ESP_ERR_INVALID_ARG;
     }
     
     uint8_t chipid[6];
     esp_efuse_mac_get_default(chipid);
     
-    // Use first 3 bytes of MAC address for device ID
-    unsigned int unique_id = ((unsigned int)chipid[0] << 16) | 
-                             ((unsigned int)chipid[1] << 8) | 
-                             chipid[2];
-    
-    // Format as NFC_XXXXXX
-    snprintf(str, size, "NFC_%06X", unique_id);
+    // Use all 6 bytes of MAC address for device ID
+    // This gives us a globally unique identifier
+    sprintf(str, "%02X%02X%02X%02X%02X%02X", 
+           chipid[0], chipid[1], chipid[2], chipid[3], chipid[4], chipid[5]);
     
     return ESP_OK;
 }

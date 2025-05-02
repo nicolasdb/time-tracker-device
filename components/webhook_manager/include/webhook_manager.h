@@ -141,6 +141,15 @@ esp_err_t webhook_manager_get_status(webhook_manager_handle_t handle,
 esp_err_t webhook_manager_set_task_handle(webhook_manager_handle_t handle, TaskHandle_t task_handle);
 
 /**
+ * @brief Set the device ID to be used in webhook events
+ * 
+ * @param handle Webhook manager handle
+ * @param device_id Device ID string
+ * @return ESP_OK on success
+ */
+esp_err_t webhook_manager_set_device_id(webhook_manager_handle_t handle, const char *device_id);
+
+/**
  * @brief Check if webhook server is available
  * 
  * This function sends a HEAD request to the webhook URL to check if the server
