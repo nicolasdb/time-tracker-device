@@ -12,6 +12,7 @@
 #include "wifi_manager.h"
 #include "rfid_manager.h"
 #include "webhook_manager.h"
+#include "feedback_manager.h"
 #include "driver/gpio.h"
 #include "cJSON.h"
 #include <sys/stat.h>
@@ -28,7 +29,7 @@
 // Handles and states
 static rfid_manager_handle_t rfid_handle = NULL;
 static webhook_manager_handle_t webhook_handle = NULL;
-// static feedback_manager_handle_t feedback_handle = NULL;  // Temporarily disabled
+static feedback_manager_handle_t feedback_handle = NULL;
 static bool tag_present = false;
 static char last_tag_uid[32] = {0};
 static TaskHandle_t webhook_task_handle = NULL;
@@ -74,15 +75,13 @@ void webhook_task(void *pvParameters) {
 static void tag_detected_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data) {
     rfid_tag_event_t* event = (rfid_tag_event_t*)data;
     
-    // Set LED on (backward compatibility)
-    gpio_set_level(STATUS_LED_PIN, 1);
-    
-    /* Temporarily disabled feedback manager
     // Update feedback manager
     if (feedback_handle != NULL) {
         feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_TAG_DETECTED);
+    } else {
+        // Fallback for direct LED control
+        gpio_set_level(STATUS_LED_PIN, 1);
     }
-    */
     
     // Convert UID to string
     char uid_str[32] = {0};
@@ -119,18 +118,17 @@ static void tag_detected_handler(void* arg, esp_event_base_t base, int32_t event
 
 // Handler for tag removal events
 static void tag_removed_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data) {
-    // Set LED off (backward compatibility)
-    gpio_set_level(STATUS_LED_PIN, 0);
     tag_present = false;
     
-    /* Temporarily disabled feedback manager
     // Update feedback manager
     if (feedback_handle != NULL) {
         // Reset to background state
         feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_IDLE);
         feedback_manager_flash_event(feedback_handle, FEEDBACK_STATE_TAG_READ_ERROR, 1);
+    } else {
+        // Fallback for direct LED control
+        gpio_set_level(STATUS_LED_PIN, 0);
     }
-    */
     
     ESP_LOGI(RFID_TAG, "TAG REMOVED");
     
@@ -151,24 +149,15 @@ void app_main(void) {
     // Print Hello World
     ESP_LOGI(TAG, "Hello World from ESP32-C3 Time Tracker Device!");
     
-    // Initialize LED pin for backward compatibility
-    gpio_reset_pin(STATUS_LED_PIN);
-    gpio_set_direction(STATUS_LED_PIN, GPIO_MODE_OUTPUT);
-    
-    // Quick blink pattern to show program is running (fallback mode)
-    for (int i = 0; i < 3; i++) {
-        gpio_set_level(STATUS_LED_PIN, 1);  // LED on
-        vTaskDelay(pdMS_TO_TICKS(100));
-        gpio_set_level(STATUS_LED_PIN, 0);  // LED off
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-    
-    /* Temporarily disabled feedback manager
-    // Initialize Feedback Manager
+    // Initialize Feedback Manager with WS2812B support
     ESP_LOGI(TAG, "Initializing Feedback Manager");
     feedback_handle = feedback_manager_init(STATUS_LED_PIN);
     if (feedback_handle == NULL) {
         ESP_LOGE(TAG, "Failed to initialize feedback manager, falling back to basic LED");
+        
+        // Initialize LED pin for backward compatibility
+        gpio_reset_pin(STATUS_LED_PIN);
+        gpio_set_direction(STATUS_LED_PIN, GPIO_MODE_OUTPUT);
         
         // Quick blink pattern to show program is running (fallback mode)
         for (int i = 0; i < 3; i++) {
@@ -181,7 +170,6 @@ void app_main(void) {
         ESP_LOGI(TAG, "Feedback Manager initialized successfully");
         feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_BOOTING);
     }
-    */
     
     // Phase 1: Initialize LittleFS
     ESP_LOGI(TAG, "Initializing LittleFS");
@@ -402,11 +390,10 @@ void app_main(void) {
                 ESP_LOGI(TAG, "WiFi: Connected | IP: %s | RSSI: %d dBm", 
                          ip_str, rssi);
                 
-                /* Temporarily disabled feedback manager
+                // Update feedback manager with WiFi status
                 if (feedback_handle != NULL) {
                     feedback_manager_set_background_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTED);
                 }
-                */
                 
                 // Time status
                 if (wifi_manager_is_time_synced()) {
@@ -421,11 +408,10 @@ void app_main(void) {
             } else {
                 ESP_LOGI(TAG, "WiFi: Disconnected");
                 
-                /* Temporarily disabled feedback manager
+                // Update feedback manager with WiFi status
                 if (feedback_handle != NULL) {
                     feedback_manager_set_background_state(feedback_handle, FEEDBACK_STATE_WIFI_FAILED);
                 }
-                */
             }
             
             // RFID status
@@ -464,21 +450,8 @@ void app_main(void) {
         }
         
         // Update LED based on state (direct control)
-        if (wifi_manager_is_connected()) {
-            if (!tag_present) {
-                // Blink slowly when WiFi connected but no tag
-                gpio_set_level(STATUS_LED_PIN, count % 2 == 0);
-            }
-            // When tag present, LED is solid on (handled in tag handler)
-        } else {
-            // Fast blink when WiFi not connected
-            gpio_set_level(STATUS_LED_PIN, count % 4 < 2);
-        }
-
-        /* Temporarily disabled feedback manager
-        // Update LED/feedback manager based on state (backward compatibility)
+        // Only use direct LED control if feedback manager isn't initialized
         if (feedback_handle == NULL) {
-            // Only use direct LED control if feedback manager isn't initialized
             if (wifi_manager_is_connected()) {
                 if (!tag_present) {
                     // Blink slowly when WiFi connected but no tag
@@ -490,7 +463,6 @@ void app_main(void) {
                 gpio_set_level(STATUS_LED_PIN, count % 4 < 2);
             }
         }
-        */
         
         count++;
         vTaskDelay(1000 / portTICK_PERIOD_MS);

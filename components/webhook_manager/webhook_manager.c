@@ -681,8 +681,8 @@ static void webhook_manager_format_iso_time(char* buf, size_t buf_size, time_t t
     struct tm timeinfo;
     localtime_r(&time_value, &timeinfo);
     
-    // Format: YYYY-MM-DDTHH:MM:SS+0100
-    strftime(buf, buf_size, "%Y-%m-%dT%H:%M:%S%z", &timeinfo);
+    // Format: YYYY-MM-DDTHH:MM:SS
+    strftime(buf, buf_size, "%Y-%m-%dT%H:%M:%S", &timeinfo);
 }
 
 esp_err_t webhook_manager_load_configuration(webhook_manager_handle_t handle) {

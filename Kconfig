@@ -1,4 +1,5 @@
 menu "Time Tracker Configuration"
     source "components/fs_manager/Kconfig"
     source "components/webhook_manager/Kconfig"
+    source "components/feedback_manager/Kconfig.projbuild"
 endmenu

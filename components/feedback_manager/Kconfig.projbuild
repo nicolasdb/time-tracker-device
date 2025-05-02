@@ -1,0 +1,23 @@
+menu "Feedback Manager Configuration"
+    config FEEDBACK_LED_GPIO
+        int "LED GPIO Number"
+        default 8
+        help
+            GPIO number (IOxx) where WS2812B NeoPixel LED is connected.
+
+    config FEEDBACK_USE_WS2812
+        bool "Use WS2812B NeoPixel"
+        default y
+        help
+            If enabled, feedback uses WS2812B NeoPixel LED with RGB values.
+            If disabled, feedback uses standard GPIO LED.
+            
+    config FEEDBACK_LED_BRIGHTNESS
+        int "LED Brightness (0-255)"
+        default 10
+        range 1 255
+        depends on FEEDBACK_USE_WS2812
+        help
+            Brightness level for the WS2812B LED (1-255).
+            Lower values consume less power and can be easier on the eyes.
+endmenu
