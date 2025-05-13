@@ -14,10 +14,9 @@
 static const char *TAG = "webhook_manager";
 
 // Configurations from Kconfig
-#define MAX_LOG_ENTRIES 50
-#define DEFAULT_MAX_RETRIES 3
-#define DEFAULT_RETRY_DELAY_MS 5000
-#define DEFAULT_WEBHOOK_URL "http://nicolasdb.eu/webhook"
+// #define MAX_LOG_ENTRIES 50
+// #define DEFAULT_MAX_RETRIES 3
+// #define DEFAULT_RETRY_DELAY_MS 5000
 
 struct webhook_manager {
     char config_path[128];
@@ -28,7 +27,7 @@ struct webhook_manager {
     int retry_delay_ms;
     bool is_configured;
     bool is_connected;
-    webhook_event_t events[MAX_LOG_ENTRIES];
+    webhook_event_t events[CONFIG_WEBHOOK_MANAGER_MAX_LOG_ENTRIES];
     int event_count;
     uint32_t last_retry_time;  // Changed from int64_t to uint32_t
     TaskHandle_t task_handle;  // For storing the task handle
@@ -73,9 +72,9 @@ webhook_manager_handle_t webhook_manager_init(const char *config_path, const cha
     strncpy(handle->config_path, config_path, sizeof(handle->config_path) - 1);
     strncpy(handle->log_path, log_path, sizeof(handle->log_path) - 1);
     handle->device_id[0] = '\0';  // Start with empty device ID
-    handle->max_retries = DEFAULT_MAX_RETRIES;
-    handle->retry_delay_ms = DEFAULT_RETRY_DELAY_MS;
-    strncpy(handle->webhook_url, DEFAULT_WEBHOOK_URL, sizeof(handle->webhook_url) - 1);
+    handle->max_retries = CONFIG_WEBHOOK_MANAGER_MAX_RETRIES;
+    handle->retry_delay_ms = CONFIG_WEBHOOK_MANAGER_RETRY_DELAY_MS;
+    strncpy(handle->webhook_url, CONFIG_WEBHOOK_MANAGER_URL, sizeof(handle->webhook_url) - 1);
     handle->is_configured = true;
     handle->is_connected = false;
     handle->event_count = 0;
@@ -186,7 +185,7 @@ static esp_err_t webhook_manager_load_log(webhook_manager_handle_t handle) {
     int num_events = cJSON_GetArraySize(events);
     handle->event_count = 0;
     
-    for (int i = 0; i < num_events && handle->event_count < MAX_LOG_ENTRIES; i++) {
+    for (int i = 0; i < num_events && handle->event_count < CONFIG_WEBHOOK_MANAGER_MAX_LOG_ENTRIES; i++) {
         cJSON *event = cJSON_GetArrayItem(events, i);
         
         cJSON *event_type = cJSON_GetObjectItem(event, "event_type");
@@ -311,9 +310,9 @@ esp_err_t webhook_manager_send_event(webhook_manager_handle_t handle,
     }
     
     // If log is full, shift everything to remove oldest
-    if (handle->event_count >= MAX_LOG_ENTRIES) {
+    if (handle->event_count >= CONFIG_WEBHOOK_MANAGER_MAX_LOG_ENTRIES) {
         ESP_LOGW(TAG, "Event log full, dropping oldest event");
-        for (int i = 0; i < MAX_LOG_ENTRIES - 1; i++) {
+        for (int i = 0; i < CONFIG_WEBHOOK_MANAGER_MAX_LOG_ENTRIES - 1; i++) {
             handle->events[i] = handle->events[i + 1];
         }
         handle->event_count--;
@@ -691,7 +690,7 @@ esp_err_t webhook_manager_load_configuration(webhook_manager_handle_t handle) {
     }
     
     // Configuration is handled by Kconfig, so this is a no-op
-    ESP_LOGI(TAG, "Using hardcoded webhook settings - URL: %s", DEFAULT_WEBHOOK_URL);
+    ESP_LOGI(TAG, "Using hardcoded webhook settings - URL: %s", CONFIG_WEBHOOK_MANAGER_URL);
     return ESP_OK;
 }
 

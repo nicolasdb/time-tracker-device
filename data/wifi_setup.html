@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>Time Tracker Setup</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
+        h1 { color: #2c3e50; }
+        .container { max-width: 500px; margin: 0 auto; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type=text], input[type=password] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #2980b9; }
+        .networks { margin-top: 20px; }
+        .network { background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 10px; margin-bottom: 10px; }
+        .delete-btn { background-color: #e74c3c; float: right; }
+        .delete-btn:hover { background-color: #c0392b; }
+        .status { margin-top: 20px; padding: 10px; border-radius: 4px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Time Tracker WiFi Setup</h1>
+        <div class="form-group">
+            <label for="ssid">WiFi Network Name (SSID):</label>
+            <input type="text" id="ssid" name="ssid" required>
+        </div>
+        <div class="form-group">
+            <label for="password">WiFi Password:</label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        <button onclick="addNetwork()">Save Network</button>
+        <div id="status" class="status" style="display: none;"></div>
+        <div class="networks" id="networks">
+            <h2>Saved Networks</h2>
+            <div id="network-list"></div>
+        </div>
+        <div class="form-group" style="margin-top: 20px;">
+            <button onclick="applySettings()">Apply Settings & Restart</button>
+        </div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', fetchNetworks);
+        function fetchNetworks() {
+            fetch('/api/networks')
+                .then(response => response.json())
+                .then(data => {
+                    const networkList = document.getElementById('network-list');
+                    networkList.innerHTML = '';
+                    data.networks.forEach((network, index) => {
+                        const div = document.createElement('div');
+                        div.className = 'network';
+                        div.innerHTML = `
+                            <strong>SSID:</strong> ${network.ssid}
+                            <button class="delete-btn" onclick="deleteNetwork(${index})">Delete</button>
+                        `;
+                        networkList.appendChild(div);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error fetching networks:', error);
+                    showStatus('Error loading networks', false);
+                });
+        }
+        function addNetwork() {
+            const ssid = document.getElementById('ssid').value;
+            const password = document.getElementById('password').value;
+            if (!ssid) {
+                showStatus('SSID is required', false);
+                return;
+            }
+            fetch('/api/networks', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ssid, password})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showStatus('Network added successfully', true);
+                    document.getElementById('ssid').value = '';
+                    document.getElementById('password').value = '';
+                    fetchNetworks();
+                } else {
+                    showStatus(`Error: ${data.message}`, false);
+                }
+            })
+            .catch(error => {
+                console.error('Error adding network:', error);
+                showStatus('Failed to add network', false);
+            });
+        }
+        function deleteNetwork(index) {
+            fetch(`/api/networks/${index}`, {method: 'DELETE'})
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showStatus('Network deleted successfully', true);
+                    fetchNetworks();
+                } else {
+                    showStatus(`Error: ${data.message}`, false);
+                }
+            })
+            .catch(error => {
+                console.error('Error deleting network:', error);
+                showStatus('Failed to delete network', false);
+            });
+        }
+        function applySettings() {
+            if (confirm('Device will restart and try to connect to WiFi. Continue?')) {
+                fetch('/api/apply', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showStatus('Settings applied, device restarting...', true);
+                    } else {
+                        showStatus(`Error: ${data.message}`, false);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error applying settings:', error);
+                    showStatus('Failed to apply settings', false);
+                });
+            }
+        }
+        function showStatus(message, isSuccess) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = isSuccess ? 'status success' : 'status error';
+            statusDiv.style.display = 'block';
+            setTimeout(() => statusDiv.style.display = 'none', 5000);
+        }
+    </script>
+</body>
+</html>

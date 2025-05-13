@@ -84,6 +84,60 @@ idf.py build
 
 This approach will provide flexibility for both development and deployment scenarios, allowing configuration changes without recompiling.
 
+## Getting Started
+
+### Prerequisites
+
+*   ESP-IDF environment set up (v5.0 or later)
+*   An ESP32-C3 based development board
+*   An RFID reader module (e.g., MFRC522)
+*   A WS2812B LED strip (optional, for visual feedback)
+
+### Configuration
+
+1.  **Configure the project:**
+
+    ```bash
+    idf.py menuconfig
+    ```
+
+    *   Configure your Wi-Fi credentials using the Wi-Fi Manager settings.
+    *   Configure the RFID reader settings.
+    *   Configure the Webhook URL endpoint.
+
+### Initial Wi-Fi Configuration
+
+The device will automatically start in Wi-Fi station mode and attempt to connect to a previously saved network. If no network is found, it will start in Wi-Fi Access Point (AP) mode, allowing you to connect to it and configure the Wi-Fi settings through a web interface.
+
+1.  **Connect to the AP:**
+
+    *   The device will create an AP with an SSID like `TimeTracker-AP`.
+    *   Connect to this network using your computer or smartphone.
+
+2.  **Open the configuration portal:**
+
+    *   Open a web browser and navigate to `http://192.168.4.1`.
+    *   Select your Wi-Fi network and enter the password.
+    *   Save the settings. The device will reboot and attempt to connect to the configured network.
+
+### Webhook Configuration
+
+The device sends events to a webhook URL when a tag is placed or removed. You can configure the webhook URL in the Kconfig settings.
+
+1.  **Set the Webhook URL:**
+
+    *   Open the project configuration:
+
+        ```bash
+        idf.py menuconfig
+        ```
+
+    *   Navigate to `Component config` -> `Webhook Manager` and set the `Webhook endpoint URL`.
+
+### Runtime Webhook Configuration (Future)
+
+In future versions, the webhook URL will be configurable at runtime by storing the configuration in LittleFS.
+
 ## Building and Flashing
 
 ### Prerequisites
@@ -114,3 +168,11 @@ Additional documentation:
 
 - [Mission Document](mission.md)
 - [Webhook Integration](webhook_integration_complete.md)
+
+## Future Improvements
+
+*   **OTA (Over-The-Air) Updates:** Implement OTA updates for easy firmware upgrades.
+*   **Secure Secrets Management:** Implement secure storage for sensitive information such as API keys or authentication tokens using ESP32's NVS (Non-Volatile Storage) with encryption.
+*   **Improved Error Handling:** Add more robust error handling and reporting.
+*   **User Authentication:** Implement user authentication for the web interface.
+*   **Data Encryption:** Encrypt the data stored in LittleFS to protect sensitive information.
