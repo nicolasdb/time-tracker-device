@@ -754,6 +754,11 @@ bool wifi_manager_is_time_synced(void)
     return s_time_synced;
 }
 
+bool wifi_manager_is_in_ap_mode(void)
+{
+    return s_ap_mode_active;
+}
+
 time_t wifi_manager_get_time(void)
 {
     time_t now;

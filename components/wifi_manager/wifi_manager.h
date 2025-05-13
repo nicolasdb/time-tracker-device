@@ -120,6 +120,12 @@ esp_err_t wifi_manager_sync_time(void);
 bool wifi_manager_is_time_synced(void);
 
 /**
+ * @brief Check if the device is in AP mode
+ * @return true if in AP mode, false otherwise
+ */
+bool wifi_manager_is_in_ap_mode(void);
+
+/**
  * @brief Get current time as Unix timestamp
  * @return Current time as Unix timestamp, 0 if not synchronized
  */

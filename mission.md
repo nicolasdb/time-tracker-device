@@ -314,7 +314,7 @@ source "components/fs_manager/Kconfig"
 
 ---
 
-## Phase 8 — Feedback utilisateur via LED NeoPixel
+## Phase 8 — Feedback utilisateur via LED NeoPixel ✅
 
 **Objectif :**
 
@@ -330,7 +330,7 @@ source "components/fs_manager/Kconfig"
 
 **Validation :**
 
-- LED change dynamiquement selon l’état.
+✅ LED change dynamiquement selon l’état.
 
 **Ressources :**
 

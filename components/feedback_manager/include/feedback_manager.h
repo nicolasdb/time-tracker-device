@@ -46,6 +46,15 @@ typedef enum {
     FEEDBACK_STATE_WEBHOOK_ERROR,     /* Error sending data to webhook */
     FEEDBACK_STATE_WEBHOOK_QUEUED,    /* Data queued for later sending */
     
+    /* Initialization sequence states */
+    FEEDBACK_STATE_INIT_START,        /* Beginning of initialization sequence */
+    FEEDBACK_STATE_INIT_FS,           /* Filesystem initialization */
+    FEEDBACK_STATE_INIT_WIFI_PREP,    /* WiFi subsystem preparation */
+    FEEDBACK_STATE_INIT_TIME,         /* Time synchronization */
+    FEEDBACK_STATE_INIT_WEBHOOK,      /* Webhook initialization */
+    FEEDBACK_STATE_INIT_RFID,         /* RFID initialization */
+    FEEDBACK_STATE_INIT_COMPLETE,     /* Initialization complete */
+    
     /* Must be last */
     FEEDBACK_STATE_MAX
 } feedback_state_t;
@@ -125,6 +134,19 @@ esp_err_t feedback_manager_reset(feedback_manager_handle_t handle);
  * @return true if hardware is detected and responding, false otherwise
  */
 bool feedback_manager_check_rfid_hardware(void* rfid_handle);
+
+/**
+ * @brief Validate an initialization step
+ * 
+ * This function provides visual feedback for the success or failure of an
+ * initialization step, while maintaining the current state. It flashes
+ * a green indicator briefly for success, or a red indicator for failure.
+ * 
+ * @param handle Feedback manager handle
+ * @param success Whether the initialization step was successful
+ * @return ESP_OK on success
+ */
+esp_err_t feedback_manager_validate_init_step(feedback_manager_handle_t handle, bool success);
 
 #ifdef __cplusplus
 }
