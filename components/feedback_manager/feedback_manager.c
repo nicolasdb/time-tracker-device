@@ -29,7 +29,7 @@ typedef struct {
 static const rgb_color_t COLOR_OFF = {0, 0, 0};
 static const rgb_color_t COLOR_RED = {255, 0, 0};
 static const rgb_color_t COLOR_GREEN = {0, 255, 0};
-static const rgb_color_t COLOR_BLUE = {0, 0, 255};
+static const rgb_color_t COLOR_BLUE = {0, 0, 255};        // Strong blue
 static const rgb_color_t COLOR_YELLOW = {255, 255, 0};
 static const rgb_color_t COLOR_PURPLE = {128, 0, 128};
 static const rgb_color_t COLOR_WHITE = {255, 255, 255};
@@ -58,7 +58,7 @@ static rgb_color_t get_state_color(feedback_state_t state) {
             return COLOR_WHITE;
             
         case FEEDBACK_STATE_IDLE:
-            return COLOR_CYAN;  // Soft cyan when idle
+            return COLOR_BLUE;  // Strong blue when idle
             
         case FEEDBACK_STATE_ERROR:
             return COLOR_RED;
@@ -154,15 +154,6 @@ static void set_led_color(led_strip_handle_t led_strip, rgb_color_t color, uint8
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to refresh LED strip: %s", esp_err_to_name(ret));
     }
-}
-
-// Apply brightness to a color
-static rgb_color_t apply_brightness(rgb_color_t color, uint8_t brightness) {
-    rgb_color_t result;
-    result.r = (color.r * brightness) / 255;
-    result.g = (color.g * brightness) / 255;
-    result.b = (color.b * brightness) / 255;
-    return result;
 }
 
 // Breathing effect - returns intensity 0-255
@@ -504,12 +495,8 @@ static void feedback_manager_task(void *arg) {
              manager->use_ws2812, MAX_BRIGHTNESS);
 
     while (manager->is_active) {
-        // Use primary state if it's not idle, otherwise use background state
+        // Use primary state for display logic
         feedback_state_t current_state = manager->primary_state;
-        
-        if (current_state == FEEDBACK_STATE_IDLE) {
-            current_state = manager->background_state;
-        }
         
         // Get base color for current state
         rgb_color_t color = get_state_color(current_state);
@@ -519,11 +506,18 @@ static void feedback_manager_task(void *arg) {
             // Special effects for certain states
             switch (current_state) {
                 case FEEDBACK_STATE_IDLE:
-                    // Slow breathing effect
+                    // Slow breathing effect with strong blue
                     {
                         uint8_t intensity = breathing_effect(cycle_count, BREATHING_PERIOD);
-                        rgb_color_t adjusted_color = apply_brightness(color, intensity);
-                        set_led_color(manager->led_strip, adjusted_color, MAX_BRIGHTNESS);
+                        // Apply breathing directly to avoid double brightness scaling
+                        uint8_t blue_intensity = (COLOR_BLUE.b * intensity) / 255;
+                        rgb_color_t breathing_color = {0, 0, blue_intensity};
+                        // Use intensity as final brightness, not MAX_BRIGHTNESS
+                        led_strip_set_pixel(manager->led_strip, 0, breathing_color.r, breathing_color.g, breathing_color.b);
+                        esp_err_t ret = led_strip_refresh(manager->led_strip);
+                        if (ret != ESP_OK) {
+                            ESP_LOGE(TAG, "Failed to refresh LED strip: %s", esp_err_to_name(ret));
+                        }
                     }
                     break;
                     
@@ -537,11 +531,20 @@ static void feedback_manager_task(void *arg) {
                     break;
                     
                 case FEEDBACK_STATE_WIFI_AP_MODE:
-                    // Purple pulse - slow blinking
-                    if (cycle_count % 30 < 15) {
-                        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
-                    } else {
-                        set_led_color(manager->led_strip, COLOR_OFF, MAX_BRIGHTNESS);
+                    // AP mode sequence: Y→B→P→P (1s,1s,2s) 
+                    // Total cycle: 80 cycles (4 seconds at 50ms each)
+                    {
+                        uint32_t ap_cycle = cycle_count % 80; // 4 second cycle
+                        if (ap_cycle < 20) {
+                            // Yellow for 1s (warning - no WiFi)
+                            set_led_color(manager->led_strip, COLOR_YELLOW, MAX_BRIGHTNESS);
+                        } else if (ap_cycle < 40) {
+                            // Blue for 1s (trying to connect)
+                            set_led_color(manager->led_strip, COLOR_BLUE, MAX_BRIGHTNESS);
+                        } else {
+                            // Purple for 2s (AP mode active - doubled duration)
+                            set_led_color(manager->led_strip, COLOR_PURPLE, MAX_BRIGHTNESS);
+                        }
                     }
                     break;
                     
@@ -557,24 +560,20 @@ static void feedback_manager_task(void *arg) {
                     break;
                     
                 case FEEDBACK_STATE_WEBHOOK_ERROR:
-                    // Triple red flash
-                    if (cycle_count % 30 < 5) {
-                        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
-                    } else if (cycle_count % 30 >= 10 && cycle_count % 30 < 15) {
-                        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
-                    } else if (cycle_count % 30 >= 20 && cycle_count % 30 < 25) {
-                        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
+                    // RED/green alternating - "Error sending (red) to webhook system (green)"
+                    if (cycle_count % 20 < 10) {
+                        set_led_color(manager->led_strip, COLOR_RED, MAX_BRIGHTNESS);
                     } else {
-                        set_led_color(manager->led_strip, COLOR_OFF, MAX_BRIGHTNESS);
+                        set_led_color(manager->led_strip, COLOR_GREEN, MAX_BRIGHTNESS);
                     }
                     break;
                     
                 case FEEDBACK_STATE_WEBHOOK_QUEUED:
-                    // Yellow pulse with frequency based on queue size - medium blink
-                    if (cycle_count % 15 < 7) {
-                        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
+                    // Yellow/green alternating - "Warning: queued (yellow) for webhook system (green)"
+                    if (cycle_count % 20 < 10) {
+                        set_led_color(manager->led_strip, COLOR_YELLOW, MAX_BRIGHTNESS);
                     } else {
-                        set_led_color(manager->led_strip, COLOR_OFF, MAX_BRIGHTNESS);
+                        set_led_color(manager->led_strip, COLOR_GREEN, MAX_BRIGHTNESS);
                     }
                     break;
                     
@@ -582,59 +581,7 @@ static void feedback_manager_task(void *arg) {
                     // For other states, no need to update since they're handled by set_state
                     break;
             }
-        } else {
-            // Standard GPIO LED - approximate with blinking patterns
-            bool led_on = false;
-            
-            switch (current_state) {
-                case FEEDBACK_STATE_IDLE:
-                    // Breathing effect approximation
-                    {
-                        uint8_t intensity = breathing_effect(cycle_count, BREATHING_PERIOD);
-                        led_on = (rand() % 255) < intensity; // Probability based intensity
-                    }
-                    break;
-                    
-                case FEEDBACK_STATE_WIFI_CONNECTING:
-                    // Fast blinking
-                    led_on = (cycle_count % 6 < 3);
-                    break;
-                    
-                case FEEDBACK_STATE_WIFI_AP_MODE:
-                    // Slow blinking
-                    led_on = (cycle_count % 30 < 15);
-                    break;
-                    
-                case FEEDBACK_STATE_TAG_DETECTED:
-                    // Solid on
-                    led_on = true;
-                    break;
-                    
-                case FEEDBACK_STATE_RFID_ERROR:
-                    // Double flash
-                    led_on = (cycle_count % 20 < 5) || (cycle_count % 20 >= 10 && cycle_count % 20 < 15);
-                    break;
-                    
-                case FEEDBACK_STATE_WEBHOOK_ERROR:
-                    // Triple flash
-                    led_on = (cycle_count % 30 < 5) || 
-                             (cycle_count % 30 >= 10 && cycle_count % 30 < 15) || 
-                             (cycle_count % 30 >= 20 && cycle_count % 30 < 25);
-                    break;
-                    
-                case FEEDBACK_STATE_WEBHOOK_QUEUED:
-                    // Medium blink
-                    led_on = (cycle_count % 15 < 7);
-                    break;
-                    
-                default:
-                    // For other states, solid on
-                    led_on = true;
-                    break;
-            }
-            
-            gpio_set_level(manager->led_gpio, led_on ? 1 : 0);
-        }
+        } 
         
         cycle_count++;
         vTaskDelay(pdMS_TO_TICKS(50)); // 20Hz update rate

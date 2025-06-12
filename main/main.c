@@ -17,6 +17,7 @@
 #include "cJSON.h"
 #include <sys/stat.h>
 #include <dirent.h>
+#include "sdkconfig.h"
 
 #define TAG "time-tracker"
 #define RFID_TAG "rfid"
@@ -24,7 +25,7 @@
 #define WIFI_JSON_PATH "/littlefs/wifi.json"
 #define WEBHOOK_CONFIG_PATH "/littlefs/webhook_config.json"
 #define WEBHOOK_LOG_PATH "/littlefs/log.json"
-#define STATUS_LED_PIN 8
+#define STATUS_LED_PIN CONFIG_FEEDBACK_LED_GPIO
 
 // Handles and states
 static rfid_manager_handle_t rfid_handle = NULL;
@@ -124,7 +125,7 @@ static void tag_removed_handler(void* arg, esp_event_base_t base, int32_t event_
     if (feedback_handle != NULL) {
         // Reset to background state
         feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_IDLE);
-        feedback_manager_flash_event(feedback_handle, FEEDBACK_STATE_TAG_READ_ERROR, 1);
+        // No flash needed - tag removal is normal operation
     } else {
         // Fallback for direct LED control
         gpio_set_level(STATUS_LED_PIN, 0);

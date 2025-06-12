@@ -1,7 +1,7 @@
 menu "Feedback Manager Configuration"
     config FEEDBACK_LED_GPIO
         int "LED GPIO Number"
-        default 8
+        default 7
         help
             GPIO number (IOxx) where WS2812B NeoPixel LED is connected.
 

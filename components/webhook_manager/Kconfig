@@ -2,7 +2,7 @@ menu "Webhook Manager Configuration"
 
 config WEBHOOK_MANAGER_URL
     string "Default webhook URL"
-    default "http://localhost/webhook"
+    default "http://nicolasdb.eu/webhook"
     help
         The default URL to which webhook events will be sent.
 
