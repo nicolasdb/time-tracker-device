@@ -1,0 +1,41 @@
+# Build artifacts and configuration
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.esp32c3_rc522_espidf
+sdkconfig.esp32c3_rc522_espidf.old
+dependencies.lock
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# ESP-IDF managed components (external dependencies)
+managed_components/
+
+# Third-party component internals
+components/esp_littlefs/src/littlefs/
+components/rc522/src/
+components/rc522/internal/
+components/rc522/examples/
+components/rc522/test/
+components/esp_littlefs/test/
+components/esp_littlefs/testdir/
+components/esp_littlefs/example/
+
+# Documentation and mission files (context-specific)
+mission.md
+reboot_sideQuest.md
+refactor_mission_brief.md
+docs/implementation_notes.md
+implementation-summary.md
+
+# Data files
+data/
+
+# Temporary and backup files
+*.tmp
+*.bak
+*.swp
+*~

@@ -5,3 +5,4 @@
 .vscode*
 # Fichiers générés par l'ESP-IDF
 sdkconfig*
+terminal_log.txt

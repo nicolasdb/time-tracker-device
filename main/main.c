@@ -9,6 +9,8 @@
 #include "esp_vfs.h"
 #include "esp_littlefs.h"
 #include "nvs_flash.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
 #include "wifi_manager.h"
 #include "rfid_manager.h"
 #include "webhook_manager.h"
@@ -136,6 +138,46 @@ static void tag_removed_handler(void* arg, esp_event_base_t base, int32_t event_
     // Send webhook via the webhook manager
     if (webhook_handle != NULL && strlen(last_tag_uid) > 0) {
         webhook_manager_send_event(webhook_handle, WEBHOOK_EVENT_TAG_REMOVED, last_tag_uid, NULL);
+    }
+}
+
+// Handler for WiFi connection events
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    if (feedback_handle == NULL) return;
+    
+    if (event_base == WIFI_EVENT) {
+        switch (event_id) {
+            case WIFI_EVENT_STA_START:
+                ESP_LOGI(TAG, "WiFi STA started - connecting");
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTING);
+                break;
+            case WIFI_EVENT_STA_CONNECTED:
+                ESP_LOGI(TAG, "WiFi STA connected - waiting for IP");
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTING);
+                break;
+            case WIFI_EVENT_STA_DISCONNECTED:
+                ESP_LOGI(TAG, "WiFi STA disconnected - reconnecting");
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTING);
+                break;
+            case WIFI_EVENT_AP_START:
+                ESP_LOGI(TAG, "WiFi AP started");
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_WIFI_AP_MODE);
+                break;
+        }
+    } else if (event_base == IP_EVENT) {
+        switch (event_id) {
+            case IP_EVENT_STA_GOT_IP:
+                ESP_LOGI(TAG, "WiFi got IP - connected successfully");
+                // Clear all states and set idle as baseline, then briefly show connected
+                feedback_manager_reset(feedback_handle);
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_IDLE);
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTED);
+                break;
+            case IP_EVENT_STA_LOST_IP:
+                ESP_LOGI(TAG, "WiFi lost IP - reconnecting");
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTING);
+                break;
+        }
     }
 }
 
@@ -343,6 +385,10 @@ void app_main(void) {
                 vTaskDelay(pdMS_TO_TICKS(1000)); // Show error state briefly
             }
         } else {
+            // Register WiFi event handlers for feedback management
+            ESP_LOGI(TAG, "Registering WiFi event handlers");
+            esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
+            esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
             // Start the WiFi manager
             // This will:
             // 1. Try to connect to known networks
@@ -495,22 +541,14 @@ void app_main(void) {
         feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_INIT_COMPLETE);
         vTaskDelay(pdMS_TO_TICKS(1000)); // Show completion state
         
-        // Finally, transition to idle state with appropriate background state
-        if (wifi_manager_is_connected()) {
-            feedback_manager_set_background_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTED);
-        } else if (wifi_manager_is_in_ap_mode()) {
-            feedback_manager_set_background_state(feedback_handle, FEEDBACK_STATE_WIFI_AP_MODE);
-        } else {
-            feedback_manager_set_background_state(feedback_handle, FEEDBACK_STATE_WIFI_FAILED);
-        }
-        
-        // Set to idle state - this will show the background state with breathing effect
-        feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_IDLE);
+        // Final state will be managed by WiFi event handlers
     }
     
-    // Main loop
+    // Main loop - now purely status reporting and fallback LED control
     int count = 0;
+    
     while (1) {
+        
         // Status update every 10 seconds
         if (count % 10 == 0) {
             ESP_LOGI(TAG, "=================== STATUS UPDATE ===================");
@@ -525,11 +563,6 @@ void app_main(void) {
                 ESP_LOGI(TAG, "WiFi: Connected | IP: %s | RSSI: %d dBm", 
                          ip_str, rssi);
                 
-                // Update feedback manager with WiFi status
-                if (feedback_handle != NULL) {
-                    feedback_manager_set_background_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTED);
-                }
-                
                 // Time status
                 if (wifi_manager_is_time_synced()) {
                     char time_str[64];
@@ -542,11 +575,6 @@ void app_main(void) {
                 }
             } else {
                 ESP_LOGI(TAG, "WiFi: Disconnected");
-                
-                // Update feedback manager with WiFi status
-                if (feedback_handle != NULL) {
-                    feedback_manager_set_background_state(feedback_handle, FEEDBACK_STATE_WIFI_FAILED);
-                }
             }
             
             // RFID status

@@ -4,20 +4,28 @@ menu "Feedback Manager Configuration"
         default 7
         help
             GPIO number (IOxx) where WS2812B NeoPixel LED is connected.
-
-    config FEEDBACK_USE_WS2812
-        bool "Use WS2812B NeoPixel"
-        default y
-        help
-            If enabled, feedback uses WS2812B NeoPixel LED with RGB values.
-            If disabled, feedback uses standard GPIO LED.
             
     config FEEDBACK_LED_BRIGHTNESS
-        int "LED Brightness (0-255)"
-        default 10
+        int "LED Brightness (1-255)"
+        default 150
         range 1 255
-        depends on FEEDBACK_USE_WS2812
         help
             Brightness level for the WS2812B LED (1-255).
-            Lower values consume less power and can be easier on the eyes.
+            Higher values provide better visibility for breathing effects.
+            150 is recommended for good visibility while avoiding eye strain.
+            
+    config FEEDBACK_BREATHING_PERIOD
+        int "Breathing Effect Period (cycles)"
+        default 40
+        range 20 100
+        help
+            Number of cycles for one complete breathing period.
+            Higher values = slower breathing effect.
+            
+    config FEEDBACK_LOG_LEVEL
+        int "Feedback Manager Log Level"
+        default 2
+        range 0 5
+        help
+            0=None, 1=Error, 2=Warn, 3=Info, 4=Debug, 5=Verbose
 endmenu

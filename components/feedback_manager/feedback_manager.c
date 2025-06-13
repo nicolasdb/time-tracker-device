@@ -11,11 +11,17 @@
 
 static const char *TAG = "feedback_manager";
 
-// Maximum brightness (0-255)
+// Configuration with fallbacks
 #ifdef CONFIG_FEEDBACK_LED_BRIGHTNESS
 #define MAX_BRIGHTNESS CONFIG_FEEDBACK_LED_BRIGHTNESS
 #else
-#define MAX_BRIGHTNESS 100
+#define MAX_BRIGHTNESS 10
+#endif
+
+#ifdef CONFIG_FEEDBACK_BREATHING_PERIOD
+#define BREATHING_PERIOD CONFIG_FEEDBACK_BREATHING_PERIOD
+#else
+#define BREATHING_PERIOD 80
 #endif
 
 // LED colors for different states (RGB format)
@@ -24,6 +30,24 @@ typedef struct {
     uint8_t g;
     uint8_t b;
 } rgb_color_t;
+
+// State priority levels for queue management
+typedef enum {
+    FEEDBACK_PRIORITY_LOW = 0,      // Ambient states (idle breathing)
+    FEEDBACK_PRIORITY_MEDIUM = 1,   // Status updates (WiFi, AP mode)
+    FEEDBACK_PRIORITY_HIGH = 2,     // Critical events (tag detected, errors)
+    FEEDBACK_PRIORITY_CRITICAL = 3  // System errors, validation failures
+} feedback_priority_t;
+
+// State queue entry
+typedef struct {
+    feedback_state_t state;
+    feedback_priority_t priority;
+    uint32_t timestamp;
+    uint32_t duration_ms; // 0 = permanent, >0 = temporary
+} feedback_state_entry_t;
+
+#define FEEDBACK_QUEUE_SIZE 8
 
 // Color definitions
 static const rgb_color_t COLOR_OFF = {0, 0, 0};
@@ -36,20 +60,31 @@ static const rgb_color_t COLOR_WHITE = {255, 255, 255};
 static const rgb_color_t COLOR_ORANGE = {255, 165, 0};
 static const rgb_color_t COLOR_CYAN = {0, 255, 255};
 
-// Feedback manager structure
+// Feedback manager structure - with state queue
 struct feedback_manager {
     uint8_t led_gpio;                  // GPIO pin for LED
-    bool use_ws2812;                   // Whether to use WS2812B LED
-    led_strip_handle_t led_strip;      // LED strip handle (when using WS2812B)
-    feedback_state_t primary_state;    // Current primary state
-    feedback_state_t background_state; // Background state
+    led_strip_handle_t led_strip;      // LED strip handle
+    
+    // State queue management
+    feedback_state_entry_t state_queue[FEEDBACK_QUEUE_SIZE];
+    uint8_t queue_head;                // Next write position
+    uint8_t queue_count;               // Number of entries in queue
+    feedback_state_t current_state;    // Currently active state
+    feedback_priority_t current_priority; // Priority of current state
+    
     TaskHandle_t task_handle;          // Handle for background task
     bool is_initialized;               // Initialization state
     bool is_active;                    // Whether manager is active
+    
+    // Synchronization
+    SemaphoreHandle_t queue_mutex;     // Protect queue operations
 };
 
 // Forward declarations
 static void feedback_manager_task(void *arg);
+static esp_err_t queue_state_change(struct feedback_manager *manager, feedback_state_t state, feedback_priority_t priority, uint32_t duration_ms);
+static feedback_state_t get_highest_priority_state(struct feedback_manager *manager);
+static feedback_priority_t get_state_priority(feedback_state_t state);
 
 // Get color for state
 static rgb_color_t get_state_color(feedback_state_t state) {
@@ -119,22 +154,69 @@ static rgb_color_t get_state_color(feedback_state_t state) {
             return COLOR_WHITE;
             
         case FEEDBACK_STATE_INIT_WIFI_PREP:
-            return COLOR_BLUE;
+            return COLOR_WHITE;
             
         case FEEDBACK_STATE_INIT_TIME:
-            return COLOR_CYAN;
+            return COLOR_WHITE;
             
         case FEEDBACK_STATE_INIT_WEBHOOK:
-            return COLOR_YELLOW;
+            return COLOR_WHITE;
             
         case FEEDBACK_STATE_INIT_RFID:
-            return COLOR_ORANGE;
+            return COLOR_WHITE;
             
         case FEEDBACK_STATE_INIT_COMPLETE:
             return COLOR_GREEN;
             
         default:
             return COLOR_WHITE;
+    }
+}
+
+// Get priority for state
+static feedback_priority_t get_state_priority(feedback_state_t state) {
+    switch (state) {
+        // Critical - System errors and validation
+        case FEEDBACK_STATE_ERROR:
+        case FEEDBACK_STATE_WIFI_FAILED:
+        case FEEDBACK_STATE_TIME_SYNC_FAILED:
+        case FEEDBACK_STATE_RFID_ERROR:
+        case FEEDBACK_STATE_TAG_READ_ERROR:
+            return FEEDBACK_PRIORITY_CRITICAL;
+            
+        // High - Tag events and webhook errors  
+        case FEEDBACK_STATE_TAG_DETECTED:
+        case FEEDBACK_STATE_WEBHOOK_ERROR:
+        case FEEDBACK_STATE_WEBHOOK_SUCCESS:
+            return FEEDBACK_PRIORITY_HIGH;
+            
+        // High - Important connection states that should override others
+        case FEEDBACK_STATE_WIFI_AP_MODE:
+        case FEEDBACK_STATE_WIFI_CONNECTED:
+            return FEEDBACK_PRIORITY_HIGH;
+            
+        // Medium - Status updates and connection states
+        case FEEDBACK_STATE_WIFI_CONNECTING:
+        case FEEDBACK_STATE_TIME_SYNCING:
+        case FEEDBACK_STATE_TIME_SYNCED:
+        case FEEDBACK_STATE_WEBHOOK_SENDING:
+        case FEEDBACK_STATE_WEBHOOK_QUEUED:
+        case FEEDBACK_STATE_RFID_INITIALIZING:
+        case FEEDBACK_STATE_RFID_ACTIVE:
+        case FEEDBACK_STATE_INIT_COMPLETE:
+            return FEEDBACK_PRIORITY_MEDIUM;
+            
+        // Low - Ambient and idle states
+        case FEEDBACK_STATE_IDLE:
+        case FEEDBACK_STATE_BOOTING:
+        case FEEDBACK_STATE_INIT_START:
+        case FEEDBACK_STATE_INIT_FS:
+        case FEEDBACK_STATE_INIT_WIFI_PREP:
+        case FEEDBACK_STATE_INIT_TIME:
+        case FEEDBACK_STATE_INIT_WEBHOOK:
+        case FEEDBACK_STATE_INIT_RFID:
+        default:
+            return FEEDBACK_PRIORITY_LOW;
     }
 }
 
@@ -156,233 +238,300 @@ static void set_led_color(led_strip_handle_t led_strip, rgb_color_t color, uint8
     }
 }
 
-// Breathing effect - returns intensity 0-255
-static uint8_t breathing_effect(uint32_t cycle_count, uint32_t period) {
-    // Enhanced sine wave approximation for more natural breathing
-    float t = ((float)(cycle_count % period)) / period;
-    
-    // Adjusted sine wave with phase shift for more natural curve
-    float value = sinf(t * 2.0f * 3.14159f - 3.14159f/2.0f); // Phase shifted sine
-    value = (value + 1.0f) / 2.0f; // Convert from -1..1 to 0..1
-    
-    // Apply squaring for more prominent peaks and smoother valleys
+// Breathing effect - simplified
+static uint8_t breathing_effect(uint32_t cycle_count) {
+    float t = ((float)(cycle_count % BREATHING_PERIOD)) / BREATHING_PERIOD;
+    float value = sinf(t * 2.0f * 3.14159f - 3.14159f/2.0f);
+    value = (value + 1.0f) / 2.0f;
     value = value * value;
-    
-    return (uint8_t)(value * MAX_BRIGHTNESS);
+    return (uint8_t)(value * 255);
 }
 
-// Initialize feedback manager
-feedback_manager_handle_t feedback_manager_init(uint8_t led_gpio) {
-    ESP_LOGI(TAG, "Initializing feedback manager on GPIO %d", led_gpio);
+// Queue state change with priority
+static esp_err_t queue_state_change(struct feedback_manager *manager, feedback_state_t state, feedback_priority_t priority, uint32_t duration_ms) {
+    if (manager == NULL || manager->queue_mutex == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
     
-    // Allocate memory for the manager
+    // Take mutex with timeout
+    if (xSemaphoreTake(manager->queue_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to take queue mutex");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // Check if queue is full
+    if (manager->queue_count >= FEEDBACK_QUEUE_SIZE) {
+        // Remove lowest priority entry to make space
+        uint8_t lowest_idx = 0;
+        feedback_priority_t lowest_priority = FEEDBACK_PRIORITY_CRITICAL;
+        
+        for (uint8_t i = 0; i < manager->queue_count; i++) {
+            if (manager->state_queue[i].priority < lowest_priority) {
+                lowest_priority = manager->state_queue[i].priority;
+                lowest_idx = i;
+            }
+        }
+        
+        // Only remove if new state has higher priority
+        if (priority <= lowest_priority) {
+            xSemaphoreGive(manager->queue_mutex);
+            return ESP_ERR_NO_MEM;
+        }
+        
+        // Remove lowest priority entry
+        for (uint8_t i = lowest_idx; i < manager->queue_count - 1; i++) {
+            manager->state_queue[i] = manager->state_queue[i + 1];
+        }
+        manager->queue_count--;
+    }
+    
+    // Add new entry
+    uint8_t insert_idx = manager->queue_count;
+    
+    // Find insertion point (keep sorted by priority)
+    for (uint8_t i = 0; i < manager->queue_count; i++) {
+        if (priority > manager->state_queue[i].priority) {
+            insert_idx = i;
+            break;
+        }
+    }
+    
+    // Shift entries to make space
+    for (uint8_t i = manager->queue_count; i > insert_idx; i--) {
+        manager->state_queue[i] = manager->state_queue[i - 1];
+    }
+    
+    // Insert new entry
+    manager->state_queue[insert_idx].state = state;
+    manager->state_queue[insert_idx].priority = priority;
+    manager->state_queue[insert_idx].timestamp = esp_timer_get_time() / 1000; // Convert to ms
+    manager->state_queue[insert_idx].duration_ms = duration_ms;
+    manager->queue_count++;
+    
+    ESP_LOGD(TAG, "Queued state %d (priority %d, duration %lums), queue count: %d", 
+             (int)state, (int)priority, (unsigned long)duration_ms, (int)manager->queue_count);
+    
+    xSemaphoreGive(manager->queue_mutex);
+    return ESP_OK;
+}
+
+// Get highest priority state from queue
+static feedback_state_t get_highest_priority_state(struct feedback_manager *manager) {
+    if (manager == NULL) {
+        ESP_LOGE(TAG, "get_highest_priority_state: manager is NULL");
+        return FEEDBACK_STATE_IDLE;
+    }
+    
+    if (manager->queue_mutex == NULL) {
+        ESP_LOGE(TAG, "get_highest_priority_state: mutex is NULL");
+        return FEEDBACK_STATE_IDLE;
+    }
+    
+    if (manager->queue_count == 0) {
+        ESP_LOGD(TAG, "get_highest_priority_state: queue is empty, returning IDLE");
+        return FEEDBACK_STATE_IDLE;
+    }
+    
+    if (xSemaphoreTake(manager->queue_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        return manager->current_state; // Return current if can't take mutex
+    }
+    
+    uint32_t current_time = esp_timer_get_time() / 1000;
+    feedback_state_t result_state = FEEDBACK_STATE_IDLE;
+    
+    // Clean expired entries and find highest priority
+    uint8_t write_idx = 0;
+    for (uint8_t read_idx = 0; read_idx < manager->queue_count; read_idx++) {
+        feedback_state_entry_t *entry = &manager->state_queue[read_idx];
+        
+        // Check if entry has expired
+        bool expired = (entry->duration_ms > 0) && 
+                      ((current_time - entry->timestamp) >= entry->duration_ms);
+        
+        if (!expired) {
+            // Keep this entry
+            if (write_idx != read_idx) {
+                manager->state_queue[write_idx] = *entry;
+            }
+            
+            // First non-expired entry is highest priority (queue is sorted)
+            if (write_idx == 0) {
+                result_state = entry->state;
+                manager->current_priority = entry->priority;
+                ESP_LOGD(TAG, "Selected highest priority state: %d (priority %d)", 
+                         (int)result_state, (int)manager->current_priority);
+            }
+            
+            write_idx++;
+        }
+    }
+    
+    manager->queue_count = write_idx;
+    
+    // If no entries, default to idle
+    if (manager->queue_count == 0) {
+        result_state = FEEDBACK_STATE_IDLE;
+        manager->current_priority = FEEDBACK_PRIORITY_LOW;
+    }
+    
+    xSemaphoreGive(manager->queue_mutex);
+    return result_state;
+}
+
+// Initialize feedback manager - WS2812 only
+feedback_manager_handle_t feedback_manager_init(uint8_t led_gpio) {
+    ESP_LOGI(TAG, "Initializing on GPIO %d", led_gpio);
+    
     struct feedback_manager *manager = calloc(1, sizeof(struct feedback_manager));
     if (manager == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate memory for manager");
+        ESP_LOGE(TAG, "Failed to allocate memory");
         return NULL;
     }
     
-    // Store configuration
     manager->led_gpio = led_gpio;
-    manager->primary_state = FEEDBACK_STATE_BOOTING;
-    manager->background_state = FEEDBACK_STATE_IDLE;
-    manager->is_initialized = false;
-    manager->is_active = false;
     
-#ifdef CONFIG_FEEDBACK_USE_WS2812
-    manager->use_ws2812 = true;
+    // Initialize state queue
+    manager->queue_head = 0;
+    manager->queue_count = 0;
+    manager->current_state = FEEDBACK_STATE_BOOTING;
+    manager->current_priority = FEEDBACK_PRIORITY_LOW;
+    
+    // Create mutex for queue synchronization
+    manager->queue_mutex = xSemaphoreCreateMutex();
+    if (manager->queue_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create queue mutex");
+        free(manager);
+        return NULL;
+    }
+    
+    // Set active state BEFORE creating task to avoid race condition
+    manager->is_initialized = false; // Will be set true after LED init
+    manager->is_active = true;       // Must be true before task starts
     
     // Initialize WS2812B LED
-    ESP_LOGI(TAG, "Initializing WS2812B LED on GPIO %d with brightness %d", led_gpio, MAX_BRIGHTNESS);
-    
     led_strip_config_t strip_config = {
         .strip_gpio_num = led_gpio,
-        .max_leds = 1,  // Single LED
+        .max_leds = 1,
         .led_model = LED_MODEL_WS2812,
-        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB, // Most WS2812B use GRB format
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
         .flags.invert_out = false,
     };
     
-    // Use RMT driver for WS2812
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz = 10 * 1000 * 1000, // 10MHz
+        .resolution_hz = 10 * 1000 * 1000,
         .flags.with_dma = false,
     };
     
     esp_err_t ret = led_strip_new_rmt_device(&strip_config, &rmt_config, &manager->led_strip);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create LED strip driver: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to create LED strip: %s", esp_err_to_name(ret));
         free(manager);
         return NULL;
     }
     
-    // Boot pattern with WS2812
-    // White blink
-    led_strip_clear(manager->led_strip);
-    led_strip_refresh(manager->led_strip);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Start task first, then do boot pattern
+    BaseType_t task_result = xTaskCreate(feedback_manager_task, "feedback_task", 3072, manager, 2, &manager->task_handle);
+    if (task_result != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create feedback task");
+        free(manager);
+        return NULL;
+    }
+    ESP_LOGI(TAG, "Feedback task created successfully");
     
-    // Show boot pattern sequence
-    rgb_color_t boot_color = COLOR_WHITE;
-    set_led_color(manager->led_strip, boot_color, MAX_BRIGHTNESS);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    
-    led_strip_clear(manager->led_strip);
-    led_strip_refresh(manager->led_strip);
-    vTaskDelay(pdMS_TO_TICKS(200));
-    
-    set_led_color(manager->led_strip, boot_color, MAX_BRIGHTNESS);
-    vTaskDelay(pdMS_TO_TICKS(200));
-    
-    led_strip_clear(manager->led_strip);
-    led_strip_refresh(manager->led_strip);
-#else
-    manager->use_ws2812 = false;
-    
-    // Configure standard GPIO for LED
-    gpio_reset_pin(led_gpio);
-    gpio_set_direction(led_gpio, GPIO_MODE_OUTPUT);
-    
-    // Show boot pattern with standard LED
-    gpio_set_level(led_gpio, 1);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    gpio_set_level(led_gpio, 0);
-    vTaskDelay(pdMS_TO_TICKS(200));
-    gpio_set_level(led_gpio, 1);
-    vTaskDelay(pdMS_TO_TICKS(200));
-    gpio_set_level(led_gpio, 0);
-#endif
-    
-    // Start feedback task
-    ESP_LOGI(TAG, "Starting feedback manager task");
-    xTaskCreate(feedback_manager_task, "feedback_task", 3072, manager, 2, &manager->task_handle);
-    
+    // Now mark as fully initialized
     manager->is_initialized = true;
-    manager->is_active = true;
     
-    ESP_LOGI(TAG, "Feedback manager initialized successfully");
+    // Initialize with booting state, then permanent idle state
+    vTaskDelay(pdMS_TO_TICKS(100)); // Let task start
+    queue_state_change(manager, FEEDBACK_STATE_IDLE, FEEDBACK_PRIORITY_LOW, 0); // Permanent idle baseline
+    queue_state_change(manager, FEEDBACK_STATE_BOOTING, FEEDBACK_PRIORITY_LOW, 300); // Brief boot indication
     
+    ESP_LOGI(TAG, "Initialized successfully");
     return manager;
 }
 
 // Deinitialize feedback manager
 esp_err_t feedback_manager_deinit(feedback_manager_handle_t handle) {
-    if (handle == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    if (handle == NULL) return ESP_ERR_INVALID_ARG;
     
     struct feedback_manager *manager = (struct feedback_manager *)handle;
     
-    // Stop task
     manager->is_active = false;
     if (manager->task_handle != NULL) {
-        vTaskDelay(pdMS_TO_TICKS(100)); // Give time for task to exit
+        vTaskDelay(pdMS_TO_TICKS(100));
         vTaskDelete(manager->task_handle);
-        manager->task_handle = NULL;
     }
     
-    // Turn off LED
-    if (manager->use_ws2812 && manager->led_strip != NULL) {
+    if (manager->led_strip != NULL) {
         led_strip_clear(manager->led_strip);
         led_strip_refresh(manager->led_strip);
         led_strip_del(manager->led_strip);
-    } else {
-        gpio_set_level(manager->led_gpio, 0);
     }
     
-    // Free memory
+    // Clean up mutex
+    if (manager->queue_mutex != NULL) {
+        vSemaphoreDelete(manager->queue_mutex);
+    }
+    
     free(manager);
-    
     return ESP_OK;
 }
 
-// Set primary system state
+// Set primary system state - now uses priority queue
 esp_err_t feedback_manager_set_state(feedback_manager_handle_t handle, feedback_state_t state) {
-    if (handle == NULL || state >= FEEDBACK_STATE_MAX) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    if (handle == NULL || state >= FEEDBACK_STATE_MAX) return ESP_ERR_INVALID_ARG;
     
     struct feedback_manager *manager = (struct feedback_manager *)handle;
     
-    ESP_LOGI(TAG, "Setting primary state to %d", state);
-    manager->primary_state = state;
+    // Get priority for this state
+    feedback_priority_t priority = get_state_priority(state);
     
-    // Immediately update LED color based on the new state
-    if (manager->use_ws2812 && manager->led_strip != NULL) {
-        rgb_color_t color = get_state_color(state);
-        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
+    // Queue the state change with appropriate duration
+    uint32_t duration_ms = 0; // Permanent by default
+    
+    // Some states are temporary and should auto-expire
+    switch (state) {
+        case FEEDBACK_STATE_TAG_DETECTED:
+        case FEEDBACK_STATE_WEBHOOK_SUCCESS:
+            duration_ms = 2000; // 2 seconds
+            break;
+        case FEEDBACK_STATE_WIFI_CONNECTED:
+            duration_ms = 1000; // 1 second - show connected briefly then return to idle
+            break;
+        case FEEDBACK_STATE_INIT_COMPLETE:
+            duration_ms = 1000; // 1 second
+            break;
+        default:
+            duration_ms = 0; // Permanent
+            break;
     }
     
-    return ESP_OK;
+    return queue_state_change(manager, state, priority, duration_ms);
 }
 
-// Set background system state
-esp_err_t feedback_manager_set_background_state(feedback_manager_handle_t handle, feedback_state_t state) {
-    if (handle == NULL || state >= FEEDBACK_STATE_MAX) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    struct feedback_manager *manager = (struct feedback_manager *)handle;
-    
-    ESP_LOGI(TAG, "Setting background state to %d", state);
-    manager->background_state = state;
-    
-    // If primary state is idle, immediately update LED color based on the new background state
-    if (manager->primary_state == FEEDBACK_STATE_IDLE && manager->use_ws2812 && manager->led_strip != NULL) {
-        rgb_color_t color = get_state_color(state);
-        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
-    }
-    
-    return ESP_OK;
-}
-
-// Flash a temporary state indication
+// Flash a temporary state indication - now uses queue
 esp_err_t feedback_manager_flash_event(feedback_manager_handle_t handle, feedback_state_t state, int count) {
-    if (handle == NULL || state >= FEEDBACK_STATE_MAX || count <= 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    if (handle == NULL || state >= FEEDBACK_STATE_MAX || count <= 0) return ESP_ERR_INVALID_ARG;
     
     struct feedback_manager *manager = (struct feedback_manager *)handle;
     
-    // Store original primary state
-    feedback_state_t original_state = manager->primary_state;
+    // Queue multiple flash events with high priority and short duration
+    feedback_priority_t priority = get_state_priority(state);
+    if (priority < FEEDBACK_PRIORITY_HIGH) {
+        priority = FEEDBACK_PRIORITY_HIGH; // Flash events should have high priority
+    }
     
-    // Flash the new state
+    // Schedule multiple flash events with gaps
     for (int i = 0; i < count; i++) {
-        // Set new state
-        manager->primary_state = state;
-        
-        // Get color for flash state
-        if (manager->use_ws2812 && manager->led_strip != NULL) {
-            rgb_color_t color = get_state_color(state);
-            set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
-        } else {
-            gpio_set_level(manager->led_gpio, 1);
+        // Schedule the flash state
+        esp_err_t ret = queue_state_change(manager, state, priority, 200); // 200ms duration
+        if (ret != ESP_OK) {
+            return ret;
         }
         
-        vTaskDelay(pdMS_TO_TICKS(200));
-        
-        // Return to original state
-        manager->primary_state = original_state;
-        
-        // Restore original color
-        if (manager->use_ws2812 && manager->led_strip != NULL) {
-            rgb_color_t color;
-            
-            if (original_state == FEEDBACK_STATE_IDLE) {
-                color = get_state_color(manager->background_state);
-            } else {
-                color = get_state_color(original_state);
-            }
-            
-            set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
-        } else {
-            // For standard LED, approximate with on/off
-            gpio_set_level(manager->led_gpio, 0);
-        }
-        
-        vTaskDelay(pdMS_TO_TICKS(200));
+        // Small delay to ensure states are queued in order
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
     
     return ESP_OK;
@@ -390,22 +539,18 @@ esp_err_t feedback_manager_flash_event(feedback_manager_handle_t handle, feedbac
 
 // Clear all states and reset to default idle state
 esp_err_t feedback_manager_reset(feedback_manager_handle_t handle) {
-    if (handle == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    if (handle == NULL) return ESP_ERR_INVALID_ARG;
     
     struct feedback_manager *manager = (struct feedback_manager *)handle;
     
-    manager->primary_state = FEEDBACK_STATE_IDLE;
-    manager->background_state = FEEDBACK_STATE_IDLE;
-    
-    // Update LED color
-    if (manager->use_ws2812 && manager->led_strip != NULL) {
-        rgb_color_t color = get_state_color(FEEDBACK_STATE_IDLE);
-        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
+    // Clear queue and reset to idle state
+    if (manager->queue_mutex != NULL && xSemaphoreTake(manager->queue_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        manager->queue_count = 0;
+        xSemaphoreGive(manager->queue_mutex);
     }
     
-    return ESP_OK;
+    // Queue idle state
+    return queue_state_change(manager, FEEDBACK_STATE_IDLE, FEEDBACK_PRIORITY_LOW, 0);
 }
 
 // Check if RFID hardware is responding
@@ -419,181 +564,156 @@ bool feedback_manager_check_rfid_hardware(void* rfid_handle) {
     return true;
 }
 
-// Validate an initialization step
+// Validate an initialization step - non-blocking queue-based
 esp_err_t feedback_manager_validate_init_step(feedback_manager_handle_t handle, bool success) {
-    if (handle == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
+    if (handle == NULL) return ESP_ERR_INVALID_ARG;
     
     struct feedback_manager *manager = (struct feedback_manager *)handle;
-    feedback_state_t current_state = manager->primary_state;
-    
-    ESP_LOGI(TAG, "Validating initialization step (state: %d), success: %s", 
-            current_state, success ? "true" : "false");
     
     if (success) {
-        // Flash green briefly to indicate success
-        if (manager->use_ws2812 && manager->led_strip != NULL) {
-            // Store current color
-            rgb_color_t current_color = get_state_color(current_state);
-            
-            // Flash green briefly
-            set_led_color(manager->led_strip, COLOR_GREEN, MAX_BRIGHTNESS);
-            vTaskDelay(pdMS_TO_TICKS(100));
-            
-            // Return to current state color
-            set_led_color(manager->led_strip, current_color, MAX_BRIGHTNESS);
-        } else {
-            // Standard LED approximation - triple quick flash
-            for (int i = 0; i < 3; i++) {
-                gpio_set_level(manager->led_gpio, 1);
-                vTaskDelay(pdMS_TO_TICKS(50));
-                gpio_set_level(manager->led_gpio, 0);
-                vTaskDelay(pdMS_TO_TICKS(50));
-            }
-            gpio_set_level(manager->led_gpio, 1); // Back to on state
-        }
+        // Queue a brief green flash for success
+        return queue_state_change(manager, FEEDBACK_STATE_WEBHOOK_SUCCESS, FEEDBACK_PRIORITY_HIGH, 100);
     } else {
-        // Flash red for failure
-        if (manager->use_ws2812 && manager->led_strip != NULL) {
-            // Store current color
-            rgb_color_t current_color = get_state_color(current_state);
-            
-            // Flash red three times
-            for (int i = 0; i < 3; i++) {
-                set_led_color(manager->led_strip, COLOR_RED, MAX_BRIGHTNESS);
-                vTaskDelay(pdMS_TO_TICKS(100));
-                set_led_color(manager->led_strip, COLOR_OFF, 0);
-                vTaskDelay(pdMS_TO_TICKS(100));
-            }
-            
-            // Return to current state color
-            set_led_color(manager->led_strip, current_color, MAX_BRIGHTNESS);
-        } else {
-            // Standard LED approximation - longer flashes
-            for (int i = 0; i < 3; i++) {
-                gpio_set_level(manager->led_gpio, 1);
-                vTaskDelay(pdMS_TO_TICKS(200));
-                gpio_set_level(manager->led_gpio, 0);
-                vTaskDelay(pdMS_TO_TICKS(200));
-            }
-        }
+        // Queue error flash sequence for failure
+        feedback_manager_flash_event(handle, FEEDBACK_STATE_ERROR, 3);
+        return ESP_OK;
     }
-    
-    return ESP_OK;
 }
 
-// Feedback manager task
+// Feedback manager task - queue-based WS2812B control
 static void feedback_manager_task(void *arg) {
     struct feedback_manager *manager = (struct feedback_manager *)arg;
-    
     uint32_t cycle_count = 0;
-    const uint32_t BREATHING_PERIOD = 40; // Cycles for one breathing period
-    
-    // Debug log to show we're starting the task
-    ESP_LOGI(TAG, "Feedback manager task started. Use WS2812: %d, Max Brightness: %d", 
-             manager->use_ws2812, MAX_BRIGHTNESS);
+
+    ESP_LOGI(TAG, "Feedback task started, manager=%p", manager);
+    ESP_LOGI(TAG, "Task initial state: is_active=%d, led_strip=%p, queue_mutex=%p", 
+             manager->is_active, manager->led_strip, manager->queue_mutex);
 
     while (manager->is_active) {
-        // Use primary state for display logic
-        feedback_state_t current_state = manager->primary_state;
+        // Get the highest priority state from queue
+        feedback_state_t current_state = get_highest_priority_state(manager);
         
-        // Get base color for current state
-        rgb_color_t color = get_state_color(current_state);
+        // Update current state if it changed
+        if (current_state != manager->current_state) {
+            manager->current_state = current_state;
+            ESP_LOGI(TAG, "LED state changed to: %d", current_state);
+        }
         
-        // Apply different patterns based on the state
-        if (manager->use_ws2812) {
-            // Special effects for certain states
-            switch (current_state) {
-                case FEEDBACK_STATE_IDLE:
-                    // Slow breathing effect with strong blue
-                    {
-                        uint8_t intensity = breathing_effect(cycle_count, BREATHING_PERIOD);
-                        // Apply breathing directly to avoid double brightness scaling
-                        uint8_t blue_intensity = (COLOR_BLUE.b * intensity) / 255;
-                        rgb_color_t breathing_color = {0, 0, blue_intensity};
-                        // Use intensity as final brightness, not MAX_BRIGHTNESS
-                        led_strip_set_pixel(manager->led_strip, 0, breathing_color.r, breathing_color.g, breathing_color.b);
-                        esp_err_t ret = led_strip_refresh(manager->led_strip);
-                        if (ret != ESP_OK) {
-                            ESP_LOGE(TAG, "Failed to refresh LED strip: %s", esp_err_to_name(ret));
-                        }
-                    }
-                    break;
-                    
-                case FEEDBACK_STATE_WIFI_CONNECTING:
-                    // Fast blue blinking
-                    if (cycle_count % 6 < 3) {
-                        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
+        if (manager->led_strip == NULL) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+        
+        // Single point of WS2812B LED control
+        switch (current_state) {
+            case FEEDBACK_STATE_IDLE:
+                // Blue breathing effect - apply brightness properly
+                {
+                    uint8_t intensity = breathing_effect(cycle_count);
+                    // Apply both breathing intensity AND configured brightness
+                    uint8_t final_brightness = (MAX_BRIGHTNESS * intensity) / 255;
+                    uint8_t blue_intensity = (COLOR_BLUE.b * final_brightness) / 255;
+                    led_strip_set_pixel(manager->led_strip, 0, 0, 0, blue_intensity);
+                    led_strip_refresh(manager->led_strip);
+                }
+                break;
+                
+            case FEEDBACK_STATE_WIFI_CONNECTING:
+                // Fast blue blinking
+                if (cycle_count % 6 < 3) {
+                    set_led_color(manager->led_strip, COLOR_BLUE, MAX_BRIGHTNESS);
+                } else {
+                    set_led_color(manager->led_strip, COLOR_OFF, MAX_BRIGHTNESS);
+                }
+                break;
+                
+            case FEEDBACK_STATE_WIFI_AP_MODE:
+                // AP mode sequence: Y→B→P (0.3s,0.3s,2.0s)
+                {
+                    uint32_t ap_cycle = cycle_count % 52;  // 2.6s total cycle
+                    if (ap_cycle < 6) {
+                        set_led_color(manager->led_strip, COLOR_YELLOW, MAX_BRIGHTNESS);
+                    } else if (ap_cycle < 12) {
+                        set_led_color(manager->led_strip, COLOR_BLUE, MAX_BRIGHTNESS);
                     } else {
-                        set_led_color(manager->led_strip, COLOR_OFF, MAX_BRIGHTNESS);
+                        set_led_color(manager->led_strip, COLOR_PURPLE, MAX_BRIGHTNESS);
                     }
-                    break;
-                    
-                case FEEDBACK_STATE_WIFI_AP_MODE:
-                    // AP mode sequence: Y→B→P→P (1s,1s,2s) 
-                    // Total cycle: 80 cycles (4 seconds at 50ms each)
-                    {
-                        uint32_t ap_cycle = cycle_count % 80; // 4 second cycle
-                        if (ap_cycle < 20) {
-                            // Yellow for 1s (warning - no WiFi)
-                            set_led_color(manager->led_strip, COLOR_YELLOW, MAX_BRIGHTNESS);
-                        } else if (ap_cycle < 40) {
-                            // Blue for 1s (trying to connect)
-                            set_led_color(manager->led_strip, COLOR_BLUE, MAX_BRIGHTNESS);
-                        } else {
-                            // Purple for 2s (AP mode active - doubled duration)
-                            set_led_color(manager->led_strip, COLOR_PURPLE, MAX_BRIGHTNESS);
-                        }
-                    }
-                    break;
-                    
-                case FEEDBACK_STATE_RFID_ERROR:
-                    // Double red flash
-                    if (cycle_count % 20 < 5) {
-                        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
-                    } else if (cycle_count % 20 >= 10 && cycle_count % 20 < 15) {
-                        set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
-                    } else {
-                        set_led_color(manager->led_strip, COLOR_OFF, MAX_BRIGHTNESS);
-                    }
-                    break;
-                    
-                case FEEDBACK_STATE_WEBHOOK_ERROR:
-                    // RED/green alternating - "Error sending (red) to webhook system (green)"
-                    if (cycle_count % 20 < 10) {
+                }
+                break;
+                
+            case FEEDBACK_STATE_WEBHOOK_ERROR:
+                // Critical webhook error: R→R→O (0.2s,0.2s,0.6s) - double red flash + orange
+                {
+                    uint32_t error_cycle = cycle_count % 20;  // 1.0s total cycle
+                    if (error_cycle < 4) {
+                        set_led_color(manager->led_strip, COLOR_RED, MAX_BRIGHTNESS);
+                    } else if (error_cycle < 8) {
                         set_led_color(manager->led_strip, COLOR_RED, MAX_BRIGHTNESS);
                     } else {
-                        set_led_color(manager->led_strip, COLOR_GREEN, MAX_BRIGHTNESS);
+                        set_led_color(manager->led_strip, COLOR_ORANGE, MAX_BRIGHTNESS);
                     }
-                    break;
-                    
-                case FEEDBACK_STATE_WEBHOOK_QUEUED:
-                    // Yellow/green alternating - "Warning: queued (yellow) for webhook system (green)"
-                    if (cycle_count % 20 < 10) {
-                        set_led_color(manager->led_strip, COLOR_YELLOW, MAX_BRIGHTNESS);
+                }
+                break;
+                
+            case FEEDBACK_STATE_WEBHOOK_QUEUED:
+                // Webhook queued: Y→G (0.5s,0.5s) - yellow/green alternating
+                if (cycle_count % 20 < 10) {
+                    set_led_color(manager->led_strip, COLOR_YELLOW, MAX_BRIGHTNESS);
+                } else {
+                    set_led_color(manager->led_strip, COLOR_GREEN, MAX_BRIGHTNESS);
+                }
+                break;
+                
+            case FEEDBACK_STATE_WIFI_FAILED:
+                // WiFi failed: R→O→R (0.3s,0.4s,0.3s) - red/orange/red pattern
+                {
+                    uint32_t fail_cycle = cycle_count % 20;  // 1.0s total cycle
+                    if (fail_cycle < 6) {
+                        set_led_color(manager->led_strip, COLOR_RED, MAX_BRIGHTNESS);
+                    } else if (fail_cycle < 14) {
+                        set_led_color(manager->led_strip, COLOR_ORANGE, MAX_BRIGHTNESS);
                     } else {
-                        set_led_color(manager->led_strip, COLOR_GREEN, MAX_BRIGHTNESS);
+                        set_led_color(manager->led_strip, COLOR_RED, MAX_BRIGHTNESS);
                     }
-                    break;
-                    
-                default:
-                    // For other states, no need to update since they're handled by set_state
-                    break;
-            }
-        } 
+                }
+                break;
+                
+            case FEEDBACK_STATE_RFID_ERROR:
+                // RFID error: R→W→R (0.2s,0.6s,0.2s) - red/white/red pattern
+                {
+                    uint32_t rfid_cycle = cycle_count % 20;  // 1.0s total cycle
+                    if (rfid_cycle < 4) {
+                        set_led_color(manager->led_strip, COLOR_RED, MAX_BRIGHTNESS);
+                    } else if (rfid_cycle < 16) {
+                        set_led_color(manager->led_strip, COLOR_WHITE, MAX_BRIGHTNESS);
+                    } else {
+                        set_led_color(manager->led_strip, COLOR_RED, MAX_BRIGHTNESS);
+                    }
+                }
+                break;
+                
+            default:
+                // All other states display their static color
+                {
+                    rgb_color_t color = get_state_color(current_state);
+                    set_led_color(manager->led_strip, color, MAX_BRIGHTNESS);
+                }
+                break;
+        }
         
         cycle_count++;
-        vTaskDelay(pdMS_TO_TICKS(50)); // 20Hz update rate
+        
+        // Debug log every 5 seconds to show task is running
+        if (cycle_count % 100 == 0) {
+            ESP_LOGI(TAG, "Task running, cycle=%lu, current_state=%d, queue_count=%d", 
+                     (unsigned long)cycle_count, (int)manager->current_state, (int)manager->queue_count);
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
     
-    // Turn off LED before exiting
-    if (manager->use_ws2812) {
-        led_strip_clear(manager->led_strip);
-        led_strip_refresh(manager->led_strip);
-    } else {
-        gpio_set_level(manager->led_gpio, 0);
-    }
-    
+    // Cleanup
+    led_strip_clear(manager->led_strip);
+    led_strip_refresh(manager->led_strip);
     vTaskDelete(NULL);
 }

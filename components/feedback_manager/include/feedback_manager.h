@@ -83,26 +83,11 @@ esp_err_t feedback_manager_deinit(feedback_manager_handle_t handle);
 /**
  * @brief Set primary system state
  * 
- * This function sets the primary system state for the feedback manager.
- * The primary state has higher priority and will override the background state.
- * 
  * @param handle Feedback manager handle
  * @param state System state
  * @return ESP_OK on success
  */
 esp_err_t feedback_manager_set_state(feedback_manager_handle_t handle, feedback_state_t state);
-
-/**
- * @brief Set background system state
- * 
- * This function sets the background system state for the feedback manager.
- * The background state will be displayed when no primary state is active.
- * 
- * @param handle Feedback manager handle
- * @param state System state
- * @return ESP_OK on success
- */
-esp_err_t feedback_manager_set_background_state(feedback_manager_handle_t handle, feedback_state_t state);
 
 /**
  * @brief Flash a temporary state indication
