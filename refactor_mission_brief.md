@@ -1,480 +1,1141 @@
-# Time Tracker Device Refactor Mission Brief
+# MCP-Inspired Architecture Refactoring Mission
 
 ## Executive Summary
-Comprehensive refactor to eliminate technical debt, optimize codebase, and establish clean modular architecture with proper Kconfig organization.
 
-## Current State Analysis
+**RADICAL TRANSFORMATION:** Convert tightly-coupled prototype into production-ready, tool-based architecture inspired by Anthropic's Model Context Protocol (MCP). Transform main.c from business logic container into pure orchestrator managing reusable, testable tools.
 
-### Technical Debt Identified
-- **feedback_manager.c**: Unused functions, double brightness logic, state confusion
-- **main.c**: Hardcoded values, inconsistent state management  
-- **State Logic**: IDLE/background state confusion causing breathing effect failures
-- **Kconfig**: Scattered configuration, inconsistent organization
-- **Logging**: Excessive verbosity, inconsistent tags
-- **Dead Code**: Standard LED paths (only WS2812 used), unused color functions
-
-### Working Features (Preserve)
-✅ GPIO 7 WS2812 LED working  
-✅ Strong blue (0,0,255) color definition  
-✅ Tag detection/removal flow  
-✅ Webhook integration  
-✅ WiFi connection management  
-✅ New color logic: RED/green errors, Yellow/green queued, Y→B→P AP mode  
-
-### Broken/Problematic Features
-❌ Breathing effect (state logic issue)  
-❌ Red flash on tag removal (erroneous error state)  
-❌ Excessive logging cluttering serial output  
-❌ Unused code causing warnings  
-
-## Refactor Goals
-
-### Primary Objectives
-1. **Clean State Management**: Single, clear state machine
-2. **Modular Architecture**: Self-contained components with clear interfaces  
-3. **Organized Kconfig**: Logical grouping by module
-4. **Optimized Performance**: Remove unused code, efficient patterns
-5. **Maintainable Code**: Clear documentation, consistent naming
-
-### UX Improvements  
-- **Breathing Effect**: Strong blue (0,0,255) fade for idle state
-- **Intuitive Colors**: System-aware error patterns (RED/green = webhook error)
-- **Clean Logging**: Configurable verbosity, consistent format
-
-## Detailed Action Plan
-
-### Phase 1: feedback_manager Module Cleanup
-
-#### File: `components/feedback_manager/feedback_manager.c`
-**Remove Dead Code:**
-- [ ] `apply_brightness()` function (unused)
-- [ ] All standard GPIO LED code paths (only WS2812 used)
-- [ ] Redundant state logic in task loop
-
-**Fix State Management:**
-```c
-// Current problematic logic:
-if (current_state == FEEDBACK_STATE_IDLE) {
-    current_state = manager->background_state; // Wrong!
-}
-
-// Should be:
-feedback_state_t current_state = manager->primary_state;
-// Use primary_state directly for all display logic
-```
-
-**Breathing Effect Fix:**
-```c
-case FEEDBACK_STATE_IDLE:
-    // Direct LED control without double brightness scaling
-    uint8_t intensity = breathing_effect(cycle_count, BREATHING_PERIOD);
-    uint8_t blue_intensity = (255 * intensity) / 255;
-    led_strip_set_pixel(led_strip, 0, 0, 0, blue_intensity);
-    led_strip_refresh(led_strip);
-    break;
-```
-
-#### File: `components/feedback_manager/Kconfig.projbuild`
-**Reorganize & Expand:**
-```
-menu "Feedback Manager Configuration"
-    config FEEDBACK_LED_GPIO
-        int "LED GPIO Number"
-        default 7
-        
-    config FEEDBACK_LED_BRIGHTNESS  
-        int "LED Brightness (1-255)"
-        default 10
-        range 1 255
-        
-    config FEEDBACK_BREATHING_PERIOD
-        int "Breathing Effect Period (cycles)"
-        default 40
-        range 20 100
-        
-    config FEEDBACK_LOG_LEVEL
-        int "Feedback Manager Log Level"
-        default 3
-        range 0 5
-        help
-            0=None, 1=Error, 2=Warn, 3=Info, 4=Debug, 5=Verbose
-endmenu
-```
-
-### Phase 2: Main Application Cleanup
-
-#### File: `main/main.c`
-**Remove Hardcoded Values:**
-- [ ] Replace all magic numbers with CONFIG_ defines
-- [ ] Remove fallback GPIO LED code (WS2812 only)
-
-**Fix Tag Removal Handler:**
-```c
-static void tag_removed_handler(...) {
-    tag_present = false;
-    if (feedback_handle != NULL) {
-        feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_IDLE);
-        // No error flash - removal is normal operation
-    }
-    // Send webhook event...
-}
-```
-
-**State Management Simplification:**
-- [ ] Remove background_state concept
-- [ ] Use primary_state only
-- [ ] Clear state transitions
-
-### Phase 3: Kconfig Reorganization
-
-#### File: `Kconfig.projbuild`
-**New Structure:**
-```
-menu "Time Tracker Device Configuration"
-    
-    menu "Hardware Configuration"
-        source "components/feedback_manager/Kconfig.projbuild"
-        source "components/rfid_manager/Kconfig"
-    endmenu
-    
-    menu "Network Configuration"  
-        source "components/wifi_manager/Kconfig"
-        source "components/webhook_manager/Kconfig"
-    endmenu
-    
-    menu "System Configuration"
-        source "components/fs_manager/Kconfig"
-        
-        config SYSTEM_LOG_LEVEL
-            int "Global Log Level"
-            default 2
-            range 0 5
-            
-        config STATUS_UPDATE_INTERVAL
-            int "Status Update Interval (seconds)"
-            default 10
-            range 5 300
-    endmenu
-    
-endmenu
-```
-
-### Phase 4: Logging Optimization
-
-**Reduce Log Verbosity:**
-- [ ] Move detailed init logs to DEBUG level
-- [ ] Consolidate status updates
-- [ ] Use consistent tag format: `[COMPONENT]`
-
-**Before:**
-```
-I (3442) feedback_manager: Feedback manager task started. Use WS2812: 1, Max Brightness: 10
-I (3452) feedback_manager: Setting primary state to 19
-I (3962) feedback_manager: Setting primary state to 20
-I (3962) feedback_manager: Validating initialization step (state: 20), success: true
-```
-
-**After:**
-```
-I (3442) [FEEDBACK] Initialized: GPIO7, WS2812, Brightness=10
-D (3452) [FEEDBACK] State: INIT_FS
-I (3962) [FEEDBACK] Initialization complete
-```
-
-### Phase 5: ASCII Dashboard (Nice-to-Have)
-
-**Current Status Spam Problem:**
-```
-I (379032) time-tracker: =================== STATUS UPDATE ===================
-I (379032) time-tracker: WiFi: Connected | IP: 192.168.1.26 | RSSI: -63 dBm
-I (379032) feedback_manager: Setting background state to 4
-I (379042) time-tracker: Time: Synchronized | Local time: 2025-06-12 17:45:38
-I (379052) time-tracker: RFID: Active (Hardware OK) | Tag present: No | Last Tag: None
-I (379052) time-tracker: Webhook: Configured | Connected: Yes | Pending events: 0
-I (379062) time-tracker: Device: ID: F0F5BDFD20CC | Free heap: 174728 bytes
-I (379072) time-tracker: ====================================================
-```
-
-**ASCII Dashboard Solution:**
-```
-┌─ ESP32-C3 Time Tracker [F0F5BDFD20CC] ──────────────────┐
-│ WiFi: Connected (192.168.1.26) RSSI: -63dBm             │
-│ Time: 2025-06-12 17:45:38 [SYNCED]                      │
-│ RFID: Active ● Tag: None ● Last: 04FBE6AF790000          │  
-│ Webhook: Connected ● Queue: 0 ● Last: 200 OK            │
-│ Memory: 174KB free ● Uptime: 6m 19s                     │
-│ LED: Breathing Blue (Idle)                              │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Dashboard Features:**
-- [ ] **In-place updates**: Use ANSI escape codes to refresh dashboard
-- [ ] **Visual indicators**: ● ✓ ✗ for status states  
-- [ ] **Color coding**: Green=good, Red=error, Yellow=warning
-- [ ] **Configurable refresh**: Default 10s, configurable via Kconfig
-- [ ] **Init sequence**: Clean progress bar instead of log spam
-- [ ] **Event logging**: Separate from dashboard (tag events, errors)
-
-**Implementation Notes:**
-```c
-// New dashboard manager component
-void dashboard_update_wifi(wifi_status_t status, const char* ip, int rssi);
-void dashboard_update_rfid(bool active, bool tag_present, const char* last_tag);
-void dashboard_update_webhook(bool connected, int queue_size, int last_status);
-void dashboard_refresh(void); // ANSI clear + redraw
-```
-
-## Implementation Progress
-
-### ✅ COMPLETED - Phase 1: feedback_manager Architecture Fix
-**Status: COMPLETE - Full runtime verification successful**
-
-**Major Architectural Fix Applied:**
-- **Root Cause**: Race condition in main.c WiFi state checking causing WIFI_CONNECTING state to persist
-- **Solution**: Replaced polling-based state management with event-driven WiFi handlers
-- **Event Handlers**: Added proper WIFI_EVENT and IP_EVENT handlers for state transitions
-- **State Cleanup**: Removed aggressive main loop WiFi checking that caused conflicts
-
-**Technical Changes:**
-- **Event-driven WiFi states**: `IP_EVENT_STA_GOT_IP` → reset to IDLE → brief WIFI_CONNECTED → back to IDLE 
-- **Enhanced error patterns**: Added color-coded error sequences for different failure modes
-- **Breathing effect fix**: Increased period from 40→80 cycles (2→4 seconds)
-- **Architecture cleanup**: Removed polling conflicts, race conditions eliminated
-
-**Enhanced Error/Warning Feedback System:**
-- **WiFi Failed**: `R→O→R` (0.3s,0.4s,0.3s) - Red/Orange/Red pattern
-- **Webhook Error**: `R→R→O` (0.2s,0.2s,0.6s) - Double red flash + orange  
-- **RFID Error**: `R→W→R` (0.2s,0.6s,0.2s) - Red/White/Red pattern
-- **Webhook Queued**: `Y→G` (0.5s,0.5s) - Yellow/Green alternating
-- **AP Mode**: `Y→B→P` (0.3s,0.3s,2.0s) - Yellow/Blue/Purple (existing)
-
-**Runtime Verification - ALL TESTS PASSED:**
-- ✅ **Blue breathing effect**: Working perfectly, 4-second cycle clearly distinguishable from blinking
-- ✅ **State transitions**: WiFi connecting (blue blink) → Connected (cyan flash) → Idle (blue breathing)
-- ✅ **Tag workflow**: Breathing → green flash → back to breathing (no red flash error)
-- ✅ **Event-driven**: WiFi state changes properly handled by events, no polling conflicts
-- ✅ **Performance**: No memory leaks, clean state management, stable operation
-
-### ✅ COMPLETED - Deep Architecture Analysis
-**Priority: HIGH - CRITICAL ISSUE RESOLVED**
-
-**Root Problem Identified & Fixed:**
-1. **Race Condition**: Main loop checking `wifi_manager_is_connected()` before WiFi stabilized
-2. **State Thrashing**: Conflicting state management between events and polling
-3. **Timing Issues**: Aggressive 1-second polling overriding proper event-driven states
-
-**Architectural Improvements:**
-- **Clean separation**: WiFi events handle state, main loop only does status reporting
-- **Event-driven design**: Proper WIFI_EVENT and IP_EVENT handlers registered
-- **State persistence**: IDLE state now properly maintained without interference
-- **Error handling**: Enhanced feedback patterns for different error scenarios
-
-### ❌ CURRENT SESSION - LED State Issues Identified
-**Priority: HIGH - Critical LED Feedback Issues Remain**
-
-**Issues Found in Latest Testing:**
-1. **IDLE State Not Applied**: System logs "entering idle state" but LED remains in WIFI_CONNECTING (state 3 = blue blink)
-2. **Tag Removal No Return**: After tag removed, LED stays green (state 13) instead of returning to IDLE breathing
-3. **Grace Period Fixed**: ✅ 10-second protection working correctly after RFID initialization
-4. **NTP Timestamps Fixed**: ✅ Proper 2025 timestamps, no more 1970 epoch issues
-
-**Root Cause Analysis Needed:**
-- **Feedback Manager State Priority**: IDLE state seems to be getting overridden or not applied
-- **State Transitions**: Tag removal not triggering proper IDLE return
-- **WiFi Event Conflicts**: WIFI_CONNECTING state persisting despite being lower priority than IDLE
-
-### 🔍 NEXT SESSION - Deep Component Architecture Analysis
-**Priority: HIGH - Root Cause Investigation**
-
-**Hypothesis: Feedback Manager is Working - Other Components are Creating Conflicts**
-
-The feedback state issues might be **symptoms** of deeper architectural problems in other components. Before continuing feedback debugging, we need to systematically analyze all components for:
-- Race conditions between managers
-- Event timing conflicts  
-- Cross-component dependencies
-- Poor separation of concerns
-
-**Phase 1: Component Deep Dive Analysis**
-1. **wifi_manager Component** (`components/wifi_manager/`):
-   - **Event System**: How WiFi events are dispatched and timing
-   - **State Management**: Internal state vs external feedback states
-   - **NTP Integration**: Async time sync affecting feedback timing
-   - **AP Mode Logic**: Fallback behavior and state transitions
-   - **Connection Recovery**: Reconnection logic and event flooding
-
-2. **webhook_manager Component** (`components/webhook_manager/`):
-   - **HTTP State Management**: Request lifecycle affecting feedback
-   - **Retry Logic**: Background retries potentially interfering
-   - **Queue Processing**: Task priorities vs feedback task priorities
-   - **Error Handling**: How failures propagate to feedback
-   - **Connectivity Checks**: Periodic checks affecting state
-
-3. **rfid_manager Component** (`components/rfid_manager/`):
-   - **RC522 Interface**: Hardware event timing and debouncing
-   - **Event Dispatching**: How tag events reach main.c
-   - **Scanner Task**: Task priorities and real-time constraints
-   - **Error Recovery**: Hardware failures affecting feedback
-   - **Interrupt Handling**: ISR timing vs feedback updates
-
-4. **Cross-Component Interactions**:
-   - **Task Priority Conflicts**: Multiple high-priority tasks competing
-   - **Event Loop Congestion**: Too many events causing delays
-   - **Shared Resource Access**: Mutex contention between components
-   - **Timing Dependencies**: Components expecting specific sequences
-   - **Memory Pressure**: Stack/heap issues affecting reliability
-
-**Phase 2: Architecture Issues to Investigate**
-1. **Event System Architecture**:
-   ```
-   Current: wifi_manager → main.c → feedback_manager
-                rfid_manager → main.c → feedback_manager
-                webhook_manager → main.c → feedback_manager
-   
-   Issues: 
-   - main.c as bottleneck
-   - No event prioritization
-   - Race conditions possible
-   ```
-
-2. **Task Priority Analysis**:
-   - wifi_manager tasks vs feedback_manager task
-   - webhook_manager HTTP tasks vs real-time feedback
-   - rfid_manager scanner task priority
-   - FreeRTOS scheduling conflicts
-
-3. **State Ownership Problems**:
-   - Multiple components trying to control feedback
-   - No clear state ownership hierarchy
-   - Conflicting state change requests
-
-**Phase 3: Systematic Component Review**
-1. **Code Quality Assessment**:
-   - [ ] Component isolation and interfaces
-   - [ ] Error handling consistency
-   - [ ] Resource management (malloc/free, mutexes)
-   - [ ] Task lifecycle management
-   - [ ] Configuration parameter usage
-
-2. **Dependency Mapping**:
-   - [ ] Component initialization order dependencies
-   - [ ] Runtime communication patterns  
-   - [ ] Shared resource access patterns
-   - [ ] Event flow and timing requirements
-
-3. **Anti-Pattern Detection**:
-   - [ ] Polling loops vs event-driven design
-   - [ ] Blocking operations in high-priority tasks
-   - [ ] Unbounded queues or delays
-   - [ ] Global state mutations without synchronization
-
-### 📋 COMPONENT ANALYSIS CHECKLIST FOR NEXT SESSION
-**Immediate Actions:**
-- [ ] **wifi_manager**: Deep dive into event system and NTP integration
-- [ ] **webhook_manager**: Analyze HTTP task priorities and retry logic
-- [ ] **rfid_manager**: Review RC522 interface and event dispatching
-- [ ] **Cross-component**: Map task priorities and shared resource access
-- [ ] **Architecture patterns**: Identify polling vs event-driven inconsistencies
-
-**Systematic Analysis Protocol:**
-- [ ] **Component Isolation**: Test each component independently
-- [ ] **Interface Documentation**: Map all inter-component communication
-- [ ] **Timing Analysis**: Identify race conditions and event ordering
-- [ ] **Resource Conflicts**: Find mutex contention and priority inversions
-- [ ] **Event Flow Mapping**: Trace complete event lifecycles
-
-**Expected Outcomes:**
-- Clear architectural improvements needed
-- Root cause identification for feedback issues  
-- Foundation for clean component refactoring
-- Resolution of fundamental timing/priority conflicts
-
-### 🎯 CURRENT STATUS - ARCHITECTURAL INVESTIGATION NEEDED
-- **Grace Period**: ✅ FIXED - Proper timing after RFID initialization
-- **NTP Timestamps**: ✅ FIXED - Accurate time in webhook payloads
-- **Boot Protection**: ✅ FIXED - No duplicate events on reboot with tag
-- **LED State Management**: ❓ SYMPTOMS - Likely caused by deeper architectural issues
-- **Component Architecture**: ⏳ PENDING - Deep analysis needed before further fixes
-- **Overall Approach**: 🔄 PIVOTED - Component-first investigation vs symptom-chasing
-
-## File Structure After Refactor
-
-```
-time-tracker-device/
-├── components/
-│   ├── feedback_manager/
-│   │   ├── Kconfig.projbuild       # Complete config options
-│   │   ├── feedback_manager.c      # Clean, WS2812-only code
-│   │   └── include/feedback_manager.h
-│   ├── rfid_manager/               # No major changes needed
-│   ├── wifi_manager/               # No major changes needed
-│   └── webhook_manager/            # No major changes needed
-├── main/
-│   └── main.c                      # Simplified, config-driven
-├── Kconfig.projbuild               # Organized menu structure
-└── README.md                       # Updated with new config options
-```
-
-## Testing Strategy
-
-### Unit Testing
-- [ ] **feedback_manager**: Test state transitions, breathing effect
-- [ ] **Color patterns**: Verify RED/green, Yellow/green, AP sequence
-- [ ] **GPIO configuration**: Confirm Kconfig → runtime mapping
-
-### Integration Testing  
-- [ ] **Full boot sequence**: White → stages → idle breathing blue
-- [ ] **Tag workflow**: Blue breathing → green tag → blue breathing
-- [ ] **Error scenarios**: Webhook failures show correct patterns
-- [ ] **AP mode**: Y→B→P sequence timing verification
-
-### Regression Testing
-- [ ] **All existing functionality**: Tag detection, webhook sending
-- [ ] **WiFi connectivity**: All connection scenarios  
-- [ ] **Error recovery**: Network failures, tag read errors
-
-## Success Criteria
-
-### Functional Requirements
-✅ Blue breathing effect visible in idle state  
-✅ No red flash on normal tag removal  
-✅ All color patterns work as designed  
-✅ Kconfig changes reflected in runtime behavior  
-✅ Clean serial output (reduced log verbosity)  
-
-### Code Quality Requirements
-✅ Zero compilation warnings  
-✅ No unused functions or dead code  
-✅ Consistent naming conventions  
-✅ All magic numbers replaced with CONFIG_ defines  
-✅ Clear module boundaries  
-
-### Performance Requirements  
-✅ Memory usage not increased  
-✅ LED update rate maintained (20Hz)  
-✅ Boot time not significantly impacted  
-
-## Risk Mitigation
-
-### High Risk Items
-- **State machine changes**: Backup current working version
-- **GPIO/hardware changes**: Test on actual hardware immediately
-- **Kconfig restructure**: Verify all values migrate correctly
-
-### Rollback Plan
-- Maintain git branch with current working version
-- Document all Kconfig value mappings
-- Test incremental changes, not big-bang approach
-
-## Next Steps for Implementation
-
-1. **Create refactor branch**: `git checkout -b refactor-cleanup`
-2. **Start with feedback_manager**: Smallest, most contained module
-3. **Test each phase**: Don't proceed until current phase verified
-4. **Document changes**: Update comments and README as you go
-5. **Verify hardware**: Test on actual device after each major change
+**Primary Goal:** Enable component reusability across ESP32 projects by implementing clean tool boundaries with event-driven communication.
 
 ---
 
-**This refactor will transform the codebase from patched prototype to maintainable product.** 
+## Current State: Brutal Honesty Assessment
 
-Priority: Start with feedback_manager state logic fix - it's the most critical user-facing issue and will give immediate visible improvement.
+### ❌ **Critical Architectural Failures**
+
+**1. main.c is Doing Everything Wrong**
+- **696 lines** of mixed orchestration + business logic
+- **Direct business logic**: Tag handlers, webhook tasks, WiFi management
+- **Polling-based state management**: `while(1)` loop checking `wifi_manager_is_connected()`
+- **Race conditions**: Multiple components fighting for feedback state control
+
+**2. webhook_manager → wifi_manager Hard Coupling**
+```c
+// BROKEN: Hard coupling violation
+if (wifi_manager_is_connected()) {
+    webhook_manager_process_pending(webhook_handle);
+}
+```
+- **Modularity killer**: webhook_manager directly calls wifi_manager functions
+- **Testing nightmare**: Can't test webhook without WiFi hardware
+- **Reusability destroyer**: Can't use webhook_manager in non-WiFi projects
+
+**3. Component Boundaries Are Fictional**
+- **wifi_manager** includes NTP sync (should be separate)
+- **feedback_manager** receives conflicting state commands from multiple sources
+- **main.c** implements tag detection handlers (should be in tools)
+
+### ✅ **Architectural Strengths (Build On These)**
+
+**1. Component Quality Varies Dramatically**
+- **rfid_manager**: ⭐⭐⭐⭐⭐ Perfect handle-based, event-driven design
+- **feedback_manager**: ⭐⭐⭐⭐ Excellent priority queue, thread-safe
+- **wifi_manager**: ⭐⭐⭐⭐ Good API, needs handle conversion
+- **webhook_manager**: ⭐⭐ Decent interface, critical coupling issue
+
+**2. ESP Event System Foundation**
+- Proper use of ESP event handlers for WiFi/IP events
+- Event-driven RFID tag detection working correctly
+- Foundation exists for event-based tool communication
+
+---
+
+## MCP-Inspired Target Architecture
+
+### **Tool-Based Composition Pattern**
+
+```
+CURRENT (Monolithic):                    TARGET (Tool-Based):
+main.c [ALL BUSINESS LOGIC]             main.c [PURE ORCHESTRATOR]
+├── Direct tag handlers                 ├── 🔧 rfid_tool
+├── Direct webhook tasks                ├── 🔧 wifi_tool  
+├── Direct WiFi management              ├── 🔧 ntp_tool
+└── webhook_manager → wifi_manager      ├── 🔧 webhook_tool
+                                        ├── 🔧 feedback_tool
+                                        └── 🔧 webserver_tool
+```
+
+### **Universal Tool Interface Protocol**
+
+```c
+// MCP-inspired tool interface
+typedef struct {
+    tool_id_t id;                       // Unique tool identifier
+    tool_status_t status;               // Current tool state
+    tool_capabilities_t capabilities;   // What the tool can do
+    event_publisher_t publisher;        // Publishes events
+    event_subscriber_t subscriber;      // Subscribes to events
+    tool_handle_t handle;               // Opaque implementation
+} tool_context_t;
+
+// Universal tool operations (like MCP)
+esp_err_t tool_register(tool_context_t *context);
+esp_err_t tool_invoke(tool_id_t tool, const char *method, cJSON *params, cJSON **result);
+esp_err_t tool_get_capabilities(tool_id_t tool, tool_capabilities_t *caps);
+esp_err_t tool_subscribe_events(tool_id_t tool, event_pattern_t pattern);
+esp_err_t tool_health_check(tool_id_t tool, tool_health_t *health);
+```
+
+### **Pure Orchestrator main.c**
+
+```c
+void app_main(void) {
+    // 1. Initialize tool registry (like MCP server)
+    tool_registry_init();
+    
+    // 2. Register all tools (dependency order matters)
+    register_feedback_tool();      // No dependencies
+    register_rfid_tool();          // No dependencies  
+    register_ntp_tool();           // No dependencies
+    register_wifi_tool();          // Depends on webserver_tool
+    register_webserver_tool();     // No dependencies
+    register_webhook_tool();       // Subscribes to wifi + rfid events
+    
+    // 3. Start event router (like MCP transport layer)
+    event_router_start();
+    
+    // 4. Enter pure orchestration loop (NO business logic)
+    orchestration_loop();
+}
+
+// Zero business logic - pure event routing
+static void orchestration_loop(void) {
+    while (1) {
+        tool_event_t event;
+        if (tool_registry_receive_event(&event, 1000) == ESP_OK) {
+            route_event_to_subscribers(&event);
+        }
+        // Health monitoring, tool lifecycle management
+        check_tool_health();
+    }
+}
+```
+
+---
+
+## Progressive Refactoring Plan
+
+### **Phase -1: Document & Baseline** ✅ COMPLETE
+**Duration:** 1 day  
+**Risk:** None
+
+- [x] README.md stripped to high-level overview + MCP benefits
+- [x] Complete MCP refactoring plan documented
+- [x] Current architectural assessment captured
+
+---
+
+### **Phase 0: Test Infrastructure & Validation Framework**
+**Duration:** 1-2 days  
+**Risk:** Low  
+**Dependencies:** None
+
+#### **Goals:**
+- Create component isolation testing framework
+- Document current behavior as baseline
+- Establish CI/testing protocols for all phases
+
+#### **Deliverables:**
+```
+tests/
+├── component_tests/
+│   ├── test_feedback_manager.c    # Isolated LED pattern validation
+│   ├── test_rfid_manager.c        # Mock RC522 hardware interface
+│   ├── test_wifi_manager.c        # Mock connectivity scenarios
+│   └── test_webhook_manager.c     # Mock HTTP server responses
+├── integration_tests/
+│   ├── test_boot_sequence.c       # Complete initialization validation
+│   ├── test_event_flow.c          # End-to-end event chain testing
+│   └── test_error_scenarios.c     # Failure mode validation
+├── test_framework/
+│   ├── mock_hardware.h            # Hardware abstraction for testing
+│   ├── event_capture.h            # Event system testing utilities
+│   ├── state_validator.h          # LED state validation helpers
+│   └── performance_monitor.h      # Memory/CPU usage tracking
+└── test_configs/
+    ├── test_wifi.json             # Test WiFi configurations
+    └── test_webhook.json          # Test webhook endpoints
+```
+
+#### **Test Protocol Setup:**
+```c
+// Component isolation test example
+void test_feedback_manager_isolated(void) {
+    // Initialize feedback manager without any other components
+    feedback_manager_handle_t handle = feedback_manager_init(TEST_LED_GPIO);
+    
+    // Test state transitions with timing validation
+    TEST_ASSERT_EQUAL(ESP_OK, feedback_manager_set_state(handle, FEEDBACK_STATE_IDLE));
+    TEST_ASSERT_LED_PATTERN(handle, BREATHING_BLUE, 4000);  // 4-second cycle
+    
+    TEST_ASSERT_EQUAL(ESP_OK, feedback_manager_set_state(handle, FEEDBACK_STATE_TAG_DETECTED));
+    TEST_ASSERT_LED_PATTERN(handle, SOLID_GREEN, 0);  // Persistent green
+    
+    feedback_manager_deinit(handle);
+}
+```
+
+#### **Success Criteria:**
+- [ ] All existing functionality tested and documented
+- [ ] Baseline performance metrics captured (memory, CPU, response times)
+- [ ] Component isolation test framework operational
+- [ ] Hardware-in-the-loop test setup verified
+- [ ] Regression detection system functional
+
+---
+
+### **Phase 1: feedback_manager Tool Conversion**
+**Duration:** 2-3 days  
+**Risk:** Low  
+**Dependencies:** Phase 0
+
+#### **Goals:**
+- Convert feedback_manager to pure MCP-style tool
+- Implement universal tool interface
+- Eliminate any remaining coupling to other components
+
+#### **Technical Implementation:**
+```c
+// NEW: feedback_tool.h
+typedef struct {
+    tool_id_t id;                           // TOOL_ID_FEEDBACK
+    feedback_manager_handle_t handle;       // Existing manager handle
+    tool_capabilities_t capabilities;       // LED patterns, states, etc.
+    event_subscriber_t subscriber;          // Subscribes to all system events
+    tool_config_t config;                   // GPIO, brightness, patterns
+} feedback_tool_t;
+
+// Tool interface implementation
+esp_err_t feedback_tool_invoke(const char *method, cJSON *params, cJSON **result) {
+    if (strcmp(method, "set_state") == 0) {
+        int state = cJSON_GetObjectItem(params, "state")->valueint;
+        return feedback_manager_set_state(tool->handle, (feedback_state_t)state);
+    } else if (strcmp(method, "flash_event") == 0) {
+        int state = cJSON_GetObjectItem(params, "state")->valueint;
+        int count = cJSON_GetObjectItem(params, "count")->valueint;
+        return feedback_manager_flash_event(tool->handle, state, count);
+    } else if (strcmp(method, "get_current_state") == 0) {
+        // Return current state as JSON
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t feedback_tool_get_capabilities(tool_capabilities_t *caps) {
+    caps->methods = cJSON_CreateArray();
+    cJSON_AddItemToArray(caps->methods, cJSON_CreateString("set_state"));
+    cJSON_AddItemToArray(caps->methods, cJSON_CreateString("flash_event"));
+    cJSON_AddItemToArray(caps->methods, cJSON_CreateString("get_current_state"));
+    
+    caps->events_subscribed = cJSON_CreateArray();
+    cJSON_AddItemToArray(caps->events_subscribed, cJSON_CreateString("*"));  // All events
+    
+    return ESP_OK;
+}
+```
+
+#### **Tool Registration:**
+```c
+// In main.c
+esp_err_t register_feedback_tool(void) {
+    feedback_tool_t *tool = malloc(sizeof(feedback_tool_t));
+    tool->id = TOOL_ID_FEEDBACK;
+    tool->handle = feedback_manager_init(CONFIG_FEEDBACK_LED_GPIO);
+    
+    // Register with tool registry
+    tool_context_t context = {
+        .id = tool->id,
+        .invoke = feedback_tool_invoke,
+        .get_capabilities = feedback_tool_get_capabilities,
+        .handle = tool
+    };
+    
+    return tool_registry_register(&context);
+}
+```
+
+#### **Event Subscription:**
+```c
+// Feedback tool subscribes to all system events for LED state management
+esp_err_t feedback_tool_on_event(tool_event_t *event) {
+    switch (event->type) {
+        case EVENT_WIFI_CONNECTED:
+            feedback_tool_invoke("set_state", 
+                cJSON_Parse("{\"state\": " STRINGIFY(FEEDBACK_STATE_WIFI_CONNECTED) "}"), NULL);
+            break;
+        case EVENT_TAG_DETECTED:
+            feedback_tool_invoke("set_state",
+                cJSON_Parse("{\"state\": " STRINGIFY(FEEDBACK_STATE_TAG_DETECTED) "}"), NULL);
+            break;
+        case EVENT_WEBHOOK_ERROR:
+            feedback_tool_invoke("flash_event",
+                cJSON_Parse("{\"state\": " STRINGIFY(FEEDBACK_STATE_WEBHOOK_ERROR) ", \"count\": 3}"), NULL);
+            break;
+    }
+    return ESP_OK;
+}
+```
+
+#### **Test Protocol:**
+1. **Isolation Test:** feedback_manager works without any other components
+2. **Interface Test:** All tool methods respond correctly with proper JSON
+3. **State Test:** LED patterns match expected sequences with timing validation
+4. **Event Test:** Tool properly subscribes and responds to all system events
+5. **Performance Test:** No regression in LED update frequency or memory usage
+6. **Integration Test:** Tool works within tool registry system
+
+#### **Success Criteria:**
+- [ ] feedback_manager passes all isolation tests
+- [ ] Tool interface fully functional with JSON schema validation
+- [ ] Zero coupling to other components verified via dependency analysis
+- [ ] LED patterns identical to baseline behavior with automated validation
+- [ ] Memory usage not increased (tracked via performance monitor)
+- [ ] Event subscription/handling working correctly
+
+---
+
+### **Phase 2: rfid_manager Tool Conversion**
+**Duration:** 2-3 days  
+**Risk:** Low  
+**Dependencies:** Phase 1
+
+#### **Goals:**
+- Convert rfid_manager to MCP-style tool (already 90% ready)
+- Enhance event-driven interface with tool capabilities
+- Add comprehensive tool metadata and schema support
+
+#### **Technical Implementation:**
+```c
+// rfid_tool.h - Enhanced tool interface
+typedef struct {
+    tool_id_t id;                           // TOOL_ID_RFID
+    rfid_manager_handle_t handle;           // Existing manager handle  
+    event_publisher_t publisher;            // Publishes tag events
+    tool_capabilities_t capabilities;       // Scanning, tag types, etc.
+    tool_config_t config;                   // GPIO pins, SPI settings
+    tool_health_t health;                   // Hardware status monitoring
+} rfid_tool_t;
+
+// Enhanced tool methods with schema
+esp_err_t rfid_tool_invoke(const char *method, cJSON *params, cJSON **result) {
+    if (strcmp(method, "start_scanning") == 0) {
+        return rfid_manager_start_scanning(tool->handle);
+    } else if (strcmp(method, "stop_scanning") == 0) {
+        return rfid_manager_stop_scanning(tool->handle);
+    } else if (strcmp(method, "get_status") == 0) {
+        *result = cJSON_CreateObject();
+        cJSON_AddBoolToObject(*result, "scanning", rfid_manager_is_scanning(tool->handle));
+        cJSON_AddStringToObject(*result, "hardware", "RC522");
+        return ESP_OK;
+    } else if (strcmp(method, "health_check") == 0) {
+        bool hardware_ok = rfid_manager_hardware_test(tool->handle);
+        *result = cJSON_CreateObject();
+        cJSON_AddBoolToObject(*result, "hardware_ok", hardware_ok);
+        cJSON_AddStringToObject(*result, "status", hardware_ok ? "healthy" : "failure");
+        return ESP_OK;
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t rfid_tool_get_schema(const char *method, cJSON **schema) {
+    *schema = cJSON_CreateObject();
+    
+    if (strcmp(method, "start_scanning") == 0) {
+        cJSON_AddStringToObject(*schema, "description", "Start RFID tag scanning");
+        cJSON_AddObjectToObject(*schema, "parameters", cJSON_CreateObject());
+        cJSON *returns = cJSON_CreateObject();
+        cJSON_AddStringToObject(returns, "type", "string");
+        cJSON_AddStringToObject(returns, "description", "ESP_OK on success");
+        cJSON_AddObjectToObject(*schema, "returns", returns);
+    }
+    // ... other method schemas
+    
+    return ESP_OK;
+}
+```
+
+#### **Event Publishing Enhancement:**
+```c
+// Enhanced event publishing with metadata
+esp_err_t rfid_tool_publish_tag_event(rfid_tag_event_t *tag_event) {
+    tool_event_t event = {
+        .type = EVENT_TAG_DETECTED,
+        .source_tool = TOOL_ID_RFID,
+        .timestamp = esp_timer_get_time(),
+        .data = cJSON_CreateObject()
+    };
+    
+    // Rich event data
+    cJSON_AddStringToObject(event.data, "tag_uid", tag_event->uid_string);
+    cJSON_AddStringToObject(event.data, "tag_type", tag_event->type_string);
+    cJSON_AddNumberToObject(event.data, "signal_strength", tag_event->signal_strength);
+    cJSON_AddBoolToObject(event.data, "is_new_tag", tag_event->is_new);
+    
+    return tool_registry_publish_event(&event);
+}
+```
+
+#### **Hardware Abstraction for Testing:**
+```c
+// mock_rc522.h - Hardware abstraction for testing
+typedef struct {
+    bool simulate_tag_present;
+    char simulated_uid[16];
+    rfid_tag_type_t simulated_type;
+    int signal_strength;
+} mock_rc522_t;
+
+esp_err_t mock_rc522_init(mock_rc522_t *mock);
+esp_err_t mock_rc522_simulate_tag(mock_rc522_t *mock, const char *uid, rfid_tag_type_t type);
+esp_err_t mock_rc522_remove_tag(mock_rc522_t *mock);
+```
+
+#### **Test Protocol:**
+1. **Hardware Isolation:** Mock RC522 interface allows testing without hardware
+2. **Event Flow:** Tag detection/removal events properly published with metadata
+3. **Method Schema:** All tool methods have proper JSON schema validation
+4. **Health Monitoring:** Tool reports hardware status accurately
+5. **Performance:** No impact on tag detection timing or memory usage
+6. **Error Handling:** Tool gracefully handles hardware failures and recovery
+
+#### **Success Criteria:**
+- [ ] RFID tool passes hardware abstraction tests with mock interface
+- [ ] Event publishing confirmed via test framework with metadata validation
+- [ ] Tool schema validation passes for all methods
+- [ ] Tag detection timing unchanged from baseline
+- [ ] Hardware error scenarios properly handled and reported
+- [ ] Health monitoring accurately reflects hardware status
+
+---
+
+### **Phase 3: WiFi Manager Decoupling & Tool Conversion**
+**Duration:** 3-4 days  
+**Risk:** Medium  
+**Dependencies:** Phase 2
+
+#### **Goals:**
+- Break wifi_manager → ap_webserver coupling via composition
+- Convert to handle-based interface for multi-instance support
+- Extract NTP functionality to separate ntp_tool
+- Implement event-driven connectivity status publishing
+
+#### **Technical Implementation:**
+
+**1. Handle-Based WiFi Tool:**
+```c
+// wifi_tool.h
+typedef struct {
+    tool_id_t id;                           // TOOL_ID_WIFI
+    wifi_config_t config;                   // WiFi configuration
+    event_publisher_t publisher;            // Connectivity events
+    event_subscriber_t subscriber;          // Webserver tool events
+    tool_capabilities_t capabilities;       // Station, AP mode support
+    webserver_tool_t *webserver_tool;       // Composition, not coupling
+    wifi_connection_state_t state;          // Current connection state
+} wifi_tool_t;
+
+// NEW: Handle-based interface (breaking change)
+wifi_tool_handle_t wifi_tool_init(const char *config_path);
+esp_err_t wifi_tool_start(wifi_tool_handle_t handle);
+esp_err_t wifi_tool_is_connected(wifi_tool_handle_t handle, bool *connected);
+esp_err_t wifi_tool_get_ip(wifi_tool_handle_t handle, char *ip_str, size_t len);
+esp_err_t wifi_tool_get_rssi(wifi_tool_handle_t handle, int8_t *rssi);
+```
+
+**2. Separate NTP Tool:**
+```c
+// ntp_tool.h - Extracted from wifi_manager
+typedef struct {
+    tool_id_t id;                           // TOOL_ID_NTP
+    ntp_config_t config;                    // NTP server, timezone
+    event_publisher_t publisher;            // Time sync events
+    event_subscriber_t subscriber;          // WiFi connectivity events
+    time_sync_state_t state;                // Sync status
+    struct tm last_sync_time;               // Last successful sync
+} ntp_tool_t;
+
+esp_err_t ntp_tool_sync_time(ntp_tool_handle_t handle);
+esp_err_t ntp_tool_is_synced(ntp_tool_handle_t handle, bool *synced);
+esp_err_t ntp_tool_get_formatted_time(ntp_tool_handle_t handle, char *time_str, size_t len);
+
+// Event-driven time sync when WiFi connects
+esp_err_t ntp_tool_on_wifi_connected(tool_event_t *event) {
+    ntp_tool_t *tool = (ntp_tool_t*)event->subscriber_context;
+    
+    // Start time sync when WiFi becomes available
+    esp_err_t result = ntp_tool_sync_time(tool);
+    
+    // Publish sync result
+    tool_event_t sync_event = {
+        .type = result == ESP_OK ? EVENT_TIME_SYNCED : EVENT_TIME_SYNC_FAILED,
+        .source_tool = TOOL_ID_NTP,
+        .data = cJSON_CreateObject()
+    };
+    cJSON_AddBoolToObject(sync_event.data, "success", result == ESP_OK);
+    
+    return tool_registry_publish_event(&sync_event);
+}
+```
+
+**3. Webserver Tool Composition:**
+```c
+// wifi_tool.c - Event-driven composition instead of coupling
+esp_err_t wifi_tool_on_connection_failed(wifi_tool_t *tool) {
+    // Instead of directly calling ap_webserver functions,
+    // publish event for webserver tool to handle
+    tool_event_t event = {
+        .type = EVENT_WIFI_CONNECTION_FAILED,
+        .source_tool = TOOL_ID_WIFI,
+        .data = cJSON_CreateObject()
+    };
+    cJSON_AddStringToObject(event.data, "reason", "no_saved_networks");
+    cJSON_AddBoolToObject(event.data, "should_start_ap", true);
+    
+    return tool_registry_publish_event(&event);
+}
+
+// webserver_tool.c - Subscribes to WiFi events
+esp_err_t webserver_tool_on_wifi_failed(tool_event_t *event) {
+    bool should_start_ap = cJSON_GetObjectItem(event->data, "should_start_ap")->valueint;
+    
+    if (should_start_ap) {
+        return webserver_tool_start_ap_mode(tool);
+    }
+    return ESP_OK;
+}
+```
+
+#### **Dependency Breaking:**
+```c
+// BEFORE: Hard coupling
+// wifi_manager.c
+#include "../ap_webserver/ap_webserver.h"  // Relative path coupling
+esp_err_t wifi_manager_start() {
+    if (connection_failed) {
+        ap_webserver_start();  // Direct function call coupling
+    }
+}
+
+// AFTER: Event-driven composition
+// wifi_tool.c
+esp_err_t wifi_tool_start(wifi_tool_handle_t handle) {
+    if (connection_failed) {
+        // Publish event instead of direct call
+        tool_event_t event = { .type = EVENT_WIFI_CONNECTION_FAILED };
+        tool_registry_publish_event(&event);
+    }
+}
+```
+
+#### **Test Protocol:**
+1. **Decoupling Test:** WiFi tool operates independently of webserver tool
+2. **Composition Test:** WiFi + webserver tools communicate via events only
+3. **Handle Safety:** Multiple WiFi tool instances supported without conflicts
+4. **NTP Isolation:** Time sync tool works independently with mock WiFi events
+5. **AP Mode Test:** Webserver tool properly activated on WiFi failures
+6. **Event Flow Test:** Complete WiFi connection → NTP sync → tool notifications
+
+#### **Success Criteria:**
+- [ ] WiFi tool operates independently verified via isolation tests
+- [ ] Handle-based interface supports multiple instances
+- [ ] NTP tool successfully separated and functional
+- [ ] AP mode fallback functionality preserved via event composition
+- [ ] Event-driven composition working with zero direct function calls
+- [ ] No relative include paths or coupling violations detected
+
+---
+
+### **Phase 4: webhook_manager Critical Decoupling** 
+**Duration:** 4-5 days  
+**Risk:** High  
+**Dependencies:** Phase 3
+
+#### **Goals:**
+- **CRITICAL:** Break webhook_manager → wifi_manager hard coupling
+- Convert to event-driven connectivity awareness
+- Implement robust queue persistence and retry logic
+- Add comprehensive webhook tool capabilities
+
+#### **Current Problem Analysis:**
+```c
+// CURRENT: Hard coupling violation in webhook_manager.c
+void webhook_task(void *pvParameters) {
+    while (1) {
+        if (wifi_manager_is_connected()) {  // COUPLING VIOLATION
+            webhook_manager_process_pending(webhook_handle);
+        }
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+    }
+}
+
+// main.c also has coupling
+static void webhook_task(void *pvParameters) {
+    if (wifi_manager_is_connected()) {  // COUPLING VIOLATION
+        webhook_manager_process_pending(webhook_handle);
+    }
+}
+```
+
+#### **Technical Implementation:**
+
+**1. Event-Driven Connectivity Awareness:**
+```c
+// webhook_tool.h - Decoupled design
+typedef struct {
+    tool_id_t id;                           // TOOL_ID_WEBHOOK
+    webhook_manager_handle_t handle;        // Existing manager handle
+    connectivity_status_t connectivity;     // Received via events, NOT polling
+    event_subscriber_t subscriber;          // Subscribes to WiFi events
+    event_publisher_t publisher;            // Publishes webhook results
+    queue_persistence_t queue;              // Persistent retry queue
+    tool_capabilities_t capabilities;       // HTTP methods, retry policies
+} webhook_tool_t;
+
+// Event-driven connectivity updates (NO direct wifi calls)
+esp_err_t webhook_tool_on_connectivity_change(tool_event_t *event) {
+    webhook_tool_t *tool = (webhook_tool_t*)event->subscriber_context;
+    
+    if (event->type == EVENT_WIFI_CONNECTED) {
+        tool->connectivity.is_connected = true;
+        cJSON *ip_obj = cJSON_GetObjectItem(event->data, "ip_address");
+        if (ip_obj) {
+            strncpy(tool->connectivity.ip_address, ip_obj->valuestring, sizeof(tool->connectivity.ip_address));
+        }
+        
+        // Process pending webhooks when connectivity restored
+        return webhook_tool_process_pending_queue(tool);
+        
+    } else if (event->type == EVENT_WIFI_DISCONNECTED) {
+        tool->connectivity.is_connected = false;
+        tool->connectivity.ip_address[0] = '\0';
+    }
+    
+    return ESP_OK;
+}
+```
+
+**2. Enhanced Tool Interface:**
+```c
+// Webhook tool methods
+esp_err_t webhook_tool_invoke(const char *method, cJSON *params, cJSON **result) {
+    if (strcmp(method, "send_event") == 0) {
+        // Parameters from event, not direct coupling
+        const char *tag_uid = cJSON_GetObjectItem(params, "tag_uid")->valuestring;
+        const char *tag_type = cJSON_GetObjectItem(params, "tag_type")->valuestring;
+        const char *event_type = cJSON_GetObjectItem(params, "event_type")->valuestring;
+        
+        return webhook_tool_send_event_when_connected(tool, event_type, tag_uid, tag_type);
+        
+    } else if (strcmp(method, "process_pending") == 0) {
+        return webhook_tool_process_pending_queue(tool);
+        
+    } else if (strcmp(method, "get_queue_status") == 0) {
+        *result = cJSON_CreateObject();
+        cJSON_AddNumberToObject(*result, "pending_count", tool->queue.pending_count);
+        cJSON_AddNumberToObject(*result, "failed_count", tool->queue.failed_count);
+        cJSON_AddBoolToObject(*result, "connected", tool->connectivity.is_connected);
+        return ESP_OK;
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+// Event-driven webhook sending (no wifi polling)
+esp_err_t webhook_tool_send_event_when_connected(webhook_tool_t *tool, 
+                                                const char *event_type,
+                                                const char *tag_uid, 
+                                                const char *tag_type) {
+    if (tool->connectivity.is_connected) {
+        return webhook_manager_send_event(tool->handle, event_type, tag_uid, tag_type);
+    } else {
+        // Queue for later when connectivity restored
+        return webhook_tool_queue_event(tool, event_type, tag_uid, tag_type);
+    }
+}
+```
+
+**3. Tag Event Subscription:**
+```c
+// webhook_tool subscribes to RFID events instead of main.c handling
+esp_err_t webhook_tool_on_tag_event(tool_event_t *event) {
+    webhook_tool_t *tool = (webhook_tool_t*)event->subscriber_context;
+    
+    if (event->type == EVENT_TAG_DETECTED) {
+        const char *tag_uid = cJSON_GetObjectItem(event->data, "tag_uid")->valuestring;
+        const char *tag_type = cJSON_GetObjectItem(event->data, "tag_type")->valuestring;
+        
+        return webhook_tool_send_event_when_connected(tool, "tag_placed", tag_uid, tag_type);
+        
+    } else if (event->type == EVENT_TAG_REMOVED) {
+        const char *tag_uid = cJSON_GetObjectItem(event->data, "tag_uid")->valuestring;
+        
+        return webhook_tool_send_event_when_connected(tool, "tag_removed", tag_uid, NULL);
+    }
+    
+    return ESP_OK;
+}
+```
+
+**4. Main.c Business Logic Removal:**
+```c
+// BEFORE: main.c contains webhook business logic
+static void tag_detected_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data) {
+    // 50+ lines of business logic in main.c
+    if (webhook_handle != NULL) {
+        webhook_manager_send_event(webhook_handle, WEBHOOK_EVENT_TAG_PLACED, uid_str, tag_type_str);
+    }
+}
+
+// AFTER: main.c just routes events (no business logic)
+static void orchestration_loop(void) {
+    while (1) {
+        tool_event_t event;
+        if (tool_registry_receive_event(&event, 1000) == ESP_OK) {
+            route_event_to_subscribers(&event);  // Pure routing
+        }
+        check_tool_health();  // Tool monitoring only
+    }
+}
+```
+
+#### **Test Protocol:**
+1. **Decoupling Test:** Webhook tool works with mock connectivity events (no WiFi hardware)
+2. **Queue Persistence:** Failed webhooks properly queued, survive restarts, retry correctly
+3. **Event Subscription:** Tag events correctly trigger webhook sending
+4. **HTTP Isolation:** HTTP client testable with mock server responses
+5. **Integration Test:** Full webhook flow with real/mock connectivity and RFID events
+6. **Performance Test:** No memory leaks, queue management efficient
+
+#### **Success Criteria:**
+- [ ] **CRITICAL:** Zero direct calls to wifi_manager functions (verified via static analysis)
+- [ ] Webhook queue survives connectivity changes and device restarts
+- [ ] Event subscription mechanism verified for WiFi and RFID events
+- [ ] HTTP failures properly handled, queued, and retried with backoff
+- [ ] Integration tests pass with both mock and real connectivity
+- [ ] Business logic completely removed from main.c
+
+---
+
+### **Phase 5: Main.c Orchestrator Transformation**
+**Duration:** 3-4 days  
+**Risk:** High  
+**Dependencies:** Phase 4
+
+#### **Goals:**
+- Transform main.c into pure orchestrator (MCP server pattern)
+- Remove ALL business logic (696 → ~150 lines)
+- Implement tool registry and event routing system
+- Establish tool lifecycle management and health monitoring
+
+#### **Current Problem:**
+```c
+// CURRENT: main.c is 696 lines of mixed orchestration + business logic
+// Business logic violations:
+static void tag_detected_handler(...) { /* 50+ lines business logic */ }
+static void tag_removed_handler(...) { /* 20+ lines business logic */ }
+static void wifi_event_handler(...) { /* 30+ lines business logic */ }
+void webhook_task(...) { /* 40+ lines business logic */ }
+
+// Polling violations:
+while (1) {
+    if (wifi_manager_is_connected() != last_connected) { /* Race conditions */ }
+}
+```
+
+#### **Technical Implementation:**
+
+**1. Pure Orchestrator main.c:**
+```c
+// NEW: main.c - Pure orchestrator (MCP server pattern)
+#include "tool_registry.h"
+#include "event_router.h"
+#include "tools/feedback_tool.h"
+#include "tools/rfid_tool.h"
+#include "tools/wifi_tool.h"
+#include "tools/ntp_tool.h"
+#include "tools/webserver_tool.h"
+#include "tools/webhook_tool.h"
+
+void app_main(void) {
+    ESP_LOGI(TAG, "Starting MCP-inspired tool orchestrator");
+    
+    // 1. Initialize core infrastructure
+    esp_err_t ret = orchestrator_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize orchestrator: %s", esp_err_to_name(ret));
+        return;
+    }
+    
+    // 2. Initialize tool registry (like MCP server)
+    ret = tool_registry_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize tool registry: %s", esp_err_to_name(ret));
+        return;
+    }
+    
+    // 3. Register all tools (dependency order)
+    register_tools_in_dependency_order();
+    
+    // 4. Start event router (like MCP transport layer)
+    ret = event_router_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start event router: %s", esp_err_to_name(ret));
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Tool orchestrator initialized - entering event loop");
+    
+    // 5. Enter pure orchestration loop (ZERO business logic)
+    orchestration_loop();
+}
+
+// Pure orchestration - no business logic
+static void orchestration_loop(void) {
+    tool_health_check_timer_t health_timer = 0;
+    
+    while (1) {
+        // Route events between tools
+        tool_event_t event;
+        if (tool_registry_receive_event(&event, 1000) == ESP_OK) {
+            route_event_to_subscribers(&event);
+        }
+        
+        // Periodic tool health monitoring (every 30 seconds)
+        if (++health_timer >= 30) {
+            check_all_tool_health();
+            health_timer = 0;
+        }
+        
+        // Tool lifecycle management
+        handle_tool_lifecycle_events();
+    }
+}
+
+// Tool registration in dependency order
+static esp_err_t register_tools_in_dependency_order(void) {
+    // No dependencies - can start first
+    ESP_ERROR_CHECK(register_feedback_tool());
+    ESP_ERROR_CHECK(register_rfid_tool());
+    ESP_ERROR_CHECK(register_ntp_tool());
+    ESP_ERROR_CHECK(register_webserver_tool());
+    
+    // Depends on webserver_tool (composition)
+    ESP_ERROR_CHECK(register_wifi_tool());
+    
+    // Depends on wifi_tool and rfid_tool (event subscriptions)
+    ESP_ERROR_CHECK(register_webhook_tool());
+    
+    ESP_LOGI(TAG, "All tools registered successfully");
+    return ESP_OK;
+}
+```
+
+**2. Tool Registry System:**
+```c
+// tool_registry.h - MCP-inspired tool management
+typedef struct {
+    tool_id_t tools[MAX_TOOLS];
+    size_t tool_count;
+    event_queue_handle_t event_queue;
+    tool_subscription_map_t subscriptions;
+    tool_health_status_t health_status[MAX_TOOLS];
+} tool_registry_t;
+
+esp_err_t tool_registry_init(void);
+esp_err_t tool_registry_register(tool_context_t *context);
+esp_err_t tool_registry_publish_event(tool_event_t *event);
+esp_err_t tool_registry_receive_event(tool_event_t *event, uint32_t timeout_ms);
+esp_err_t tool_registry_subscribe(tool_id_t subscriber, event_pattern_t pattern);
+esp_err_t tool_registry_get_tool_health(tool_id_t tool, tool_health_t *health);
+```
+
+**3. Event Routing System:**
+```c
+// event_router.h - Event distribution (like MCP transport)
+esp_err_t route_event_to_subscribers(tool_event_t *event) {
+    tool_subscription_t *subscriptions = get_subscriptions_for_event(event);
+    
+    for (int i = 0; i < subscriptions->count; i++) {
+        tool_id_t subscriber = subscriptions->subscribers[i];
+        
+        // Invoke tool's event handler
+        tool_context_t *context = tool_registry_get_context(subscriber);
+        if (context && context->on_event) {
+            esp_err_t result = context->on_event(event);
+            if (result != ESP_OK) {
+                ESP_LOGW(TAG, "Tool %d failed to handle event %d: %s", 
+                         subscriber, event->type, esp_err_to_name(result));
+            }
+        }
+    }
+    
+    return ESP_OK;
+}
+```
+
+**4. Tool Health Monitoring:**
+```c
+// Tool health checks (like MCP tool monitoring)
+static void check_all_tool_health(void) {
+    for (tool_id_t tool = 0; tool < tool_registry_get_count(); tool++) {
+        tool_health_t health;
+        esp_err_t result = tool_registry_get_tool_health(tool, &health);
+        
+        if (result != ESP_OK || health.status != TOOL_HEALTHY) {
+            ESP_LOGW(TAG, "Tool %d health issue: %s", tool, health.description);
+            
+            // Attempt tool recovery
+            attempt_tool_recovery(tool);
+        }
+    }
+}
+```
+
+#### **Business Logic Migration:**
+```c
+// BEFORE: Tag detection in main.c (business logic violation)
+static void tag_detected_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data) {
+    // 50+ lines of business logic here
+}
+
+// AFTER: Pure event routing in main.c
+static void orchestration_loop(void) {
+    tool_event_t event;
+    if (tool_registry_receive_event(&event, 1000) == ESP_OK) {
+        route_event_to_subscribers(&event);  // Pure routing, no business logic
+    }
+}
+
+// Business logic moved to rfid_tool
+esp_err_t rfid_tool_on_tag_detected(rfid_tag_t *tag) {
+    // Publish event for other tools to handle
+    tool_event_t event = {
+        .type = EVENT_TAG_DETECTED,
+        .source_tool = TOOL_ID_RFID,
+        .data = create_tag_event_data(tag)
+    };
+    return tool_registry_publish_event(&event);
+}
+```
+
+#### **Test Protocol:**
+1. **Orchestration Test:** Event routing works without any business logic in main.c
+2. **Tool Registry Test:** All tools properly registered, discoverable, and invokable
+3. **Event Flow Test:** Complete event chains work (tag → feedback, tag → webhook)
+4. **Health Monitoring Test:** Tool health checks detect and recover from failures
+5. **Lifecycle Test:** Tool startup, shutdown, and recovery scenarios
+6. **Regression Test:** All original functionality preserved with identical behavior
+
+#### **Success Criteria:**
+- [ ] main.c contains zero business logic (verified via code analysis)
+- [ ] All tools registered and communicating via event system
+- [ ] Event routing handles complete application flow end-to-end
+- [ ] Tool health monitoring functional and detects failures
+- [ ] **CRITICAL:** All original features working identically to baseline
+- [ ] Performance within 5% of baseline (memory, CPU, response times)
+
+---
+
+### **Phase 6: Validation & Documentation**
+**Duration:** 2-3 days  
+**Risk:** Low  
+**Dependencies:** Phase 5
+
+#### **Goals:**
+- Comprehensive regression testing across all phases
+- Performance validation and optimization
+- Reusability demonstration with example projects
+- Complete architecture documentation and migration guide
+
+#### **Deliverables:**
+
+**1. Complete Test Suite:**
+```
+tests/
+├── regression_tests/
+│   ├── test_all_original_features.c    # Every baseline feature tested
+│   ├── test_performance_regression.c   # Memory, CPU, response time validation
+│   └── test_hardware_compatibility.c   # Full hardware-in-the-loop validation
+├── tool_isolation_tests/
+│   ├── test_tool_boundaries.c          # Verify no coupling violations
+│   ├── test_tool_composition.c         # Tool combinations work correctly
+│   └── test_tool_lifecycle.c           # Tool startup, shutdown, recovery
+├── integration_tests/
+│   ├── test_complete_flows.c           # End-to-end scenarios
+│   ├── test_error_scenarios.c          # Failure mode validation
+│   └── test_edge_cases.c               # Boundary conditions, race conditions
+└── performance_tests/
+    ├── test_memory_usage.c             # Heap usage, stack usage, leaks
+    ├── test_response_times.c           # Event routing, tool invocation timing
+    └── test_throughput.c               # Event handling capacity
+```
+
+**2. Architecture Documentation:**
+```
+docs/
+├── mcp_architecture_guide.md          # Complete architecture overview
+│   ├── Tool interface specifications
+│   ├── Event system design
+│   ├── Tool registry and routing
+│   └── Health monitoring system
+├── tool_development_guide.md          # How to create new tools
+│   ├── Tool interface implementation
+│   ├── Event publishing/subscribing
+│   ├── Tool capabilities and schema
+│   └── Testing and validation
+├── reusability_guide.md               # Using tools in other projects
+│   ├── Tool extraction and packaging
+│   ├── Dependency management
+│   ├── Configuration patterns
+│   └── Integration examples
+└── migration_guide.md                 # Before/after comparison
+    ├── Code structure changes
+    ├── Configuration migration
+    ├── Breaking changes and fixes
+    └── Performance impact analysis
+```
+
+**3. Reusability Examples:**
+```
+examples/
+├── minimal_time_tracker/              # Simplified version using core tools
+│   ├── main.c                         # 50-line orchestrator
+│   ├── tools/                         # Subset of tools
+│   └── README.md                      # Setup and customization
+├── door_access_system/                # Different use case, same tools
+│   ├── main.c                         # Different orchestration logic
+│   ├── tools/                         # rfid_tool + different feedback
+│   └── README.md                      # Demonstrates reusability
+├── iot_sensor_hub/                    # MQTT instead of webhooks
+│   ├── main.c                         # Tool composition demonstration
+│   ├── tools/                         # Different tool combination
+│   └── README.md                      # Tool substitution patterns
+└── custom_tool_example/               # How to add new tools
+    ├── tools/display_tool/             # Custom tool implementation
+    ├── integration_example.c           # Integration with existing tools
+    └── README.md                       # Custom tool development
+```
+
+**4. Performance Validation:**
+```c
+// Performance regression tests
+void test_memory_usage_regression(void) {
+    size_t baseline_heap = get_baseline_heap_usage();
+    size_t current_heap = esp_get_free_heap_size();
+    
+    // Memory usage should not increase by more than 5%
+    TEST_ASSERT_TRUE(current_heap >= (baseline_heap * 0.95));
+}
+
+void test_event_routing_performance(void) {
+    uint64_t start_time = esp_timer_get_time();
+    
+    // Send 1000 events through the system
+    for (int i = 0; i < 1000; i++) {
+        tool_event_t event = create_test_event();
+        tool_registry_publish_event(&event);
+    }
+    
+    uint64_t end_time = esp_timer_get_time();
+    uint64_t duration_us = end_time - start_time;
+    
+    // Event routing should complete within acceptable time
+    TEST_ASSERT_TRUE(duration_us < 100000);  // 100ms for 1000 events
+}
+```
+
+#### **Success Criteria:**
+- [ ] All regression tests pass with 100% success rate
+- [ ] Performance within 5% of baseline (memory, CPU, response times)
+- [ ] Tools demonstrated working in 3 different project contexts
+- [ ] Complete architecture documentation with examples
+- [ ] Migration guide tested with actual before/after comparison
+- [ ] Zero coupling violations detected via static analysis
+- [ ] Hardware-in-the-loop tests pass on actual devices
+
+---
+
+## Risk Mitigation & Emergency Protocols
+
+### **Per-Phase Safety Net:**
+- **Git Branch Strategy:** `phase-N-description` with working baseline preserved
+- **Rollback Plan:** Previous phase remains functional, can revert within 1 hour
+- **Hardware Testing:** Each phase tested on actual ESP32-C3 + RC522 + WS2812 hardware
+- **Performance Monitoring:** Memory/CPU/response time tracked, alerts on >5% degradation
+- **Automated Testing:** CI pipeline runs full test suite for each phase gate
+
+### **Phase Gate Criteria (Must Pass All):**
+- ✅ All phase-specific tests pass with 100% success rate
+- ✅ No functionality regression detected via baseline comparison
+- ✅ Performance within 5% of baseline across all metrics
+- ✅ Hardware-in-the-loop tests pass on actual device
+- ✅ Integration with previous phases verified via automated tests
+- ✅ Code coverage >90% for new/modified components
+
+### **Emergency Protocols:**
+- **Phase Failure:** Immediate rollback to previous phase, full analysis, issue resolution, retry
+- **Regression Detection:** Automatic rollback triggered, root cause analysis, fix implementation
+- **Performance Degradation:** Immediate profiling, optimization, validation before proceeding
+- **Hardware Issues:** Fallback to baseline firmware, hardware validation, issue isolation
+
+---
+
+## Success Metrics & Definition of Done
+
+### **Technical Success Criteria:**
+- [ ] **main.c Transformation:** 696 lines → ~150 lines (pure orchestrator)
+- [ ] **Zero Coupling:** No direct function calls between tools (verified via static analysis)
+- [ ] **Tool Reusability:** All tools demonstrated working in different project contexts
+- [ ] **Test Coverage:** >90% code coverage across all tools and infrastructure
+- [ ] **Performance:** Memory usage unchanged, event routing <1ms latency
+- [ ] **Hardware Compatibility:** All features work identically on actual device
+
+### **Architectural Success Criteria:**
+- [ ] **Event-Driven Design:** All inter-tool communication via events only
+- [ ] **Tool Independence:** Each tool testable in complete isolation
+- [ ] **MCP Compliance:** Tool interface matches MCP-inspired patterns
+- [ ] **Health Monitoring:** All tools report status, failures detected automatically
+- [ ] **Documentation:** Complete architecture guide enables other developers
+
+### **User Experience Success Criteria:**
+- [ ] **Identical Functionality:** All original features work exactly as before
+- [ ] **Same Performance:** No user-visible performance degradation
+- [ ] **Reliable Operation:** No new instability or error conditions
+- [ ] **Easy Configuration:** All configuration methods preserved and working
+
+---
+
+## Post-Refactoring Vision
+
+### **What We'll Achieve:**
+
+**For This Project:**
+- Clean, maintainable, testable architecture
+- Easy to add new features (mqtt_tool, display_tool, button_tool)
+- Robust error handling and recovery
+- Complete test coverage and documentation
+
+**For ESP32 Ecosystem:**
+- Reusable tool library for RFID, WiFi, HTTP, LED feedback
+- MCP-inspired development patterns for embedded systems
+- Template for clean embedded architecture
+- Example of how to escape "copy-paste spaghetti code" culture
+
+**For Future Projects:**
+- Tool-based composition instead of monolithic development
+- Plug-and-play components with clear interfaces
+- Event-driven patterns that scale and remain maintainable
+- Professional-grade embedded software development practices
+
+---
+
+This refactoring will transform the ESP32-C3 time tracker from a prototype into a **reference implementation** of clean embedded architecture. The tool-based approach inspired by MCP will make embedded development more like modern software development: **composable, testable, and maintainable**.
+
+**Phase -1 Complete. Ready for Phase 0: Test Infrastructure.**

@@ -1,178 +1,84 @@
-# Time Tracker ESP32-C3 Project
+# ESP32-C3 Time Tracker Device
 
-## Project Overview
+## What It Does
 
-This project implements an RFID-based time tracking system using the ESP32-C3 microcontroller. It reads RFID/NFC tags and sends tag placement/removal events to a remote server via webhooks.
+A smart RFID time tracking device that automatically records when you place or remove work tags. Simply place your RFID tag on the device - it lights up green and start to log your session to your time tracking system.
 
-## Features
+## Key Benefits
 
-- RFID/NFC tag reading (RC522 support with PN532 compatibility)
-- WiFi connectivity with multi-SSID support
-- Configuration via web interface (AP mode)
-- NTP time synchronization
-- Webhook integration for tracking events
-- Status LED indicators
-- LittleFS for configuration storage
+**For Users:**
 
-## Project Structure
+- **Effortless tracking**: Just touch your tag - no apps, no buttons, no manual timers
+- **Visual feedback**: LED shows connection status and session state  
+- **Offline resilience**: Stores events when WiFi is down, syncs when reconnected
+- **Zero maintenance**: Runs 24/7, auto-updates time, handles network changes
 
-The project follows ESP-IDF component-based architecture:
+**For Developers:**
 
-- `main/`: Entry point and application orchestration
-- `components/`: Module-specific implementation
-  - `fs_manager/`: LittleFS implementation
-  - `wifi_manager/`: WiFi connectivity and NTP
-  - `rfid/`: RFID module interfaces (RC522/PN532)
-  - `webhook_manager/`: Event transmission to server
-  - Others: Additional functionality
+- **Reusable architecture**: Tool-based components work across different ESP32 projects
+- **MCP-inspired design**: Modular tools communicate via events, not tight coupling
+- **Easy customization**: Swap RFID for buttons, webhooks for MQTT, LEDs for displays
+- **Battle-tested**: Production-ready with retry logic, error handling, and persistence
 
-## Implementation Status
+## Architecture Vision: MCP-Inspired Tools
 
-| Phase | Feature | Status |
-|-------|---------|--------|
-| 0 | Base ESP-IDF Project | ✅ |
-| 1 | LittleFS Integration | ✅ |
-| 2 | WiFi JSON Parser | ✅ |
-| 3 | AP + Web Config | ✅ |
-| 4 | Multi-SSID WiFi | ✅ |
-| 5 | NTP Sync | ✅ |
-| 6 | RFID Reading | ✅ |
-| 7 | Webhook Integration | ✅ |
-| 8 | LED Feedback | 🔄 |
+This device demonstrates **tool-based architecture** inspired by Anthropic's Model Context Protocol (MCP). Instead of monolithic code, the system composes independent, reusable tools:
 
-## Configuration
-
-### WiFi Setup
-
-Create a `wifi.json` file in the `/data` directory:
-
-```json
-{
-  "networks": [
-    { "ssid": "YourWiFi", "password": "YourPassword" },
-    { "ssid": "BackupWiFi", "password": "BackupPassword" }
-  ]
-}
+```txt
+🎯 main.c (Pure Orchestrator)
+├── 🔧 rfid_tool        → Publishes tag events
+├── 🔧 wifi_tool        → Publishes connectivity status  
+├── 🔧 webhook_tool     → Subscribes to events, sends HTTP
+├── 🔧 feedback_tool    → Subscribes to all, shows LED patterns
+└── 🔧 webserver_tool   → Handles WiFi configuration
 ```
 
-### Webhook Configuration
+**Benefits of Tool Architecture:**
 
-The webhook settings are configured at compile time using ESP-IDF's Kconfig system:
+- **Reusability**: Use `rfid_tool` in door access, `webhook_tool` in IoT sensors
+- **Testability**: Each tool tests in isolation with mocked dependencies
+- **Maintainability**: Clear boundaries, single responsibility per tool
+- **Extensibility**: Add `mqtt_tool`, `display_tool`, `button_tool` without touching existing code
 
-```bash
-# View configuration options
-idf.py menuconfig
-# Navigate to: Time Tracker Configuration → Webhook Manager Configuration
-```
+This makes the ESP32 ecosystem more like modern development - composable, testable, reusable components instead of copy-paste spaghetti code.
 
-Available settings:
-- **Webhook endpoint URL**: Target URL for webhook events
-- **Maximum retry attempts**: Number of retries for failed transmissions
-- **Retry delay**: Time between retry attempts
-- **Maximum log entries**: Number of events to store in memory
-- **Debug logs**: Enable extra debugging information
+## Quick Start
 
-For quick configuration, you can also edit the sdkconfig.defaults.webhook file and run:
-```bash
-idf.py fullclean
-idf.py build
-```
+1. **Hardware**: Connect ESP32-C3 + RC522 RFID reader + WS2812 LED
+2. **WiFi Setup**: Device creates `TimeTracker-AP` → connect → browse to `192.168.4.1` → configure
+3. **Webhook**: Set your time tracking endpoint via `idf.py menuconfig`
+4. **Use**: Touch RFID tag → green LED → automatic time logging
 
-**Note for future development**: A dual-layer configuration approach is planned:
-1. Compile-time configuration via Kconfig (current method)
-2. Runtime configuration via LittleFS JSON file that can override defaults
+## Technical Details
 
-This approach will provide flexibility for both development and deployment scenarios, allowing configuration changes without recompiling.
+**Hardware Requirements:**
 
-## Getting Started
+- ESP32-C3 development board
+- MFRC522 RFID reader module  
+- WS2812B addressable LED (optional visual feedback)
 
-### Prerequisites
+**Configuration:**
 
-*   ESP-IDF environment set up (v5.0 or later)
-*   An ESP32-C3 based development board
-*   An RFID reader module (e.g., MFRC522)
-*   A WS2812B LED strip (optional, for visual feedback)
+- WiFi: Web interface at `192.168.4.1` when in AP mode
+- Webhook: ESP-IDF menuconfig → Time Tracker Configuration
+- Advanced: See `CLAUDE.md` for developer instructions
 
-### Configuration
-
-1.  **Configure the project:**
-
-    ```bash
-    idf.py menuconfig
-    ```
-
-    *   Configure your Wi-Fi credentials using the Wi-Fi Manager settings.
-    *   Configure the RFID reader settings.
-    *   Configure the Webhook URL endpoint.
-
-### Initial Wi-Fi Configuration
-
-The device will automatically start in Wi-Fi station mode and attempt to connect to a previously saved network. If no network is found, it will start in Wi-Fi Access Point (AP) mode, allowing you to connect to it and configure the Wi-Fi settings through a web interface.
-
-1.  **Connect to the AP:**
-
-    *   The device will create an AP with an SSID like `TimeTracker-AP`.
-    *   Connect to this network using your computer or smartphone.
-
-2.  **Open the configuration portal:**
-
-    *   Open a web browser and navigate to `http://192.168.4.1`.
-    *   Select your Wi-Fi network and enter the password.
-    *   Save the settings. The device will reboot and attempt to connect to the configured network.
-
-### Webhook Configuration
-
-The device sends events to a webhook URL when a tag is placed or removed. You can configure the webhook URL in the Kconfig settings.
-
-1.  **Set the Webhook URL:**
-
-    *   Open the project configuration:
-
-        ```bash
-        idf.py menuconfig
-        ```
-
-    *   Navigate to `Component config` -> `Webhook Manager` and set the `Webhook endpoint URL`.
-
-### Runtime Webhook Configuration (Future)
-
-In future versions, the webhook URL will be configurable at runtime by storing the configuration in LittleFS.
-
-## Building and Flashing
-
-### Prerequisites
-
-- ESP-IDF v5.x or newer
-- Python 3.7 or newer
-- Required hardware modules (ESP32-C3, RC522/PN532, NeoPixel)
-
-## Event Format
-
-The webhook payload sent when a tag is detected:
+**Generic Event Format:**
 
 ```json
 {
   "event": "tag_placed",
-  "tag_uid": "04B78FB0790000",
-  "device_id": "NFC_F0F5BD",
-  "timestamp": "2025-04-30T19:42:51+0200",
-  "tag_type": "MIFARE_UL",
-  "firmware_version": "v1.0.0",
-  "hardware": "ESP32-C3"
+  "tag_uid": "04B78FB0790000", 
+  "device_id": "ESP32_F0F5BD",
+  "timestamp": "2025-06-14T10:30:45+01:00"
 }
 ```
 
-## Documentation
+## Development
 
-Additional documentation:
+This project is undergoing an **MCP-inspired architectural refactor** to transform tightly-coupled components into reusable, testable tools.
 
-- [Mission Document](mission.md)
-- [Webhook Integration](webhook_integration_complete.md)
+**Current Status:** Functional prototype with some architectural debt  
+**Target:** Clean tool-based architecture with full test coverage
 
-## Future Improvements
-
-*   **OTA (Over-The-Air) Updates:** Implement OTA updates for easy firmware upgrades.
-*   **Secure Secrets Management:** Implement secure storage for sensitive information such as API keys or authentication tokens using ESP32's NVS (Non-Volatile Storage) with encryption.
-*   **Improved Error Handling:** Add more robust error handling and reporting.
-*   **User Authentication:** Implement user authentication for the web interface.
-*   **Data Encryption:** Encrypt the data stored in LittleFS to protect sensitive information.
+See `refactor_mission_brief.md` for the complete transformation plan.
