@@ -1,5 +1,5 @@
-# Partition Table for MCP-Inspired Time Tracker Device
-# Production partitions with sufficient storage for tools and data
+# Test Partition Table for MCP-Inspired Test Infrastructure
+# Phase 0: Optimized for testing with minimal storage requirements
 # Name,   Type, SubType, Offset,  Size,     Flags
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
