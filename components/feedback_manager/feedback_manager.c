@@ -492,9 +492,8 @@ esp_err_t feedback_manager_set_state(feedback_manager_handle_t handle, feedback_
     
     // Some states are temporary and should auto-expire
     switch (state) {
-        case FEEDBACK_STATE_TAG_DETECTED:
         case FEEDBACK_STATE_WEBHOOK_SUCCESS:
-            duration_ms = 2000; // 2 seconds
+            duration_ms = 2000; // 2 seconds - brief success indication
             break;
         case FEEDBACK_STATE_WIFI_CONNECTED:
             duration_ms = 1000; // 1 second - show connected briefly then return to idle
@@ -502,6 +501,7 @@ esp_err_t feedback_manager_set_state(feedback_manager_handle_t handle, feedback_
         case FEEDBACK_STATE_INIT_COMPLETE:
             duration_ms = 1000; // 1 second
             break;
+        // TAG_DETECTED is now PERMANENT - stays green until tag removed
         default:
             duration_ms = 0; // Permanent
             break;

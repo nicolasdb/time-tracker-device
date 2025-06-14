@@ -159,11 +159,11 @@ Events sent as JSON with fields: event, tag_uid, device_id, timestamp, tag_type,
 ### LED Feedback System
 
 **Visual State Patterns:**
-- **Idle**: Blue breathing (4-second cycle) - system ready
+- **Idle**: Blue breathing (4-second cycle) - system ready, no session active
 - **WiFi Connecting**: Blue blinking (fast) - attempting connection
 - **WiFi Connected**: Cyan flash (1 second) - connection established
 - **AP Mode**: Yellow→Blue→Purple (0.3s,0.3s,2.0s) - configuration mode
-- **Tag Detected**: Green flash (2 seconds) - RFID event
+- **Tag Detected**: Solid green (persistent) - time tracking session active
 - **WiFi Failed**: Red→Orange→Red (0.3s,0.4s,0.3s) - connection error
 - **Webhook Error**: Red→Red→Orange (0.2s,0.2s,0.6s) - server error
 - **RFID Error**: Red→White→Red (0.2s,0.6s,0.2s) - hardware error
@@ -171,8 +171,10 @@ Events sent as JSON with fields: event, tag_uid, device_id, timestamp, tag_type,
 
 **Key Implementation Notes:**
 - **Priority-based**: Higher priority states override lower ones
-- **Automatic expiration**: Temporary states return to idle automatically
+- **Session-aware**: Tag detected state is persistent (solid green until tag removed)
+- **Automatic expiration**: Connection states are temporary, return to idle automatically
 - **Thread-safe**: Mutex-protected queue for concurrent access
+- **Boot protection**: 10-second grace period prevents duplicate events on reboot with tag present
 - **Configurable**: Breathing period and brightness via Kconfig
 
 ## Development Best Practices

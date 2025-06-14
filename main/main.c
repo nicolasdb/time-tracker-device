@@ -11,6 +11,7 @@
 #include "nvs_flash.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "wifi_manager.h"
 #include "rfid_manager.h"
 #include "webhook_manager.h"
@@ -36,6 +37,10 @@ static feedback_manager_handle_t feedback_handle = NULL;
 static bool tag_present = false;
 static char last_tag_uid[32] = {0};
 static TaskHandle_t webhook_task_handle = NULL;
+
+// Boot state tracking to prevent duplicate events on reboot with tag present
+static uint32_t boot_time = 0;
+#define BOOT_GRACE_PERIOD_MS 10000  // 10 seconds - don't send webhook events during boot
 
 // Task to periodically process pending webhook events
 void webhook_task(void *pvParameters) {
@@ -78,14 +83,6 @@ void webhook_task(void *pvParameters) {
 static void tag_detected_handler(void* arg, esp_event_base_t base, int32_t event_id, void* data) {
     rfid_tag_event_t* event = (rfid_tag_event_t*)data;
     
-    // Update feedback manager
-    if (feedback_handle != NULL) {
-        feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_TAG_DETECTED);
-    } else {
-        // Fallback for direct LED control
-        gpio_set_level(STATUS_LED_PIN, 1);
-    }
-    
     // Convert UID to string
     char uid_str[32] = {0};
     rfid_manager_tag_uid_to_string(&event->tag, uid_str, sizeof(uid_str));
@@ -95,6 +92,23 @@ static void tag_detected_handler(void* arg, esp_event_base_t base, int32_t event
     tag_present = true;
     
     ESP_LOGI(RFID_TAG, "TAG: %s", uid_str);
+    
+    // Check if we're in RFID grace period to prevent duplicate events on reboot
+    uint32_t current_time = esp_timer_get_time() / 1000; // Convert to ms
+    bool in_boot_period = (boot_time > 0) && ((current_time - boot_time) < BOOT_GRACE_PERIOD_MS);
+    
+    // ALWAYS update LED to show green (session active) regardless of boot period
+    if (feedback_handle != NULL) {
+        feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_TAG_DETECTED);
+    } else {
+        // Fallback for direct LED control
+        gpio_set_level(STATUS_LED_PIN, 1);
+    }
+    
+    if (in_boot_period) {
+        ESP_LOGW(RFID_TAG, "Tag detected during RFID grace period - LED shows session active, no webhook sent");
+        return; // Skip webhook but LED is already set to green
+    }
     
     // Get tag type string based on tag type
     char tag_type_str[16] = "unknown";
@@ -168,9 +182,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         switch (event_id) {
             case IP_EVENT_STA_GOT_IP:
                 ESP_LOGI(TAG, "WiFi got IP - connected successfully");
-                // Clear all states and set idle as baseline, then briefly show connected
-                feedback_manager_reset(feedback_handle);
-                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_IDLE);
+                // Don't reset - preserve any existing high-priority states (like tag detected)
                 feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_WIFI_CONNECTED);
                 break;
             case IP_EVENT_STA_LOST_IP:
@@ -182,6 +194,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 }
 
 void app_main(void) {
+    // Boot time will be set when RFID scanning actually starts
+    boot_time = 0; // Initialize to 0, will be set later
+    
     // Wait 2 seconds to ensure serial monitor is connected
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     
@@ -484,10 +499,37 @@ void app_main(void) {
 
     // Configuration and logs are loaded in the webhook_task
     
-    // Stage 8: Initialize RFID Manager
+    // Stage 8: Initialize RFID Manager (wait for NTP sync first if WiFi connected)
     ESP_LOGI(TAG, "Stage 8: Initializing RFID Manager");
     if (feedback_handle != NULL) {
         feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_INIT_RFID);
+    }
+    
+    // Wait for time synchronization before starting RFID to ensure accurate timestamps
+    if (wifi_manager_is_connected()) {
+        ESP_LOGI(TAG, "Waiting for NTP synchronization before starting RFID...");
+        if (feedback_handle != NULL) {
+            feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_TIME_SYNCING);
+        }
+        
+        // Wait up to 30 seconds for NTP sync
+        int ntp_wait_count = 0;
+        while (!wifi_manager_is_time_synced() && ntp_wait_count < 300) {
+            vTaskDelay(pdMS_TO_TICKS(100));  // 100ms intervals
+            ntp_wait_count++;
+        }
+        
+        if (wifi_manager_is_time_synced()) {
+            char time_str[64];
+            wifi_manager_get_formatted_time(time_str, sizeof(time_str));
+            ESP_LOGI(TAG, "NTP synchronized - current time: %s", time_str);
+            if (feedback_handle != NULL) {
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_TIME_SYNCED);
+                vTaskDelay(pdMS_TO_TICKS(500)); // Brief confirmation
+            }
+        } else {
+            ESP_LOGW(TAG, "NTP sync timeout - proceeding anyway (timestamps may be inaccurate)");
+        }
     }
     
     rfid_handle = rfid_manager_init();
@@ -529,6 +571,11 @@ void app_main(void) {
             }
         } else {
             ESP_LOGI(RFID_TAG, "RFID scanning started successfully");
+            
+            // NOW start the grace period - RFID is ready and scanning
+            boot_time = esp_timer_get_time() / 1000; // Convert to ms
+            ESP_LOGI(TAG, "RFID grace period started - %d second protection against duplicate events", BOOT_GRACE_PERIOD_MS / 1000);
+            
             if (feedback_handle != NULL) {
                 feedback_manager_validate_init_step(feedback_handle, true);
             }
@@ -541,13 +588,29 @@ void app_main(void) {
         feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_INIT_COMPLETE);
         vTaskDelay(pdMS_TO_TICKS(1000)); // Show completion state
         
-        // Final state will be managed by WiFi event handlers
+        // Set IDLE state only if system is fully ready (WiFi + NTP synced)
+        if (wifi_manager_is_connected() && wifi_manager_is_time_synced()) {
+            ESP_LOGI(TAG, "System fully ready - entering idle state");
+            feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_IDLE);
+        } else {
+            ESP_LOGI(TAG, "System not fully ready - will enter idle after NTP sync");
+        }
     }
     
     // Main loop - now purely status reporting and fallback LED control
     int count = 0;
+    static bool idle_state_set = false;  // Track if we've set idle state after NTP sync
     
     while (1) {
+        
+        // Check if system is ready for idle state (WiFi + NTP synced)
+        if (!idle_state_set && wifi_manager_is_connected() && wifi_manager_is_time_synced()) {
+            ESP_LOGI(TAG, "System now fully ready - entering idle state");
+            if (feedback_handle != NULL) {
+                feedback_manager_set_state(feedback_handle, FEEDBACK_STATE_IDLE);
+            }
+            idle_state_set = true;
+        }
         
         // Status update every 10 seconds
         if (count % 10 == 0) {

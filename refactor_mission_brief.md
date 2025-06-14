@@ -269,30 +269,132 @@ void dashboard_refresh(void); // ANSI clear + redraw
 - **State persistence**: IDLE state now properly maintained without interference
 - **Error handling**: Enhanced feedback patterns for different error scenarios
 
-### 🔄 NEXT SESSION - Component Deep Analysis
-**Priority: Medium - Systematic Analysis**
+### ❌ CURRENT SESSION - LED State Issues Identified
+**Priority: HIGH - Critical LED Feedback Issues Remain**
 
-**Deep Analysis Plan for Other Components:**
-1. **wifi_manager**: Analyze event handling, connection logic, AP mode transitions
-2. **webhook_manager**: Review retry logic, queue management, error handling patterns  
-3. **rfid_manager**: Examine RC522 interface, event dispatching, error recovery
-4. **Component interfaces**: Cross-component communication patterns and dependencies
-5. **Configuration management**: Kconfig organization and runtime parameter handling
+**Issues Found in Latest Testing:**
+1. **IDLE State Not Applied**: System logs "entering idle state" but LED remains in WIFI_CONNECTING (state 3 = blue blink)
+2. **Tag Removal No Return**: After tag removed, LED stays green (state 13) instead of returning to IDLE breathing
+3. **Grace Period Fixed**: ✅ 10-second protection working correctly after RFID initialization
+4. **NTP Timestamps Fixed**: ✅ Proper 2025 timestamps, no more 1970 epoch issues
 
-### 📋 COMPONENT ANALYSIS CHECKLIST
-**Before Refactoring:**
-- [ ] **wifi_manager**: Event flow, state management, configuration handling
-- [ ] **webhook_manager**: Queue logic, retry mechanisms, error states
-- [ ] **rfid_manager**: Hardware interface, event system, error handling  
-- [ ] **main.c**: Component orchestration, initialization sequence, lifecycle
-- [ ] **Cross-component**: Dependencies, interfaces, data flow patterns
+**Root Cause Analysis Needed:**
+- **Feedback Manager State Priority**: IDLE state seems to be getting overridden or not applied
+- **State Transitions**: Tag removal not triggering proper IDLE return
+- **WiFi Event Conflicts**: WIFI_CONNECTING state persisting despite being lower priority than IDLE
 
-### 🎯 CURRENT STATUS - PHASE 1 COMPLETE
-- **feedback_manager.c**: ✅ COMPLETE - Architecture fixed, runtime verified
-- **Main.c WiFi logic**: ✅ COMPLETE - Event-driven architecture implemented  
-- **Error feedback system**: ✅ COMPLETE - Enhanced color patterns working
-- **State management**: ✅ COMPLETE - Clean transitions, no race conditions
-- **Overall Phase 1**: ✅ FUNCTIONALLY COMPLETE AND VERIFIED
+### 🔍 NEXT SESSION - Deep Component Architecture Analysis
+**Priority: HIGH - Root Cause Investigation**
+
+**Hypothesis: Feedback Manager is Working - Other Components are Creating Conflicts**
+
+The feedback state issues might be **symptoms** of deeper architectural problems in other components. Before continuing feedback debugging, we need to systematically analyze all components for:
+- Race conditions between managers
+- Event timing conflicts  
+- Cross-component dependencies
+- Poor separation of concerns
+
+**Phase 1: Component Deep Dive Analysis**
+1. **wifi_manager Component** (`components/wifi_manager/`):
+   - **Event System**: How WiFi events are dispatched and timing
+   - **State Management**: Internal state vs external feedback states
+   - **NTP Integration**: Async time sync affecting feedback timing
+   - **AP Mode Logic**: Fallback behavior and state transitions
+   - **Connection Recovery**: Reconnection logic and event flooding
+
+2. **webhook_manager Component** (`components/webhook_manager/`):
+   - **HTTP State Management**: Request lifecycle affecting feedback
+   - **Retry Logic**: Background retries potentially interfering
+   - **Queue Processing**: Task priorities vs feedback task priorities
+   - **Error Handling**: How failures propagate to feedback
+   - **Connectivity Checks**: Periodic checks affecting state
+
+3. **rfid_manager Component** (`components/rfid_manager/`):
+   - **RC522 Interface**: Hardware event timing and debouncing
+   - **Event Dispatching**: How tag events reach main.c
+   - **Scanner Task**: Task priorities and real-time constraints
+   - **Error Recovery**: Hardware failures affecting feedback
+   - **Interrupt Handling**: ISR timing vs feedback updates
+
+4. **Cross-Component Interactions**:
+   - **Task Priority Conflicts**: Multiple high-priority tasks competing
+   - **Event Loop Congestion**: Too many events causing delays
+   - **Shared Resource Access**: Mutex contention between components
+   - **Timing Dependencies**: Components expecting specific sequences
+   - **Memory Pressure**: Stack/heap issues affecting reliability
+
+**Phase 2: Architecture Issues to Investigate**
+1. **Event System Architecture**:
+   ```
+   Current: wifi_manager → main.c → feedback_manager
+                rfid_manager → main.c → feedback_manager
+                webhook_manager → main.c → feedback_manager
+   
+   Issues: 
+   - main.c as bottleneck
+   - No event prioritization
+   - Race conditions possible
+   ```
+
+2. **Task Priority Analysis**:
+   - wifi_manager tasks vs feedback_manager task
+   - webhook_manager HTTP tasks vs real-time feedback
+   - rfid_manager scanner task priority
+   - FreeRTOS scheduling conflicts
+
+3. **State Ownership Problems**:
+   - Multiple components trying to control feedback
+   - No clear state ownership hierarchy
+   - Conflicting state change requests
+
+**Phase 3: Systematic Component Review**
+1. **Code Quality Assessment**:
+   - [ ] Component isolation and interfaces
+   - [ ] Error handling consistency
+   - [ ] Resource management (malloc/free, mutexes)
+   - [ ] Task lifecycle management
+   - [ ] Configuration parameter usage
+
+2. **Dependency Mapping**:
+   - [ ] Component initialization order dependencies
+   - [ ] Runtime communication patterns  
+   - [ ] Shared resource access patterns
+   - [ ] Event flow and timing requirements
+
+3. **Anti-Pattern Detection**:
+   - [ ] Polling loops vs event-driven design
+   - [ ] Blocking operations in high-priority tasks
+   - [ ] Unbounded queues or delays
+   - [ ] Global state mutations without synchronization
+
+### 📋 COMPONENT ANALYSIS CHECKLIST FOR NEXT SESSION
+**Immediate Actions:**
+- [ ] **wifi_manager**: Deep dive into event system and NTP integration
+- [ ] **webhook_manager**: Analyze HTTP task priorities and retry logic
+- [ ] **rfid_manager**: Review RC522 interface and event dispatching
+- [ ] **Cross-component**: Map task priorities and shared resource access
+- [ ] **Architecture patterns**: Identify polling vs event-driven inconsistencies
+
+**Systematic Analysis Protocol:**
+- [ ] **Component Isolation**: Test each component independently
+- [ ] **Interface Documentation**: Map all inter-component communication
+- [ ] **Timing Analysis**: Identify race conditions and event ordering
+- [ ] **Resource Conflicts**: Find mutex contention and priority inversions
+- [ ] **Event Flow Mapping**: Trace complete event lifecycles
+
+**Expected Outcomes:**
+- Clear architectural improvements needed
+- Root cause identification for feedback issues  
+- Foundation for clean component refactoring
+- Resolution of fundamental timing/priority conflicts
+
+### 🎯 CURRENT STATUS - ARCHITECTURAL INVESTIGATION NEEDED
+- **Grace Period**: ✅ FIXED - Proper timing after RFID initialization
+- **NTP Timestamps**: ✅ FIXED - Accurate time in webhook payloads
+- **Boot Protection**: ✅ FIXED - No duplicate events on reboot with tag
+- **LED State Management**: ❓ SYMPTOMS - Likely caused by deeper architectural issues
+- **Component Architecture**: ⏳ PENDING - Deep analysis needed before further fixes
+- **Overall Approach**: 🔄 PIVOTED - Component-first investigation vs symptom-chasing
 
 ## File Structure After Refactor
 
