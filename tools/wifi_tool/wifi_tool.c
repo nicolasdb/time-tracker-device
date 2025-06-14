@@ -1,14 +1,746 @@
-/*
- * WiFi Tool Implementation - Phase 3 Placeholder
+/**
+ * @file wifi_tool.c
+ * @brief MCP-Inspired WiFi Tool Implementation
+ * 
+ * Transformed from wifi_manager to follow MCP tool composition patterns.
+ * Breaks coupling with ap_webserver by using event-driven communication.
  */
 
 #include "wifi_tool.h"
 #include "esp_log.h"
+#include "esp_wifi.h"
+#include "esp_netif.h"
+#include "esp_event.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
+#include "nvs_flash.h"
+#include "cJSON.h"
+#include <string.h>
+#include <sys/stat.h>
 
 static const char *TAG = "WIFI_TOOL";
 
-esp_err_t wifi_tool_init(void)
+// =============================================================================
+// MCP Tool Event System
+// =============================================================================
+
+ESP_EVENT_DEFINE_BASE(WIFI_TOOL_EVENTS);
+
+// =============================================================================
+// MCP Tool Configuration & Constants
+// =============================================================================
+
+#define WIFI_TOOL_TASK_STACK_SIZE    4096
+#define WIFI_TOOL_TASK_PRIORITY      5
+#define WIFI_TOOL_MAX_RETRY_DEFAULT  5
+#define WIFI_TOOL_RETRY_DELAY_MS     5000
+#define WIFI_TOOL_CONNECT_TIMEOUT_MS 30000
+
+// WiFi event group bits
+#define WIFI_CONNECTED_BIT    BIT0
+#define WIFI_FAIL_BIT         BIT1
+#define WIFI_AP_STARTED_BIT   BIT2
+
+// =============================================================================
+// Internal Tool Structure (Enhanced from wifi_manager)
+// =============================================================================
+
+/**
+ * @brief MCP-Inspired WiFi Tool Context
+ */
+struct wifi_tool_context {
+    // Tool Metadata (MCP Pattern)
+    wifi_tool_config_t config;
+    wifi_tool_capabilities_t capabilities;
+    bool is_initialized;
+    bool is_active;
+    uint32_t uptime_start;
+    
+    // WiFi State Management
+    bool sta_connected;
+    bool ap_active;
+    char current_ssid[WIFI_TOOL_MAX_SSID_LEN];
+    char ip_address[16];
+    int8_t rssi;
+    uint8_t retry_count;
+    uint8_t current_network_index;
+    uint8_t ap_client_count;
+    
+    // ESP-IDF Resources
+    esp_netif_t *sta_netif;
+    esp_netif_t *ap_netif;
+    EventGroupHandle_t wifi_event_group;
+    SemaphoreHandle_t config_mutex;
+    
+    // Event Publishing
+    TaskHandle_t event_task;
+    bool publish_events;
+};
+
+// =============================================================================
+// Forward Declarations
+// =============================================================================
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static esp_err_t publish_wifi_event(struct wifi_tool_context *ctx, wifi_tool_event_type_t type, void* data);
+static esp_err_t load_networks_from_config(struct wifi_tool_context *ctx);
+static esp_err_t try_connect_next_network(struct wifi_tool_context *ctx);
+static esp_err_t start_sta_mode(struct wifi_tool_context *ctx);
+static esp_err_t start_ap_mode(struct wifi_tool_context *ctx);
+
+// =============================================================================
+// MCP Tool Interface Implementation
+// =============================================================================
+
+const char* wifi_tool_get_id(void)
 {
-    ESP_LOGI(TAG, "Phase 3 placeholder - wifi_tool not yet implemented");
+    return WIFI_TOOL_ID;
+}
+
+const char* wifi_tool_get_version(void)
+{
+    return WIFI_TOOL_VERSION;
+}
+
+wifi_tool_config_t wifi_tool_create_default_config(void)
+{
+    wifi_tool_config_t config = {0};
+    
+    // Default AP configuration
+    strncpy(config.ap_config.ssid, "TimeTracker-Setup", sizeof(config.ap_config.ssid) - 1);
+    strncpy(config.ap_config.password, "configure", sizeof(config.ap_config.password) - 1);
+    config.ap_config.channel = 1;
+    config.ap_config.max_connections = 4;
+    config.ap_config.auth_mode = WIFI_AUTH_WPA2_PSK;
+    config.ap_config.ssid_hidden = false;
+    strncpy(config.ap_config.ip_address, "192.168.4.1", sizeof(config.ap_config.ip_address) - 1);
+    strncpy(config.ap_config.gateway, "192.168.4.1", sizeof(config.ap_config.gateway) - 1);
+    strncpy(config.ap_config.netmask, "255.255.255.0", sizeof(config.ap_config.netmask) - 1);
+    
+    // Default behavior settings
+    config.connect_timeout_ms = WIFI_TOOL_CONNECT_TIMEOUT_MS;
+    config.max_retry_attempts = WIFI_TOOL_MAX_RETRY_DEFAULT;
+    config.retry_delay_ms = WIFI_TOOL_RETRY_DELAY_MS;
+    config.auto_reconnect = true;
+    config.enable_ap_fallback = true;
+    
+    // Default configuration persistence
+    strncpy(config.config_file_path, "/littlefs/wifi.json", sizeof(config.config_file_path) - 1);
+    config.auto_save_config = true;
+    
+    // Default event publishing
+    config.publish_events = true;
+    config.event_stack_size = WIFI_TOOL_TASK_STACK_SIZE;
+    
+    return config;
+}
+
+wifi_tool_handle_t wifi_tool_init(const wifi_tool_config_t *config)
+{
+    if (!config) {
+        ESP_LOGE(TAG, "Configuration cannot be NULL");
+        return NULL;
+    }
+    
+    ESP_LOGI(TAG, "Initializing MCP-inspired WiFi tool v%s", WIFI_TOOL_VERSION);
+    
+    // Allocate tool context
+    struct wifi_tool_context *ctx = calloc(1, sizeof(struct wifi_tool_context));
+    if (!ctx) {
+        ESP_LOGE(TAG, "Failed to allocate tool context");
+        return NULL;
+    }
+    
+    // Copy configuration
+    ctx->config = *config;
+    ctx->uptime_start = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    ctx->publish_events = config->publish_events;
+    
+    // Set capabilities
+    ctx->capabilities = WIFI_CAP_STA_MODE | 
+                       WIFI_CAP_AP_MODE |
+                       WIFI_CAP_MULTI_NETWORK |
+                       WIFI_CAP_AUTO_RECONNECT |
+                       WIFI_CAP_CONFIG_PERSIST |
+                       WIFI_CAP_EVENT_PUBLISH |
+                       WIFI_CAP_HEALTH_MONITOR;
+    
+    // Initialize synchronization
+    ctx->config_mutex = xSemaphoreCreateMutex();
+    if (!ctx->config_mutex) {
+        ESP_LOGE(TAG, "Failed to create config mutex");
+        free(ctx);
+        return NULL;
+    }
+    
+    ctx->wifi_event_group = xEventGroupCreate();
+    if (!ctx->wifi_event_group) {
+        ESP_LOGE(TAG, "Failed to create event group");
+        vSemaphoreDelete(ctx->config_mutex);
+        free(ctx);
+        return NULL;
+    }
+    
+    // Initialize ESP networking
+    esp_err_t ret = esp_netif_init();
+    if (ret != ESP_OK) {
+        ESP_LOGD(TAG, "netif_init returned: %s", esp_err_to_name(ret));
+    }
+    
+    // Create event loop if needed
+    ret = esp_event_loop_create_default();
+    if (ret != ESP_OK) {
+        ESP_LOGD(TAG, "event_loop_create returned: %s", esp_err_to_name(ret));
+    }
+    
+    // Create network interfaces
+    ctx->sta_netif = esp_netif_create_default_wifi_sta();
+    ctx->ap_netif = esp_netif_create_default_wifi_ap();
+    
+    if (!ctx->sta_netif || !ctx->ap_netif) {
+        ESP_LOGE(TAG, "Failed to create network interfaces");
+        if (ctx->sta_netif) esp_netif_destroy(ctx->sta_netif);
+        if (ctx->ap_netif) esp_netif_destroy(ctx->ap_netif);
+        vEventGroupDelete(ctx->wifi_event_group);
+        vSemaphoreDelete(ctx->config_mutex);
+        free(ctx);
+        return NULL;
+    }
+    
+    // Initialize WiFi with default config
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ret = esp_wifi_init(&cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize WiFi: %s", esp_err_to_name(ret));
+        esp_netif_destroy(ctx->sta_netif);
+        esp_netif_destroy(ctx->ap_netif);
+        vEventGroupDelete(ctx->wifi_event_group);
+        vSemaphoreDelete(ctx->config_mutex);
+        free(ctx);
+        return NULL;
+    }
+    
+    // Register event handlers
+    ret = esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, ctx);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register WiFi event handler: %s", esp_err_to_name(ret));
+        esp_wifi_deinit();
+        esp_netif_destroy(ctx->sta_netif);
+        esp_netif_destroy(ctx->ap_netif);
+        vEventGroupDelete(ctx->wifi_event_group);
+        vSemaphoreDelete(ctx->config_mutex);
+        free(ctx);
+        return NULL;
+    }
+    
+    ret = esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &ip_event_handler, ctx);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register IP event handler: %s", esp_err_to_name(ret));
+        esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler);
+        esp_wifi_deinit();
+        esp_netif_destroy(ctx->sta_netif);
+        esp_netif_destroy(ctx->ap_netif);
+        vEventGroupDelete(ctx->wifi_event_group);
+        vSemaphoreDelete(ctx->config_mutex);
+        free(ctx);
+        return NULL;
+    }
+    
+    // Load network configuration
+    load_networks_from_config(ctx);
+    
+    ctx->is_initialized = true;
+    ctx->is_active = true;
+    
+    ESP_LOGI(TAG, "WiFi tool initialized successfully");
+    ESP_LOGI(TAG, "  Networks: %d, AP fallback: %s, Events: %s", 
+             ctx->config.network_count,
+             ctx->config.enable_ap_fallback ? "enabled" : "disabled",
+             ctx->publish_events ? "enabled" : "disabled");
+    ESP_LOGI(TAG, "  Capabilities: 0x%02X", ctx->capabilities);
+    
+    return ctx;
+}
+
+esp_err_t wifi_tool_deinit(wifi_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    ESP_LOGI(TAG, "Deinitializing WiFi tool");
+    
+    // Stop WiFi operations
+    ctx->is_active = false;
+    esp_wifi_stop();
+    esp_wifi_deinit();
+    
+    // Unregister event handlers
+    esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler);
+    esp_event_handler_unregister(IP_EVENT, ESP_EVENT_ANY_ID, &ip_event_handler);
+    
+    // Cleanup network interfaces
+    if (ctx->sta_netif) esp_netif_destroy(ctx->sta_netif);
+    if (ctx->ap_netif) esp_netif_destroy(ctx->ap_netif);
+    
+    // Cleanup synchronization
+    if (ctx->wifi_event_group) vEventGroupDelete(ctx->wifi_event_group);
+    if (ctx->config_mutex) vSemaphoreDelete(ctx->config_mutex);
+    
+    // Free context
+    free(ctx);
+    
+    ESP_LOGI(TAG, "WiFi tool deinitialized");
     return ESP_OK;
+}
+
+wifi_tool_capabilities_t wifi_tool_get_capabilities(wifi_tool_handle_t handle)
+{
+    if (!handle) {
+        return 0;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    return ctx->capabilities;
+}
+
+esp_err_t wifi_tool_get_status(wifi_tool_handle_t handle, wifi_tool_status_t *status)
+{
+    if (!handle || !status) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    status->is_initialized = ctx->is_initialized;
+    status->is_active = ctx->is_active;
+    status->sta_connected = ctx->sta_connected;
+    status->ap_active = ctx->ap_active;
+    snprintf(status->current_ssid, sizeof(status->current_ssid), "%s", ctx->current_ssid);
+    snprintf(status->ip_address, sizeof(status->ip_address), "%s", ctx->ip_address);
+    status->rssi = ctx->rssi;
+    status->retry_count = ctx->retry_count;
+    status->uptime_ms = (xTaskGetTickCount() * portTICK_PERIOD_MS) - ctx->uptime_start;
+    status->ap_client_count = ctx->ap_client_count;
+    status->capabilities = ctx->capabilities;
+    
+    return ESP_OK;
+}
+
+// =============================================================================
+// WiFi Operations Implementation
+// =============================================================================
+
+esp_err_t wifi_tool_start_sta(wifi_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Starting WiFi STA mode");
+    
+    return start_sta_mode(ctx);
+}
+
+esp_err_t wifi_tool_start_ap(wifi_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Starting WiFi AP mode");
+    
+    return start_ap_mode(ctx);
+}
+
+esp_err_t wifi_tool_stop(wifi_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    ESP_LOGI(TAG, "Stopping WiFi operations");
+    
+    esp_err_t ret = esp_wifi_stop();
+    if (ret == ESP_OK) {
+        ctx->sta_connected = false;
+        ctx->ap_active = false;
+        ctx->current_ssid[0] = '\0';
+        ctx->ip_address[0] = '\0';
+        ctx->retry_count = 0;
+    }
+    
+    return ret;
+}
+
+bool wifi_tool_is_connected(wifi_tool_handle_t handle)
+{
+    if (!handle) {
+        return false;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    return ctx->sta_connected;
+}
+
+esp_err_t wifi_tool_get_ip_address(wifi_tool_handle_t handle, char* ip_str, size_t len)
+{
+    if (!handle || !ip_str || len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    if (!ctx->sta_connected || strlen(ctx->ip_address) == 0) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    strncpy(ip_str, ctx->ip_address, len - 1);
+    ip_str[len - 1] = '\0';
+    
+    return ESP_OK;
+}
+
+// =============================================================================
+// Event Handlers (Enhanced from Original)
+// =============================================================================
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)arg;
+    
+    switch (event_id) {
+        case WIFI_EVENT_STA_START:
+            ESP_LOGI(TAG, "WiFi STA started");
+            try_connect_next_network(ctx);
+            break;
+            
+        case WIFI_EVENT_STA_CONNECTED: {
+            wifi_event_sta_connected_t* event = (wifi_event_sta_connected_t*)event_data;
+            ESP_LOGI(TAG, "Connected to SSID: %s", event->ssid);
+            
+            ctx->sta_connected = true;
+            snprintf(ctx->current_ssid, sizeof(ctx->current_ssid), "%s", (char*)event->ssid);
+            ctx->retry_count = 0;
+            
+            // Publish event for other tools
+            wifi_tool_event_t wifi_event = {
+                .type = WIFI_TOOL_EVENT_STA_CONNECTED
+            };
+            snprintf(wifi_event.data.sta_info.ssid, sizeof(wifi_event.data.sta_info.ssid), "%s", (char*)event->ssid);
+            memcpy(wifi_event.data.sta_info.bssid, event->bssid, 6);
+            publish_wifi_event(ctx, WIFI_TOOL_EVENT_STA_CONNECTED, &wifi_event);
+            
+            xEventGroupSetBits(ctx->wifi_event_group, WIFI_CONNECTED_BIT);
+            break;
+        }
+        
+        case WIFI_EVENT_STA_DISCONNECTED: {
+            wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*)event_data;
+            ESP_LOGW(TAG, "Disconnected from WiFi (reason: %d)", event->reason);
+            
+            ctx->sta_connected = false;
+            ctx->ip_address[0] = '\0';
+            
+            // Publish disconnect event
+            wifi_tool_event_t wifi_event = {
+                .type = WIFI_TOOL_EVENT_STA_DISCONNECTED,
+                .data.error_info.reason = event->reason,
+                .data.error_info.retry_count = ctx->retry_count
+            };
+            publish_wifi_event(ctx, WIFI_TOOL_EVENT_STA_DISCONNECTED, &wifi_event);
+            
+            // Handle reconnection
+            if (ctx->config.auto_reconnect && ctx->retry_count < ctx->config.max_retry_attempts) {
+                ctx->retry_count++;
+                ESP_LOGI(TAG, "Retrying connection (%d/%d)", ctx->retry_count, ctx->config.max_retry_attempts);
+                vTaskDelay(pdMS_TO_TICKS(ctx->config.retry_delay_ms));
+                esp_wifi_connect();
+            } else if (ctx->config.enable_ap_fallback) {
+                ESP_LOGI(TAG, "Max retries reached, starting AP mode");
+                xEventGroupSetBits(ctx->wifi_event_group, WIFI_FAIL_BIT);
+                start_ap_mode(ctx);
+            }
+            break;
+        }
+        
+        case WIFI_EVENT_AP_START:
+            ESP_LOGI(TAG, "WiFi AP started");
+            ctx->ap_active = true;
+            
+            // Publish AP started event for webserver tool
+            wifi_tool_event_t ap_event = {
+                .type = WIFI_TOOL_EVENT_AP_STARTED
+            };
+            snprintf(ap_event.data.ap_info.ap_ssid, sizeof(ap_event.data.ap_info.ap_ssid), "%s", ctx->config.ap_config.ssid);
+            snprintf(ap_event.data.ap_info.ip_address, sizeof(ap_event.data.ap_info.ip_address), "%s", ctx->config.ap_config.ip_address);
+            ap_event.data.ap_info.channel = ctx->config.ap_config.channel;
+            publish_wifi_event(ctx, WIFI_TOOL_EVENT_AP_STARTED, &ap_event);
+            
+            xEventGroupSetBits(ctx->wifi_event_group, WIFI_AP_STARTED_BIT);
+            break;
+            
+        case WIFI_EVENT_AP_STOP:
+            ESP_LOGI(TAG, "WiFi AP stopped");
+            ctx->ap_active = false;
+            ctx->ap_client_count = 0;
+            publish_wifi_event(ctx, WIFI_TOOL_EVENT_AP_STOPPED, NULL);
+            break;
+            
+        case WIFI_EVENT_AP_STACONNECTED: {
+            wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*)event_data;
+            ESP_LOGI(TAG, "Client connected to AP (MAC: %02x:%02x:%02x:%02x:%02x:%02x)", 
+                     event->mac[0], event->mac[1], event->mac[2], 
+                     event->mac[3], event->mac[4], event->mac[5]);
+            ctx->ap_client_count++;
+            publish_wifi_event(ctx, WIFI_TOOL_EVENT_AP_CLIENT_CONNECTED, NULL);
+            break;
+        }
+        
+        case WIFI_EVENT_AP_STADISCONNECTED: {
+            wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*)event_data;
+            ESP_LOGI(TAG, "Client disconnected from AP (MAC: %02x:%02x:%02x:%02x:%02x:%02x)", 
+                     event->mac[0], event->mac[1], event->mac[2], 
+                     event->mac[3], event->mac[4], event->mac[5]);
+            if (ctx->ap_client_count > 0) ctx->ap_client_count--;
+            publish_wifi_event(ctx, WIFI_TOOL_EVENT_AP_CLIENT_DISCONNECTED, NULL);
+            break;
+        }
+    }
+}
+
+static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)arg;
+    
+    if (event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
+        ESP_LOGI(TAG, "Got IP address: " IPSTR, IP2STR(&event->ip_info.ip));
+        
+        // Store IP address
+        snprintf(ctx->ip_address, sizeof(ctx->ip_address), IPSTR, IP2STR(&event->ip_info.ip));
+        
+        // Publish IP acquired event
+        wifi_tool_event_t wifi_event = {
+            .type = WIFI_TOOL_EVENT_IP_ACQUIRED
+        };
+        snprintf(wifi_event.data.ip_info.ip_address, sizeof(wifi_event.data.ip_info.ip_address), "%s", ctx->ip_address);
+        snprintf(wifi_event.data.ip_info.gateway, sizeof(wifi_event.data.ip_info.gateway), 
+                IPSTR, IP2STR(&event->ip_info.gw));
+        snprintf(wifi_event.data.ip_info.netmask, sizeof(wifi_event.data.ip_info.netmask), 
+                IPSTR, IP2STR(&event->ip_info.netmask));
+        
+        publish_wifi_event(ctx, WIFI_TOOL_EVENT_IP_ACQUIRED, &wifi_event);
+    }
+}
+
+// =============================================================================
+// Internal Helper Functions
+// =============================================================================
+
+static esp_err_t publish_wifi_event(struct wifi_tool_context *ctx, wifi_tool_event_type_t type, void* data)
+{
+    if (!ctx->publish_events) {
+        return ESP_OK;
+    }
+    
+    wifi_tool_event_t event = {.type = type};
+    if (data) {
+        memcpy(&event, data, sizeof(wifi_tool_event_t));
+    }
+    
+    ESP_LOGD(TAG, "Publishing WiFi event: %s", wifi_tool_event_to_string(type));
+    
+    return esp_event_post(WIFI_TOOL_EVENTS, type, &event, sizeof(event), 0);
+}
+
+static esp_err_t load_networks_from_config(struct wifi_tool_context *ctx)
+{
+    // For now, use a simple default network setup
+    // TODO: Implement JSON file loading
+    ESP_LOGD(TAG, "Loading networks from config (simplified)");
+    
+    ctx->config.network_count = 0;
+    return ESP_OK;
+}
+
+static esp_err_t try_connect_next_network(struct wifi_tool_context *ctx)
+{
+    if (ctx->config.network_count == 0) {
+        ESP_LOGW(TAG, "No networks configured");
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    // Simple implementation - connect to first available network
+    wifi_network_config_t *network = &ctx->config.networks[ctx->current_network_index];
+    
+    wifi_config_t wifi_config = {0};
+    strncpy((char*)wifi_config.sta.ssid, network->ssid, sizeof(wifi_config.sta.ssid) - 1);
+    strncpy((char*)wifi_config.sta.password, network->password, sizeof(wifi_config.sta.password) - 1);
+    
+    ESP_LOGI(TAG, "Connecting to network: %s", network->ssid);
+    
+    esp_err_t ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    return esp_wifi_connect();
+}
+
+static esp_err_t start_sta_mode(struct wifi_tool_context *ctx)
+{
+    esp_err_t ret = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    return esp_wifi_start();
+}
+
+static esp_err_t start_ap_mode(struct wifi_tool_context *ctx)
+{
+    wifi_config_t wifi_config = {0};
+    
+    snprintf((char*)wifi_config.ap.ssid, sizeof(wifi_config.ap.ssid), "%s", ctx->config.ap_config.ssid);
+    snprintf((char*)wifi_config.ap.password, sizeof(wifi_config.ap.password), "%s", ctx->config.ap_config.password);
+    wifi_config.ap.ssid_len = strlen(ctx->config.ap_config.ssid);
+    wifi_config.ap.channel = ctx->config.ap_config.channel;
+    wifi_config.ap.max_connection = ctx->config.ap_config.max_connections;
+    wifi_config.ap.authmode = ctx->config.ap_config.auth_mode;
+    
+    if (strlen(ctx->config.ap_config.password) == 0) {
+        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+    }
+    
+    esp_err_t ret = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    ret = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    return esp_wifi_start();
+}
+
+// =============================================================================
+// Utility Functions Implementation
+// =============================================================================
+
+const char* wifi_tool_event_to_string(wifi_tool_event_type_t event_type)
+{
+    switch (event_type) {
+        case WIFI_TOOL_EVENT_STA_CONNECTING: return "STA_CONNECTING";
+        case WIFI_TOOL_EVENT_STA_CONNECTED: return "STA_CONNECTED";
+        case WIFI_TOOL_EVENT_STA_DISCONNECTED: return "STA_DISCONNECTED";
+        case WIFI_TOOL_EVENT_STA_FAILED: return "STA_FAILED";
+        case WIFI_TOOL_EVENT_AP_STARTED: return "AP_STARTED";
+        case WIFI_TOOL_EVENT_AP_STOPPED: return "AP_STOPPED";
+        case WIFI_TOOL_EVENT_AP_CLIENT_CONNECTED: return "AP_CLIENT_CONNECTED";
+        case WIFI_TOOL_EVENT_AP_CLIENT_DISCONNECTED: return "AP_CLIENT_DISCONNECTED";
+        case WIFI_TOOL_EVENT_CONFIG_CHANGED: return "CONFIG_CHANGED";
+        case WIFI_TOOL_EVENT_IP_ACQUIRED: return "IP_ACQUIRED";
+        case WIFI_TOOL_EVENT_IP_LOST: return "IP_LOST";
+        default: return "UNKNOWN";
+    }
+}
+
+const char* wifi_tool_auth_mode_to_string(wifi_auth_mode_t auth_mode)
+{
+    switch (auth_mode) {
+        case WIFI_AUTH_OPEN: return "OPEN";
+        case WIFI_AUTH_WEP: return "WEP";
+        case WIFI_AUTH_WPA_PSK: return "WPA_PSK";
+        case WIFI_AUTH_WPA2_PSK: return "WPA2_PSK";
+        case WIFI_AUTH_WPA_WPA2_PSK: return "WPA_WPA2_PSK";
+        case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2_ENTERPRISE";
+        case WIFI_AUTH_WPA3_PSK: return "WPA3_PSK";
+        case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2_WPA3_PSK";
+        default: return "UNKNOWN";
+    }
+}
+
+const char* wifi_tool_error_to_string(wifi_err_reason_t reason)
+{
+    switch (reason) {
+        case WIFI_REASON_UNSPECIFIED: return "UNSPECIFIED";
+        case WIFI_REASON_AUTH_EXPIRE: return "AUTH_EXPIRE";
+        case WIFI_REASON_AUTH_LEAVE: return "AUTH_LEAVE";
+        case WIFI_REASON_ASSOC_EXPIRE: return "ASSOC_EXPIRE";
+        case WIFI_REASON_ASSOC_TOOMANY: return "ASSOC_TOOMANY";
+        case WIFI_REASON_NOT_AUTHED: return "NOT_AUTHED";
+        case WIFI_REASON_NOT_ASSOCED: return "NOT_ASSOCED";
+        case WIFI_REASON_ASSOC_LEAVE: return "ASSOC_LEAVE";
+        case WIFI_REASON_ASSOC_NOT_AUTHED: return "ASSOC_NOT_AUTHED";
+        case WIFI_REASON_DISASSOC_PWRCAP_BAD: return "DISASSOC_PWRCAP_BAD";
+        case WIFI_REASON_DISASSOC_SUPCHAN_BAD: return "DISASSOC_SUPCHAN_BAD";
+        case WIFI_REASON_BSS_TRANSITION_DISASSOC: return "BSS_TRANSITION_DISASSOC";
+        case WIFI_REASON_IE_INVALID: return "IE_INVALID";
+        case WIFI_REASON_MIC_FAILURE: return "MIC_FAILURE";
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "4WAY_HANDSHAKE_TIMEOUT";
+        case WIFI_REASON_GROUP_KEY_UPDATE_TIMEOUT: return "GROUP_KEY_UPDATE_TIMEOUT";
+        case WIFI_REASON_IE_IN_4WAY_DIFFERS: return "IE_IN_4WAY_DIFFERS";
+        case WIFI_REASON_GROUP_CIPHER_INVALID: return "GROUP_CIPHER_INVALID";
+        case WIFI_REASON_PAIRWISE_CIPHER_INVALID: return "PAIRWISE_CIPHER_INVALID";
+        case WIFI_REASON_AKMP_INVALID: return "AKMP_INVALID";
+        case WIFI_REASON_UNSUPP_RSN_IE_VERSION: return "UNSUPP_RSN_IE_VERSION";
+        case WIFI_REASON_INVALID_RSN_IE_CAP: return "INVALID_RSN_IE_CAP";
+        case WIFI_REASON_802_1X_AUTH_FAILED: return "802_1X_AUTH_FAILED";
+        case WIFI_REASON_CIPHER_SUITE_REJECTED: return "CIPHER_SUITE_REJECTED";
+        case WIFI_REASON_BEACON_TIMEOUT: return "BEACON_TIMEOUT";
+        case WIFI_REASON_NO_AP_FOUND: return "NO_AP_FOUND";
+        case WIFI_REASON_AUTH_FAIL: return "AUTH_FAIL";
+        case WIFI_REASON_ASSOC_FAIL: return "ASSOC_FAIL";
+        case WIFI_REASON_HANDSHAKE_TIMEOUT: return "HANDSHAKE_TIMEOUT";
+        case WIFI_REASON_CONNECTION_FAIL: return "CONNECTION_FAIL";
+        case WIFI_REASON_AP_TSF_RESET: return "AP_TSF_RESET";
+        case WIFI_REASON_ROAMING: return "ROAMING";
+        default: return "UNKNOWN";
+    }
+}
+
+// =============================================================================
+// Tool Registry Implementation (MCP Pattern)
+// =============================================================================
+
+const wifi_tool_registry_t* wifi_tool_get_registry_entry(void)
+{
+    static const wifi_tool_registry_t registry_entry = {
+        .tool_id = WIFI_TOOL_ID,
+        .version = WIFI_TOOL_VERSION,
+        .description = WIFI_TOOL_DESCRIPTION,
+        .capabilities = WIFI_CAP_STA_MODE | 
+                       WIFI_CAP_AP_MODE |
+                       WIFI_CAP_MULTI_NETWORK |
+                       WIFI_CAP_AUTO_RECONNECT |
+                       WIFI_CAP_CONFIG_PERSIST |
+                       WIFI_CAP_EVENT_PUBLISH |
+                       WIFI_CAP_HEALTH_MONITOR,
+        .init_func = wifi_tool_init,
+        .deinit_func = wifi_tool_deinit
+    };
+    
+    return &registry_entry;
 }
