@@ -1,5 +1,8 @@
 idf_component_register(
-    SRCS "feedback_tool.c"
+    SRCS "feedback_tool_simple.c"
     INCLUDE_DIRS "include"
-    REQUIRES freertos log
+    REQUIRES 
+        freertos 
+        log 
+        driver
 )
