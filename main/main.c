@@ -13,12 +13,14 @@
 #include "nvs_flash.h"
 #include "feedback_tool.h"
 #include "wifi_tool.h"
+#include "rfid_tool.h"
 
 static const char *TAG = "MCP_ORCHESTRATOR";
 
-// Global tool handles (will be moved to tool registry in Phase 3)
+// Global tool handles (will be moved to tool registry in Phase 6)
 static feedback_tool_handle_t feedback_tool = NULL;
 static wifi_tool_handle_t wifi_tool = NULL;
+static rfid_tool_handle_t rfid_tool = NULL;
 
 /*
  * Phase 1: MCP-Inspired Orchestrator with feedback_tool Integration
@@ -29,7 +31,7 @@ static wifi_tool_handle_t wifi_tool = NULL;
 void app_main(void)
 {
     ESP_LOGI(TAG, "=== MCP-Inspired Time Tracker Device ===");
-    ESP_LOGI(TAG, "Phase 2: feedback_tool + wifi_tool Integration");
+    ESP_LOGI(TAG, "Phase 3A: feedback_tool + wifi_tool + rfid_tool Integration");
     ESP_LOGI(TAG, "Branch: esp-idf_mcpStyle_refactor");
     
     // Initialize NVS (required for WiFi)
@@ -82,8 +84,25 @@ void app_main(void)
     wifi_tool_capabilities_t wifi_caps = wifi_tool_get_capabilities(wifi_tool);
     ESP_LOGI(TAG, "WiFi Capabilities: 0x%02X", wifi_caps);
     
+    // Initialize RFID tool with MCP configuration pattern (Phase 3A)
+    rfid_tool_config_t rfid_config = rfid_tool_create_default_config();
+    
+    rfid_tool = rfid_tool_init(&rfid_config);
+    if (!rfid_tool) {
+        ESP_LOGE(TAG, "Failed to initialize rfid tool");
+        return;
+    }
+    
+    // Display RFID tool information (MCP discovery pattern)
+    ESP_LOGI(TAG, "RFID Tool: %s v%s", 
+             rfid_tool_get_id(), 
+             rfid_tool_get_version());
+    
+    rfid_tool_capabilities_t rfid_caps = rfid_tool_get_capabilities(rfid_tool);
+    ESP_LOGI(TAG, "RFID Capabilities: 0x%02X", rfid_caps);
+    
     // =========================================================================
-    // Phase 1: MCP-Inspired Initialization Sequence
+    // Phase 3A: MCP-Inspired Initialization Sequence
     // =========================================================================
     
     ESP_LOGI(TAG, "=== MCP Initialization Sequence ===");
@@ -103,11 +122,12 @@ void app_main(void)
     feedback_tool_validate_init_step(feedback_tool, "wifi_tool", true);
     vTaskDelay(pdMS_TO_TICKS(500));
     
-    // TODO Phase 3: Remaining tools
-    feedback_tool_validate_init_step(feedback_tool, "rfid_tool", false); // Phase 3
+    // Phase 3A: RFID tool implemented
+    feedback_tool_validate_init_step(feedback_tool, "rfid_tool", true);
     vTaskDelay(pdMS_TO_TICKS(500));
     
-    feedback_tool_validate_init_step(feedback_tool, "webhook_tool", false); // Phase 3
+    // TODO Phase 3B: Remaining tools
+    feedback_tool_validate_init_step(feedback_tool, "webhook_tool", false); // Phase 3B
     vTaskDelay(pdMS_TO_TICKS(500));
     
     // Enter IDLE state (beautiful blue breathing)
@@ -125,6 +145,7 @@ void app_main(void)
         // Show tool status (MCP monitoring pattern)
         feedback_tool_status_t feedback_status;
         wifi_tool_status_t wifi_status;
+        rfid_tool_status_t rfid_status;
         
         if (feedback_tool_get_status(feedback_tool, &feedback_status) == ESP_OK) {
             ESP_LOGI(TAG, "Feedback Tool: queue=%d, uptime=%lums",
@@ -134,6 +155,12 @@ void app_main(void)
         if (wifi_tool_get_status(wifi_tool, &wifi_status) == ESP_OK) {
             ESP_LOGI(TAG, "WiFi Tool: connected=%d, ap_active=%d, uptime=%lums",
                      wifi_status.sta_connected, wifi_status.ap_active, (unsigned long)wifi_status.uptime_ms);
+        }
+        
+        if (rfid_tool_get_status(rfid_tool, &rfid_status) == ESP_OK) {
+            ESP_LOGI(TAG, "RFID Tool: scanning=%d, tag_present=%d, detections=%lu, uptime=%lums",
+                     rfid_status.is_scanning, rfid_status.tag_present, 
+                     (unsigned long)rfid_status.tag_detection_count, (unsigned long)rfid_status.uptime_ms);
         }
         
         // Demonstrate different tool operations each cycle
@@ -188,7 +215,7 @@ void app_main(void)
                 break;
                 
             case 6:
-                ESP_LOGI(TAG, "Demo: Tool Registry Information");
+                ESP_LOGI(TAG, "Demo: Tool Registry Information (3 Tools)");
                 const feedback_tool_registry_t* feedback_registry = feedback_tool_get_registry_entry();
                 ESP_LOGI(TAG, "Feedback Registry: %s - %s (caps: 0x%02X)", 
                          feedback_registry->tool_id, feedback_registry->description, feedback_registry->capabilities);
@@ -196,6 +223,10 @@ void app_main(void)
                 const wifi_tool_registry_t* wifi_registry = wifi_tool_get_registry_entry();
                 ESP_LOGI(TAG, "WiFi Registry: %s - %s (caps: 0x%02X)", 
                          wifi_registry->tool_id, wifi_registry->description, wifi_registry->capabilities);
+                
+                const rfid_tool_registry_t* rfid_registry = rfid_tool_get_registry_entry();
+                ESP_LOGI(TAG, "RFID Registry: %s - %s (caps: 0x%02X)", 
+                         rfid_registry->tool_id, rfid_registry->description, rfid_registry->capabilities);
                 break;
                 
             case 7:
@@ -210,12 +241,20 @@ void app_main(void)
                 break;
                 
             case 8:
-                ESP_LOGI(TAG, "Demo: WiFi Tool Events (Event-driven decoupling)");
-                // This demonstrates the decoupling - no direct calls to ap_webserver!
-                ESP_LOGI(TAG, "WiFi tool publishes events, other tools subscribe");
-                feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_WIFI_CONNECTING, 
-                                       FEEDBACK_PRIORITY_MEDIUM, 2000);
-                vTaskDelay(pdMS_TO_TICKS(3000));
+                ESP_LOGI(TAG, "Demo: RFID Tool Operations (Phase 3A)");
+                // Demonstrate RFID tool functionality
+                ESP_LOGI(TAG, "RFID tool ready - scanning for tags");
+                if (rfid_tool_is_tag_present(rfid_tool)) {
+                    ESP_LOGI(TAG, "Tag detected by RFID tool!");
+                    feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_TAG_DETECTED);
+                    vTaskDelay(pdMS_TO_TICKS(3000));
+                    feedback_tool_clear_state(feedback_tool, FEEDBACK_STATE_TAG_DETECTED);
+                } else {
+                    ESP_LOGI(TAG, "No tag present - simulating tag detection");
+                    feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_TAG_DETECTED);
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    feedback_tool_clear_state(feedback_tool, FEEDBACK_STATE_TAG_DETECTED);
+                }
                 break;
                 
             case 9:
@@ -234,10 +273,10 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(2000));
         }
         
-        // Stop after full demo cycle for Phase 2 testing
+        // Stop after full demo cycle for Phase 3A testing
         if (demo_cycle >= 10) {
-            ESP_LOGI(TAG, "Phase 2 demonstration complete");
-            ESP_LOGI(TAG, "Ready for Phase 3: rfid_tool and webhook_tool transformations");
+            ESP_LOGI(TAG, "Phase 3A demonstration complete");
+            ESP_LOGI(TAG, "Ready for Phase 3B: webhook_tool transformation");
             break;
         }
     }
@@ -249,6 +288,16 @@ void app_main(void)
     ESP_LOGI(TAG, "=== Shutting Down Tools ===");
     
     // Shutdown in reverse order of initialization
+    if (rfid_tool) {
+        esp_err_t ret = rfid_tool_deinit(rfid_tool);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "rfid_tool shutdown successfully");
+        } else {
+            ESP_LOGE(TAG, "Failed to shutdown rfid_tool: %s", esp_err_to_name(ret));
+        }
+        rfid_tool = NULL;
+    }
+    
     if (wifi_tool) {
         esp_err_t ret = wifi_tool_deinit(wifi_tool);
         if (ret == ESP_OK) {
@@ -272,9 +321,10 @@ void app_main(void)
         feedback_tool = NULL;
     }
     
-    ESP_LOGI(TAG, "Phase 2 complete - MCP multi-tool pattern validated!");
-    ESP_LOGI(TAG, "✅ Event-driven communication (no ap_webserver coupling)");
-    ESP_LOGI(TAG, "✅ Handle-based state isolation");
+    ESP_LOGI(TAG, "Phase 3A complete - MCP 3-tool architecture validated!");
+    ESP_LOGI(TAG, "✅ Event-driven communication (RFID_TOOL_EVENTS)");
+    ESP_LOGI(TAG, "✅ Handle-based state isolation (3 tools)");
     ESP_LOGI(TAG, "✅ Tool registry and capabilities system");
-    ESP_LOGI(TAG, "Next: Phase 3 - rfid_tool and webhook_tool transformations");
+    ESP_LOGI(TAG, "✅ RFID tool with RC522 hardware integration");
+    ESP_LOGI(TAG, "Next: Phase 3B - webhook_tool transformation");
 }

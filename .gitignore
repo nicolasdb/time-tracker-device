@@ -14,16 +14,14 @@ sdkconfig*
 build/
 dependencies.lock
 
-# Test Build Artifacts  
-test/.pio/
-test/sdkconfig*
-test/build/
-test/dependencies.lock
-
 # Runtime Data
 terminal_logs.txt
 terminal_log.txt
 data/log.json
+
+# claude
+CLAUDE.local.md
+.claudeignore
 
 # IDE Files
 *.code-workspace

@@ -4,5 +4,8 @@ idf_component_register(
     REQUIRES 
         freertos
         log
+        nvs_flash
         feedback_tool
+        wifi_tool
+        rfid_tool
 )

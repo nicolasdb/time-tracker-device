@@ -459,94 +459,398 @@ I (64392) MCP_ORCHESTRATOR: ✅ Tool registry and capabilities system
 
 ---
 
-### **Phase 3: rfid_manager & webhook_manager Tool Conversion**
-**Duration:** 2-3 days  
-**Risk:** Low  
+### **Phase 3A: rfid_manager Tool Conversion** ✅ COMPLETE
+**Duration:** 1 day (ACTUAL)  
+**Risk:** Low (VALIDATED)  
 **Dependencies:** Phase 2
+**COMPLETION DATE:** 2025-01-15
 
-#### **Goals:**
-- Convert rfid_manager to MCP-style rfid_tool (already 90% ready)
-- Convert webhook_manager to MCP-style webhook_tool with event-driven design
-- Extract NTP functionality from legacy wifi_manager to separate ntp_tool
-- Demonstrate complete tool ecosystem with all components decoupled
+#### **Goals:** ✅ ACHIEVED
+- ✅ Convert rfid_manager to MCP-style rfid_tool using proven Phase 1&2 patterns
+- ✅ Implement handle-based RFID tag detection with event publishing  
+- ✅ Validate tool registry integration with feedback_tool coordination
+- ✅ **CRITICAL:** Make rfid_tool truly self-contained with embedded RC522 component
 
 #### **Technical Implementation:**
-
-**1. Handle-Based WiFi Tool:**
 ```c
-// wifi_tool.h
+// rfid_tool.h - Transform existing rfid_manager to MCP patterns
 typedef struct {
-    tool_id_t id;                           // TOOL_ID_WIFI
-    wifi_config_t config;                   // WiFi configuration
-    event_publisher_t publisher;            // Connectivity events
-    event_subscriber_t subscriber;          // Webserver tool events
-    tool_capabilities_t capabilities;       // Station, AP mode support
-    webserver_tool_t *webserver_tool;       // Composition, not coupling
-    wifi_connection_state_t state;          // Current connection state
-} wifi_tool_t;
+    rfid_tool_config_t config;              // RC522 SPI configuration  
+    rfid_tool_capabilities_t capabilities;  // TAG_DETECTION | AUTO_SCAN | EVENT_PUBLISH
+    bool is_initialized;                    // Tool metadata (MCP pattern)
+    bool is_active;
+    uint32_t uptime_start;
+    
+    // RFID State Management (Handle-based, no static globals)
+    bool tag_present;
+    char current_tag_uid[32];
+    rfid_tag_type_t current_tag_type;
+    uint32_t last_detection_time;
+    uint32_t scan_count;
+    
+    // ESP-IDF Resources (Properly encapsulated)
+    spi_device_handle_t spi_handle;
+    TaskHandle_t scan_task;
+    SemaphoreHandle_t tag_mutex;
+} rfid_tool_context_t;
 
-// NEW: Handle-based interface (breaking change)
-wifi_tool_handle_t wifi_tool_init(const char *config_path);
-esp_err_t wifi_tool_start(wifi_tool_handle_t handle);
-esp_err_t wifi_tool_is_connected(wifi_tool_handle_t handle, bool *connected);
-esp_err_t wifi_tool_get_ip(wifi_tool_handle_t handle, char *ip_str, size_t len);
-esp_err_t wifi_tool_get_rssi(wifi_tool_handle_t handle, int8_t *rssi);
+// MCP Tool Interface (Handle-based, identical to wifi_tool pattern)
+rfid_tool_handle_t rfid_tool_init(const rfid_tool_config_t *config);
+esp_err_t rfid_tool_deinit(rfid_tool_handle_t handle);
+rfid_tool_capabilities_t rfid_tool_get_capabilities(rfid_tool_handle_t handle);
+esp_err_t rfid_tool_get_status(rfid_tool_handle_t handle, rfid_tool_status_t *status);
+
+// RFID Operations (Event-driven, publishes RFID_TOOL_EVENTS)
+esp_err_t rfid_tool_start_scanning(rfid_tool_handle_t handle);
+esp_err_t rfid_tool_stop_scanning(rfid_tool_handle_t handle);
+bool rfid_tool_is_tag_present(rfid_tool_handle_t handle);
+
+// Tool Registry Pattern (Identical to wifi_tool)
+const rfid_tool_registry_t* rfid_tool_get_registry_entry(void);
 ```
 
-**2. Separate NTP Tool:**
+#### **Event Publishing Pattern:**
 ```c
-// ntp_tool.h - Extracted from wifi_manager
-typedef struct {
-    tool_id_t id;                           // TOOL_ID_NTP
-    ntp_config_t config;                    // NTP server, timezone
-    event_publisher_t publisher;            // Time sync events
-    event_subscriber_t subscriber;          // WiFi connectivity events
-    time_sync_state_t state;                // Sync status
-    struct tm last_sync_time;               // Last successful sync
-} ntp_tool_t;
+// RFID tool publishes events for other tools (no direct coupling)
+ESP_EVENT_DEFINE_BASE(RFID_TOOL_EVENTS);
 
-esp_err_t ntp_tool_sync_time(ntp_tool_handle_t handle);
-esp_err_t ntp_tool_is_synced(ntp_tool_handle_t handle, bool *synced);
-esp_err_t ntp_tool_get_formatted_time(ntp_tool_handle_t handle, char *time_str, size_t len);
+typedef enum {
+    RFID_TOOL_EVENT_TAG_DETECTED = 0,       // New tag placed
+    RFID_TOOL_EVENT_TAG_REMOVED,            // Tag removed
+    RFID_TOOL_EVENT_SCAN_STARTED,           // Scanning activated
+    RFID_TOOL_EVENT_SCAN_STOPPED,           // Scanning deactivated
+    RFID_TOOL_EVENT_ERROR,                  // Hardware error
+} rfid_tool_event_type_t;
 
-// Event-driven time sync when WiFi connects
-esp_err_t ntp_tool_on_wifi_connected(tool_event_t *event) {
-    ntp_tool_t *tool = (ntp_tool_t*)event->subscriber_context;
+// Event publishing (similar to wifi_tool pattern)
+static esp_err_t publish_rfid_event(struct rfid_tool_context *ctx, rfid_tool_event_type_t type, void* data) {
+    rfid_tool_event_t event = {.type = type};
+    if (data) {
+        memcpy(&event, data, sizeof(rfid_tool_event_t));
+    }
     
-    // Start time sync when WiFi becomes available
-    esp_err_t result = ntp_tool_sync_time(tool);
-    
-    // Publish sync result
-    tool_event_t sync_event = {
-        .type = result == ESP_OK ? EVENT_TIME_SYNCED : EVENT_TIME_SYNC_FAILED,
-        .source_tool = TOOL_ID_NTP,
-        .data = cJSON_CreateObject()
-    };
-    cJSON_AddBoolToObject(sync_event.data, "success", result == ESP_OK);
-    
-    return tool_registry_publish_event(&sync_event);
+    ESP_LOGD(TAG, "Publishing RFID event: %s", rfid_tool_event_to_string(type));
+    return esp_event_post(RFID_TOOL_EVENTS, type, &event, sizeof(event), 0);
 }
 ```
 
-**3. Webserver Tool Composition:**
+#### **Hardware Validation Results:** ✅ SUCCESS
+**Validation Log:**
+```
+I (3280) FEEDBACK_TOOL: Init step 'rfid_tool': SUCCESS
+I (4310) MCP_ORCHESTRATOR: RFID Tool: scanning=1, tag_present=0, detections=0, uptime=3660ms
+I (41340) MCP_ORCHESTRATOR: RFID Registry: rfid - MCP-inspired RFID tag detection tool with RC522 support (caps: 0x6F)
+I (50490) MCP_ORCHESTRATOR: Demo: RFID Tool Operations (Phase 3A)
+I (50490) MCP_ORCHESTRATOR: RFID tool ready - scanning for tags
+I (62580) RFID_TOOL: RFID tool deinitialized
+I (63630) MCP_ORCHESTRATOR: ✅ RFID tool with RC522 hardware integration
+```
+
+#### **Self-Contained Architecture Achievement:** ✅ VALIDATED
+```bash
+# ACHIEVEMENT: Complete self-contained tool
+/tools/rfid_tool/
+├── include/rfid_tool.h           # MCP tool interface
+├── rfid_tool.c                   # 790-line MCP implementation
+├── CMakeLists.txt                # Self-contained build with embedded RC522
+├── rc522/                        # **EMBEDDED COMPONENT** 
+│   ├── src/                      # All RC522 source files
+│   ├── include/                  # Public headers
+│   └── internal/                 # Private headers (PRIV_INCLUDE_DIRS)
+└── Kconfig                       # GPIO configuration
+
+# BUILD SUCCESS: No external dependencies
+build_flags = -I tools/rfid_tool/rc522/internal  # PlatformIO private headers
+lib_extra_dirs = tools                           # No /components dependency
+```
+
+#### **Success Criteria:** ✅ ALL ACHIEVED
+- ✅ **rfid_manager transformation**: Complete MCP tool with handle-based interface (790 lines)
+- ✅ **Handle-based interface**: No static globals, proper context encapsulation
+- ✅ **Event publishing**: RFID_TOOL_EVENTS for tag detection/removal implemented
+- ✅ **Tool registry integration**: Full metadata and capabilities (0x6F) discovered
+- ✅ **Hardware validation**: RC522 scanning active, tool lifecycle management working
+- ✅ **Self-contained deployment**: RC522 component embedded, no external dependencies
+- ✅ **3-tool integration**: feedback_tool + wifi_tool + rfid_tool coordination demonstrated
+- ✅ **PlatformIO compatibility**: Private includes resolved via build_flags pattern
+- ✅ **Clean memory management**: Tool initialization, scanning, deinitialization validated
+
+---
+
+### **Phase 3B: webhook_manager Tool Conversion** 
+**Duration:** 1-2 days  
+**Risk:** Medium (HTTP networking complexity)  
+**Dependencies:** Phase 3A
+
+#### **Goals:**
+- Convert webhook_manager to MCP-style webhook_tool with event subscription
+- Break wifi_manager coupling by subscribing to WiFi_TOOL_EVENTS  
+- Subscribe to RFID_TOOL_EVENTS for automatic webhook transmission
+- Implement retry queue and persistence with handle-based design
+
+#### **Technical Implementation:**
 ```c
-// wifi_tool.c - Event-driven composition instead of coupling
-esp_err_t wifi_tool_on_connection_failed(wifi_tool_t *tool) {
-    // Instead of directly calling ap_webserver functions,
-    // publish event for webserver tool to handle
-    tool_event_t event = {
-        .type = EVENT_WIFI_CONNECTION_FAILED,
-        .source_tool = TOOL_ID_WIFI,
-        .data = cJSON_CreateObject()
-    };
-    cJSON_AddStringToObject(event.data, "reason", "no_saved_networks");
-    cJSON_AddBoolToObject(event.data, "should_start_ap", true);
+// webhook_tool.h - MCP-inspired HTTP client tool
+typedef struct {
+    webhook_tool_config_t config;           // Webhook URL, retry settings
+    webhook_tool_capabilities_t capabilities; // HTTP_POST | RETRY_QUEUE | EVENT_SUBSCRIBE
+    bool is_initialized;
+    bool is_active;
+    uint32_t uptime_start;
     
-    return tool_registry_publish_event(&event);
+    // Webhook State Management (Handle-based)
+    bool wifi_connected;                    // Subscribed from WIFI_TOOL_EVENTS
+    char webhook_url[256];
+    uint32_t pending_count;
+    uint32_t success_count;
+    uint32_t failure_count;
+    
+    // HTTP Resources (Properly encapsulated)
+    esp_http_client_handle_t http_client;
+    QueueHandle_t webhook_queue;
+    TaskHandle_t transmission_task;
+    SemaphoreHandle_t queue_mutex;
+} webhook_tool_context_t;
+
+// MCP Tool Interface (Identical pattern to rfid_tool/wifi_tool)
+webhook_tool_handle_t webhook_tool_init(const webhook_tool_config_t *config);
+esp_err_t webhook_tool_deinit(webhook_tool_handle_t handle);
+webhook_tool_capabilities_t webhook_tool_get_capabilities(webhook_tool_handle_t handle);
+esp_err_t webhook_tool_get_status(webhook_tool_handle_t handle, webhook_tool_status_t *status);
+
+// Webhook Operations (Event-driven)
+esp_err_t webhook_tool_send_event(webhook_tool_handle_t handle, const char* json_payload);
+esp_err_t webhook_tool_process_pending(webhook_tool_handle_t handle);
+```
+
+#### **Event Subscription Pattern:**
+```c
+// webhook_tool subscribes to other tools' events (decoupled design)
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    webhook_tool_context_t *ctx = (webhook_tool_context_t*)arg;
+    
+    if (event_id == WIFI_TOOL_EVENT_STA_CONNECTED) {
+        ESP_LOGI(TAG, "WiFi connected - processing pending webhooks");
+        ctx->wifi_connected = true;
+        webhook_tool_process_pending(ctx);
+    } else if (event_id == WIFI_TOOL_EVENT_STA_DISCONNECTED) {
+        ctx->wifi_connected = false;
+    }
 }
 
-// webserver_tool.c - Subscribes to WiFi events
-esp_err_t webserver_tool_on_wifi_failed(tool_event_t *event) {
+static void rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    webhook_tool_context_t *ctx = (webhook_tool_context_t*)arg;
+    
+    if (event_id == RFID_TOOL_EVENT_TAG_DETECTED || event_id == RFID_TOOL_EVENT_TAG_REMOVED) {
+        rfid_tool_event_t *rfid_event = (rfid_tool_event_t*)event_data;
+        
+        // Create webhook payload from RFID event
+        cJSON *payload = cJSON_CreateObject();
+        cJSON_AddStringToObject(payload, "event", event_id == RFID_TOOL_EVENT_TAG_DETECTED ? "tag_placed" : "tag_removed");
+        cJSON_AddStringToObject(payload, "tag_uid", rfid_event->data.tag_info.uid);
+        // ... add timestamp, device_id, etc.
+        
+        char *json_string = cJSON_Print(payload);
+        webhook_tool_send_event(ctx, json_string);
+        
+        free(json_string);
+        cJSON_Delete(payload);
+    }
+}
+```
+
+#### **Success Criteria:**
+- [ ] webhook_manager transformation using proven MCP patterns
+- [ ] Event subscription to WIFI_TOOL_EVENTS and RFID_TOOL_EVENTS
+- [ ] No direct coupling to wifi_manager (uses events only)
+- [ ] Handle-based HTTP client with retry queue management
+- [ ] Tool registry integration with capabilities discovery
+- [ ] Hardware validation: Tag detection → automatic webhook transmission
+
+---
+
+### **Phase 4: webserver_tool Extraction** 
+**Duration:** 1 day  
+**Risk:** Low (ap_webserver already isolated)  
+**Dependencies:** Phase 3B
+
+#### **Goals:**
+- Extract ap_webserver functionality to webserver_tool
+- Subscribe to WIFI_TOOL_EVENTS for AP mode coordination  
+- Complete decoupling from wifi_manager legacy code
+
+#### **Technical Implementation:**
+```c
+// webserver_tool.h - Configuration web interface as MCP tool
+typedef struct {
+    webserver_tool_config_t config;         // Web root, port, handlers
+    webserver_tool_capabilities_t capabilities; // HTTP_SERVER | CONFIG_MGMT | EVENT_SUBSCRIBE
+    bool is_initialized;
+    bool is_active;
+    uint32_t uptime_start;
+    
+    // Webserver State Management
+    bool ap_mode_active;                    // Subscribed from WIFI_TOOL_EVENTS
+    char ap_ip_address[16];
+    uint32_t client_connections;
+    
+    // HTTP Server Resources
+    httpd_handle_t server_handle;
+    SemaphoreHandle_t config_mutex;
+} webserver_tool_context_t;
+
+// Event subscription to WiFi AP events
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    webserver_tool_context_t *ctx = (webserver_tool_context_t*)arg;
+    
+    if (event_id == WIFI_TOOL_EVENT_AP_STARTED) {
+        wifi_tool_event_t *wifi_event = (wifi_tool_event_t*)event_data;
+        ESP_LOGI(TAG, "AP started - launching configuration webserver at %s", wifi_event->data.ap_info.ip_address);
+        
+        snprintf(ctx->ap_ip_address, sizeof(ctx->ap_ip_address), "%s", wifi_event->data.ap_info.ip_address);
+        ctx->ap_mode_active = true;
+        webserver_tool_start(ctx);
+    } else if (event_id == WIFI_TOOL_EVENT_AP_STOPPED) {
+        webserver_tool_stop(ctx);
+        ctx->ap_mode_active = false;
+    }
+}
+```
+
+---
+
+### **Phase 5: ntp_tool Extraction** 
+**Duration:** 1 day  
+**Risk:** Low (NTP code already isolated in wifi_manager)  
+**Dependencies:** Phase 4
+
+#### **Goals:**
+- Extract NTP functionality from legacy wifi_manager  
+- Create standalone ntp_tool with event-driven time synchronization
+- Subscribe to WIFI_TOOL_EVENTS for connection-triggered sync
+
+#### **Technical Implementation:**
+```c
+// ntp_tool.h - Time synchronization as MCP tool
+typedef struct {
+    ntp_tool_config_t config;               // NTP servers, timezone
+    ntp_tool_capabilities_t capabilities;   // TIME_SYNC | AUTO_SYNC | EVENT_PUBLISH
+    bool is_initialized;
+    bool is_active;
+    uint32_t uptime_start;
+    
+    // Time Sync State Management
+    bool time_synced;
+    struct tm last_sync_time;
+    uint32_t sync_attempts;
+    uint32_t sync_failures;
+    
+    // NTP Resources
+    TaskHandle_t sync_task;
+    SemaphoreHandle_t time_mutex;
+} ntp_tool_context_t;
+
+// Event subscription to WiFi connectivity
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    ntp_tool_context_t *ctx = (ntp_tool_context_t*)arg;
+    
+    if (event_id == WIFI_TOOL_EVENT_IP_ACQUIRED) {
+        ESP_LOGI(TAG, "IP acquired - starting NTP synchronization");
+        ntp_tool_sync_time(ctx);
+    }
+}
+```
+
+---
+
+### **Phase 6: Universal Tool Registry & Event Router** 
+**Duration:** 1-2 days  
+**Risk:** Medium (complex orchestration)  
+**Dependencies:** Phase 5
+
+#### **Goals:**
+- Create universal tool registry system for all tools
+- Implement event router for inter-tool communication
+- Transform main.c to pure MCP-style orchestrator with tool discovery
+
+#### **Technical Implementation:**
+```c
+// tool_registry.h - Universal MCP tool management
+typedef struct {
+    const char* tool_id;
+    const char* version; 
+    const char* description;
+    uint32_t capabilities;
+    tool_init_func_t init_func;
+    tool_deinit_func_t deinit_func;
+    tool_invoke_func_t invoke_func;
+    void* tool_handle;
+    bool is_active;
+} tool_registry_entry_t;
+
+// Universal tool registry
+esp_err_t tool_registry_init(void);
+esp_err_t tool_registry_register_tool(const tool_registry_entry_t* entry);
+esp_err_t tool_registry_discover_tools(tool_registry_entry_t** tools, size_t* count);
+esp_err_t tool_registry_invoke_tool(const char* tool_id, const char* method, cJSON* params, cJSON** result);
+
+// Event router for inter-tool communication
+esp_err_t event_router_init(void);
+esp_err_t event_router_subscribe(const char* tool_id, esp_event_base_t event_base, int32_t event_id);
+esp_err_t event_router_publish(esp_event_base_t event_base, int32_t event_id, void* event_data, size_t data_size);
+```
+
+#### **Final main.c Architecture:**
+```c
+void app_main(void) {
+    // 1. Initialize universal tool registry
+    tool_registry_init();
+    event_router_init();
+    
+    // 2. Auto-discover and initialize all tools
+    tool_registry_entry_t* tools;
+    size_t tool_count;
+    tool_registry_discover_tools(&tools, &tool_count);
+    
+    for (size_t i = 0; i < tool_count; i++) {
+        ESP_LOGI(TAG, "Initializing tool: %s v%s", tools[i].tool_id, tools[i].version);
+        tools[i].tool_handle = tools[i].init_func(NULL); // Use default config
+    }
+    
+    // 3. Enter pure orchestration loop (NO business logic)
+    orchestration_loop();
+    
+    // 4. Clean shutdown all tools
+    for (size_t i = 0; i < tool_count; i++) {
+        tools[i].deinit_func(tools[i].tool_handle);
+    }
+}
+```
+
+#### **Success Criteria:**
+- [ ] Universal tool registry discovers all 6 tools automatically
+- [ ] Event router handles all inter-tool communication
+- [ ] main.c becomes pure orchestrator (~100 lines)
+- [ ] Tool composition fully event-driven and decoupled
+- [ ] Complete MCP-inspired architecture validated on hardware
+
+---
+
+## **🎯 FINAL TARGET: Complete MCP-Inspired Architecture**
+
+**Final Tool Ecosystem:**
+```
+main.c [PURE ORCHESTRATOR - ~100 lines]
+├── 🔧 feedback_tool (✅ Phase 1)
+├── 🔧 wifi_tool (✅ Phase 2) 
+├── 🔧 rfid_tool (Phase 3A)
+├── 🔧 webhook_tool (Phase 3B)
+├── 🔧 webserver_tool (Phase 4)
+├── 🔧 ntp_tool (Phase 5)
+└── 🏗️ tool_registry + event_router (Phase 6)
+```
+
+**Expected Timeline:** 6-8 days total remaining
     bool should_start_ap = cJSON_GetObjectItem(event->data, "should_start_ap")->valueint;
     
     if (should_start_ap) {
