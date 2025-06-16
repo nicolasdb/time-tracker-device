@@ -214,6 +214,101 @@ if (wifi_manager_is_connected()) {
 esp_event_post(WIFI_TOOL_EVENTS, WIFI_TOOL_EVENT_STA_CONNECTED, &event, sizeof(event), 0);
 ```
 
+### **❌ CRITICAL: Tool Header Dependencies**
+```c
+// WRONG: Direct #include of other tool headers breaks self-containment
+// tools/wifi_tool/wifi_tool.c
+#include "fs_tool.h"  // ❌ BREAKS BUILD - Header not in include path
+
+// CORRECT: Forward declarations + dependency injection
+// tools/wifi_tool/include/wifi_tool.h
+typedef struct fs_tool_context* fs_tool_handle_t;  // Forward declaration
+esp_err_t wifi_tool_set_fs_dependency(wifi_tool_handle_t, fs_tool_handle_t);
+
+// tools/wifi_tool/wifi_tool.c - NO #include "fs_tool.h" needed!
+esp_err_t wifi_tool_set_fs_dependency(wifi_tool_handle_t handle, fs_tool_handle_t fs_handle) {
+    ctx->fs_tool = fs_handle;  // Store handle, use via function pointers
+}
+```
+
+**🔥 LESSON LEARNED: Tools MUST be buildable in isolation**
+- Each tool directory must be completely self-contained
+- Never #include headers from other tools
+- Use forward declarations + dependency injection pattern
+- Tool headers should only include system/ESP-IDF headers
+
+### **❌ CRITICAL: ESP-IDF Event Handler Blocking**
+```c
+// WRONG: Blocking operations in event handlers kill ESP event loop
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    vTaskDelay(pdMS_TO_TICKS(1000));  // ❌ BLOCKS ENTIRE ESP EVENT SYSTEM
+    feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);
+}
+
+// CORRECT: Event handlers must NEVER block
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);  // ✅ IMMEDIATE
+    // If delays needed, use feedback_tool's internal timing mechanisms
+}
+```
+
+**🔥 ESP-IDF EVENT HANDLER RULES:**
+- Event handlers run in ESP event loop context
+- **NEVER** use vTaskDelay(), blocking I/O, or long operations
+- **NEVER** call functions that might block (mutexes, queues with timeout)
+- Use tool's internal state machines for timing/delays
+- Keep event handlers fast and non-blocking
+
+### **❌ CRITICAL: ESP-IDF Main Task Stack Limitations**
+```c
+// WRONG: Heavy initialization in main task (3584-byte default stack)
+void app_main(void) {
+    init_5_tools();           // ❌ STACK OVERFLOW - too much for main task
+    dashboard_generation();   // ❌ Large buffers cause crashes
+}
+
+// CORRECT: Create dedicated task with adequate stack
+#define MCP_TASK_STACK_SIZE 8192
+void app_main(void) {
+    // Minimal work in main task
+    nvs_flash_init();
+    xTaskCreate(mcp_init_task, "mcp_init", MCP_TASK_STACK_SIZE, NULL, 5, NULL);
+    // Main task ends - worker task takes over
+}
+```
+
+**🔥 FREERTOS TASK STACK RULES:**
+- ESP-IDF main task default: 3584 bytes (insufficient for complex apps)
+- **NEVER** do heavy work in main task - create dedicated tasks
+- Use explicit stack sizes: `#define TASK_STACK_SIZE 8192`
+- Keep stack requirements in source code (not external config)
+- Hardcode stack sizes for reproducible builds
+
+### **❌ CRITICAL: State Priority Queue Management**
+```c
+// WRONG: Priority conflicts prevent state transitions
+// High priority BOOTING state blocks low priority IDLE state
+feedback_tool_set_state_simple(tool, FEEDBACK_STATE_IDLE);  // ❌ BLOCKED
+
+// CORRECT: Clear conflicting states before transition
+esp_err_t feedback_tool_set_state_simple(handle, state) {
+    if (state == FEEDBACK_STATE_IDLE) {
+        // Clear all higher priority states that should not persist
+        feedback_tool_clear_state(handle, FEEDBACK_STATE_BOOTING);
+        feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTING);
+        feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTED);
+    }
+    return feedback_tool_set_state(handle, state, priority, duration);
+}
+```
+
+**🔥 STATE PRIORITY QUEUE RULES:**
+- Lower priority states cannot override higher priority ones
+- **ALWAYS** clear conflicting states before major transitions
+- Use explicit state clearing for IDLE transitions
+- BOOTING (HIGH) → IDLE (LOW) requires explicit clearing
+- Design state priorities carefully to avoid blocking
+
 ---
 
 ## Production Readiness Validation

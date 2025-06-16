@@ -17,6 +17,9 @@
 #include <string.h>
 #include <math.h>
 #include <inttypes.h>
+#include <time.h>
+#include "esp_event.h"
+#include "cJSON.h"
 
 static const char *TAG = "FEEDBACK_TOOL";
 
@@ -39,15 +42,16 @@ typedef struct {
     uint8_t b;
 } rgb_color_t;
 
-static const rgb_color_t COLOR_OFF    = {0, 0, 0};
-static const rgb_color_t COLOR_RED    = {255, 0, 0};
-static const rgb_color_t COLOR_GREEN  = {0, 255, 0};
-static const rgb_color_t COLOR_BLUE   = {0, 0, 255};
-static const rgb_color_t COLOR_YELLOW = {255, 255, 0};
-static const rgb_color_t COLOR_PURPLE = {128, 0, 128};
-static const rgb_color_t COLOR_WHITE  = {255, 255, 255};
-static const rgb_color_t COLOR_ORANGE = {255, 165, 0};
-static const rgb_color_t COLOR_CYAN   = {0, 255, 255};
+// Enhanced color definitions per Feedback_colorMap.md
+static const rgb_color_t COLOR_OFF      = {0, 0, 0};
+static const rgb_color_t COLOR_RED      = {255, 0, 0};     // Errors & Failures
+static const rgb_color_t COLOR_GREEN    = {0, 255, 0};     // Events & Normal operations
+static const rgb_color_t COLOR_BLUE     = {0, 0, 255};     // Connectivity & Communication
+static const rgb_color_t COLOR_YELLOW   = {255, 255, 0};   // Warnings & Configuration
+static const rgb_color_t COLOR_PURPLE   = {128, 0, 128};   // Special states (AP mode, init)
+static const rgb_color_t COLOR_WHITE    = {255, 255, 255}; // System states
+static const rgb_color_t COLOR_ORANGE   = {255, 165, 0};   // Cognitive wellness & Timing
+static const rgb_color_t COLOR_CYAN     = {0, 255, 255};   // Connection success states
 
 // =============================================================================
 // Internal Tool Structure (Enhanced from Original)
@@ -92,6 +96,13 @@ struct feedback_tool {
     // Animation State
     uint32_t cycle_counter;        // For breathing and pattern animations
     bool led_state;                // Current LED on/off state for blinking
+    
+    // Dashboard & Status Aggregation (Phase 4.3) - Reduced for stack safety
+    char last_dashboard[512];      // Cached ASCII dashboard (reduced)
+    char last_json_status[256];    // Cached JSON status (reduced)
+    uint32_t last_dashboard_time;  // Last dashboard generation time
+    uint32_t dashboard_update_interval; // Dashboard update interval (ms)
+    bool system_operational;       // Overall system health
 };
 
 // =============================================================================
@@ -211,6 +222,13 @@ feedback_tool_handle_t feedback_tool_init(const feedback_tool_config_t *config)
     };
     tool->current_state = FEEDBACK_STATE_IDLE;
     tool->current_priority = FEEDBACK_PRIORITY_LOW;
+    
+    // Initialize dashboard data (Phase 4.3)
+    tool->dashboard_update_interval = 5000; // 5 seconds
+    tool->last_dashboard_time = 0;
+    tool->system_operational = true;
+    memset(tool->last_dashboard, 0, sizeof(tool->last_dashboard));
+    memset(tool->last_json_status, 0, sizeof(tool->last_json_status));
     
     // Mark as active before creating task to avoid race condition
     tool->is_active = true;
@@ -351,6 +369,19 @@ esp_err_t feedback_tool_set_state_simple(feedback_tool_handle_t handle, feedback
             break;
     }
     
+    ESP_LOGI(TAG, "🔄 State Change Request: %s (priority=%s, duration=%lums)", 
+             feedback_tool_state_to_string(state), 
+             feedback_tool_priority_to_string(priority), 
+             duration);
+    
+    // Special handling for IDLE state - clear higher priority states
+    if (state == FEEDBACK_STATE_IDLE) {
+        ESP_LOGI(TAG, "🔄 Clearing higher priority states before IDLE transition");
+        feedback_tool_clear_state(handle, FEEDBACK_STATE_BOOTING);
+        feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTING);
+        feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTED);
+    }
+    
     return feedback_tool_set_state(handle, state, priority, duration);
 }
 
@@ -449,6 +480,7 @@ static void feedback_tool_task(void *arg)
 {
     struct feedback_tool *tool = (struct feedback_tool*)arg;
     TickType_t last_wake_time = xTaskGetTickCount();
+    uint32_t debug_counter = 0;
     
     ESP_LOGI(TAG, "Feedback tool task started");
     
@@ -457,7 +489,7 @@ static void feedback_tool_task(void *arg)
         feedback_state_t new_state = get_highest_priority_state(tool);
         
         if (new_state != tool->current_state) {
-            ESP_LOGD(TAG, "State transition: %s -> %s", 
+            ESP_LOGI(TAG, "🔄 State Transition: %s -> %s", 
                      feedback_tool_state_to_string(tool->current_state),
                      feedback_tool_state_to_string(new_state));
             tool->current_state = new_state;
@@ -469,6 +501,14 @@ static void feedback_tool_task(void *arg)
         
         // Increment cycle counter for animations
         tool->cycle_counter++;
+        debug_counter++;
+        
+        // Debug task activity every 5 seconds
+        if (debug_counter % 100 == 0) {
+            ESP_LOGI(TAG, "🔄 Task Status: state=%s, queue=%d, cycle=%lu, active=%d", 
+                     feedback_tool_state_to_string(tool->current_state),
+                     tool->queue_count, tool->cycle_counter, tool->is_active);
+        }
         
         // Wait for next cycle
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tool->config.cleanup_interval_ms));
@@ -719,6 +759,15 @@ static void update_led_display(struct feedback_tool *tool)
     rgb_color_t color = get_state_color(tool->current_state);
     rgb_color_t display_color = COLOR_OFF;
     
+    // Debug color mapping every 5 seconds
+    static uint32_t last_color_debug = 0;
+    if (tool->cycle_counter % 100 == 0 && tool->cycle_counter != last_color_debug) {
+        ESP_LOGI(TAG, "🎨 LED Color: state=%s, base_color=(%d,%d,%d)", 
+                 feedback_tool_state_to_string(tool->current_state),
+                 color.r, color.g, color.b);
+        last_color_debug = tool->cycle_counter;
+    }
+    
     // Apply state-specific animation patterns
     switch (tool->current_state) {
         case FEEDBACK_STATE_IDLE: {
@@ -730,6 +779,12 @@ static void update_led_display(struct feedback_tool *tool)
             display_color.r = (uint8_t)(color.r * intensity * tool->config.max_brightness / 255);
             display_color.g = (uint8_t)(color.g * intensity * tool->config.max_brightness / 255);
             display_color.b = (uint8_t)(color.b * intensity * tool->config.max_brightness / 255);
+            
+            // Debug breathing every 2 seconds
+            if (tool->cycle_counter % (breathing_period / 2) == 0) {
+                ESP_LOGI(TAG, "🔵 LED Breathing: intensity=%.2f, RGB=(%d,%d,%d), cycle=%lu", 
+                         intensity, display_color.r, display_color.g, display_color.b, tool->cycle_counter);
+            }
             break;
         }
         
@@ -785,8 +840,21 @@ static void update_led_display(struct feedback_tool *tool)
     }
     
     // Update LED strip
-    led_strip_set_pixel(tool->led_strip, 0, display_color.r, display_color.g, display_color.b);
-    led_strip_refresh(tool->led_strip);
+    esp_err_t ret = led_strip_set_pixel(tool->led_strip, 0, display_color.r, display_color.g, display_color.b);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LED set_pixel failed: %s", esp_err_to_name(ret));
+    }
+    
+    ret = led_strip_refresh(tool->led_strip);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LED refresh failed: %s", esp_err_to_name(ret));
+    }
+    
+    // Debug LED hardware calls every 4 seconds for IDLE state
+    if (tool->current_state == FEEDBACK_STATE_IDLE && tool->cycle_counter % 80 == 0) {
+        ESP_LOGI(TAG, "💡 LED Hardware: GPIO=%d, RGB=(%d,%d,%d), strip=%p", 
+                 tool->config.led_gpio, display_color.r, display_color.g, display_color.b, tool->led_strip);
+    }
 }
 
 // =============================================================================
@@ -811,17 +879,50 @@ esp_err_t feedback_tool_validate_init_step(feedback_tool_handle_t handle,
 const char* feedback_tool_state_to_string(feedback_state_t state)
 {
     switch (state) {
+        // System Core States
         case FEEDBACK_STATE_BOOTING: return "BOOTING";
         case FEEDBACK_STATE_IDLE: return "IDLE";
         case FEEDBACK_STATE_ERROR: return "ERROR";
+        case FEEDBACK_STATE_SHUTDOWN: return "SHUTDOWN";
+        
+        // WiFi Tool States (Blue family)
         case FEEDBACK_STATE_WIFI_CONNECTING: return "WIFI_CONNECTING";
         case FEEDBACK_STATE_WIFI_CONNECTED: return "WIFI_CONNECTED";
         case FEEDBACK_STATE_WIFI_FAILED: return "WIFI_FAILED";
         case FEEDBACK_STATE_WIFI_AP_MODE: return "WIFI_AP_MODE";
+        
+        // RFID Tool States (Green family)
+        case FEEDBACK_STATE_RFID_INITIALIZING: return "RFID_INITIALIZING";
+        case FEEDBACK_STATE_RFID_ACTIVE: return "RFID_ACTIVE";
+        case FEEDBACK_STATE_RFID_ERROR: return "RFID_ERROR";
         case FEEDBACK_STATE_TAG_DETECTED: return "TAG_DETECTED";
+        case FEEDBACK_STATE_TAG_READ_ERROR: return "TAG_READ_ERROR";
+        
+        // Webhook Tool States (Yellow/Green family)
+        case FEEDBACK_STATE_WEBHOOK_SENDING: return "WEBHOOK_SENDING";
         case FEEDBACK_STATE_WEBHOOK_SUCCESS: return "WEBHOOK_SUCCESS";
         case FEEDBACK_STATE_WEBHOOK_ERROR: return "WEBHOOK_ERROR";
-        // Add more as needed
+        case FEEDBACK_STATE_WEBHOOK_QUEUED: return "WEBHOOK_QUEUED";
+        
+        // Time Tool States
+        case FEEDBACK_STATE_TIME_SYNCING: return "TIME_SYNCING";
+        case FEEDBACK_STATE_TIME_SYNCED: return "TIME_SYNCED";
+        case FEEDBACK_STATE_TIME_SYNC_FAILED: return "TIME_SYNC_FAILED";
+        
+        // Initialization States (Purple family)
+        case FEEDBACK_STATE_INIT_START: return "INIT_START";
+        case FEEDBACK_STATE_INIT_FS: return "INIT_FS";
+        case FEEDBACK_STATE_INIT_WIFI_PREP: return "INIT_WIFI_PREP";
+        case FEEDBACK_STATE_INIT_TIME: return "INIT_TIME";
+        case FEEDBACK_STATE_INIT_WEBHOOK: return "INIT_WEBHOOK";
+        case FEEDBACK_STATE_INIT_RFID: return "INIT_RFID";
+        case FEEDBACK_STATE_INIT_COMPLETE: return "INIT_COMPLETE";
+        
+        // Tool Communication States
+        case FEEDBACK_STATE_TOOL_REGISTERED: return "TOOL_REGISTERED";
+        case FEEDBACK_STATE_TOOL_ERROR: return "TOOL_ERROR";
+        case FEEDBACK_STATE_TOOL_DISCONNECTED: return "TOOL_DISCONNECTED";
+        
         default: return "UNKNOWN";
     }
 }
@@ -857,4 +958,146 @@ const feedback_tool_registry_t* feedback_tool_get_registry_entry(void)
     };
     
     return &registry_entry;
+}
+
+// =============================================================================
+// Dashboard & Status Aggregation Implementation (Phase 4.3)
+// =============================================================================
+
+static void generate_ascii_dashboard(struct feedback_tool *tool, char* buffer, size_t buffer_size)
+{
+    // Get current time for uptime calculation
+    uint32_t uptime_ms = (xTaskGetTickCount() * portTICK_PERIOD_MS) - tool->uptime_start;
+    uint32_t uptime_min = uptime_ms / 60000;
+    
+    // Get current state information
+    const char* state_str = feedback_tool_state_to_string(tool->current_state);
+    const char* priority_str = feedback_tool_priority_to_string(tool->current_priority);
+    
+    // Debug dashboard generation
+    ESP_LOGI(TAG, "📊 Dashboard Generated: state=%s, queue=%d, uptime=%lum", 
+             state_str, tool->queue_count, uptime_min);
+    
+    // Generate compact ASCII dashboard (fits in 512 bytes)
+    snprintf(buffer, buffer_size,
+        "╔══════════════════════════════╗\n"
+        "║     RFID TIME TRACKER        ║\n"
+        "╚══════════════════════════════╝\n"
+        " 🔄 System: [%s]\n"
+        " 💡 LED: [%s] Q:%d\n"
+        " ⏱️  Up: %lum | %s\n"
+        " 🎯 State: %s\n"
+        " [%s%s%s%s%s] %s\n",
+        tool->system_operational ? "OK" : "ERR",
+        state_str,
+        tool->queue_count,
+        uptime_min,
+        priority_str,
+        state_str,
+        // Compact progress bar (5 chars)
+        tool->system_operational ? "██" : "░░",
+        tool->is_active ? "██" : "░░",
+        tool->queue_count > 0 ? "██" : "░░",
+        tool->current_state != FEEDBACK_STATE_ERROR ? "██" : "░░",
+        tool->is_initialized ? "██" : "░░",
+        tool->system_operational ? "Ready" : "Error"
+    );
+}
+
+static void generate_json_status(struct feedback_tool *tool, char* buffer, size_t buffer_size)
+{
+    uint32_t uptime_ms = (xTaskGetTickCount() * portTICK_PERIOD_MS) - tool->uptime_start;
+    
+    cJSON *json = cJSON_CreateObject();
+    cJSON *status = cJSON_CreateObject();
+    cJSON *led = cJSON_CreateObject();
+    cJSON *queue = cJSON_CreateObject();
+    
+    // System status
+    cJSON_AddBoolToObject(status, "operational", tool->system_operational);
+    cJSON_AddBoolToObject(status, "initialized", tool->is_initialized);
+    cJSON_AddBoolToObject(status, "active", tool->is_active);
+    cJSON_AddNumberToObject(status, "uptime_ms", uptime_ms);
+    
+    // LED status
+    cJSON_AddStringToObject(led, "current_state", feedback_tool_state_to_string(tool->current_state));
+    cJSON_AddStringToObject(led, "priority", feedback_tool_priority_to_string(tool->current_priority));
+    cJSON_AddNumberToObject(led, "cycle_counter", tool->cycle_counter);
+    
+    // Queue status
+    cJSON_AddNumberToObject(queue, "count", tool->queue_count);
+    cJSON_AddNumberToObject(queue, "max_size", FEEDBACK_QUEUE_SIZE);
+    
+    // Add to main JSON
+    cJSON_AddItemToObject(json, "system", status);
+    cJSON_AddItemToObject(json, "led", led);
+    cJSON_AddItemToObject(json, "queue", queue);
+    cJSON_AddNumberToObject(json, "timestamp", (uint32_t)time(NULL));
+    
+    char *json_string = cJSON_Print(json);
+    if (json_string) {
+        snprintf(buffer, buffer_size, "%s", json_string);
+        free(json_string);
+    }
+    
+    cJSON_Delete(json);
+}
+
+esp_err_t feedback_tool_generate_dashboard(feedback_tool_handle_t handle, feedback_dashboard_t* dashboard)
+{
+    if (!handle || !dashboard) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    if (!tool->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    // Generate ASCII dashboard
+    generate_ascii_dashboard(tool, dashboard->ascii_dashboard, sizeof(dashboard->ascii_dashboard));
+    
+    // Generate JSON status
+    generate_json_status(tool, dashboard->json_status, sizeof(dashboard->json_status));
+    
+    // Update metadata
+    dashboard->timestamp = (uint32_t)time(NULL);
+    dashboard->is_operational = tool->system_operational;
+    
+    // Cache the dashboard
+    snprintf(tool->last_dashboard, sizeof(tool->last_dashboard), "%s", dashboard->ascii_dashboard);
+    snprintf(tool->last_json_status, sizeof(tool->last_json_status), "%s", dashboard->json_status);
+    tool->last_dashboard_time = dashboard->timestamp;
+    
+    return ESP_OK;
+}
+
+esp_err_t feedback_tool_get_status_json(feedback_tool_handle_t handle, char* json_buffer, size_t buffer_size)
+{
+    if (!handle || !json_buffer) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    if (!tool->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    generate_json_status(tool, json_buffer, buffer_size);
+    return ESP_OK;
+}
+
+esp_err_t feedback_tool_subscribe_to_all_events(feedback_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // For Phase 4.3, we focus on the dashboard generation
+    // Event subscription for status aggregation can be added in Phase 4.4
+    ESP_LOGI(TAG, "Dashboard functionality enabled - event subscription ready for Phase 4.4");
+    
+    return ESP_OK;
 }

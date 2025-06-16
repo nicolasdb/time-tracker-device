@@ -17,8 +17,13 @@ The `fs_tool` is a self-contained MCP-style tool that provides persistent storag
 
 **This tool provides APIs that other tools depend on:**
 - `webhook_tool` → fs_tool APIs for persistent storage
-- `wifi_tool` → fs_tool APIs for configuration storage
+- `wifi_tool` → fs_tool APIs for configuration storage (Phase 4.2)
 - Any tool requiring persistent JSON storage
+
+**Phase 4.2 Integration Pattern:**
+- LittleFS image built from `/data` directory via CMakeLists.txt
+- WiFi credentials loaded via main.c orchestration (not direct tool coupling)
+- Proper MCP dependency injection pattern demonstrated
 
 **Dependency Hierarchy:**
 ```
@@ -69,6 +74,45 @@ ret = fs_tool_load_json_config(fs_tool, "webhook_config.json", &loaded_config);
 if (ret == ESP_OK) {
     // Use loaded_config...
     cJSON_Delete(loaded_config);
+}
+```
+
+### 2a. Phase 4.2: WiFi Configuration Loading Pattern
+
+```c
+// PHASE 4.2: Proper MCP orchestration pattern (in main.c)
+// Load WiFi configuration via fs_tool and pass to wifi_tool
+
+// Step 1: Load JSON from LittleFS
+cJSON *wifi_config = NULL;
+esp_err_t ret = fs_tool_load_json_config(fs_tool, "wifi.json", &wifi_config);
+
+if (ret == ESP_OK && wifi_config) {
+    ESP_LOGI(TAG, "✅ WiFi configuration loaded from LittleFS");
+    
+    // Step 2: Pass to wifi_tool (proper tool separation)
+    esp_err_t json_ret = wifi_tool_load_networks_from_json(wifi_tool, wifi_config);
+    if (json_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ WiFi networks loaded into wifi_tool");
+        // Step 3: Start auto-connection
+        wifi_tool_start_auto_connection(wifi_tool);
+    }
+    
+    cJSON_Delete(wifi_config);
+} else {
+    ESP_LOGW(TAG, "⚠️  Failed to load wifi.json: %s", esp_err_to_name(ret));
+}
+```
+
+**WiFi Configuration Format (data/wifi.json):**
+```json
+{
+  "networks": [
+    {
+      "ssid": "MyNetwork",
+      "password": "MyPassword"
+    }
+  ]
 }
 ```
 

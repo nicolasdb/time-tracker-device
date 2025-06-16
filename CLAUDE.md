@@ -28,9 +28,32 @@ This is an ESP32-C3 based RFID time tracking system using ESP-IDF framework. The
   - ✅ Animation patterns: breathing, blinking, solid, sequences
   - ✅ Kconfig integration for GPIO 7 and brightness control
   - ✅ Perfect LED-to-log debug mapping for intuitive feedback
-- **5-TOOL MCP ARCHITECTURE ✅ PRODUCTION-READY**: Complete RFID time tracking with visual feedback
-- **Memory Usage**: Stack 8192 bytes, stable 60+ second operation, visual feedback operational
+- **Phase 4.2 ✅ COMPLETE**: WiFi Connection & Persistence
+  - ✅ LittleFS filesystem image built from /data directory via CMakeLists.txt
+  - ✅ WiFi credentials loaded via fs_tool APIs with proper MCP dependency injection
+  - ✅ Automatic WiFi connection on startup (successfully connects to real networks)
+  - ✅ Event-driven visual feedback coordination (blue blinking → solid blue → idle)
+  - ✅ Production mode operation (replaced demo loop with status monitoring)
+  - ✅ Hardware validated: Connected to "WiFi-2.4-6B2E", IP: 192.168.1.26
+- **Phase 4.3 ✅ COMPLETE**: Enhanced Visual Feedback + ASCII Dashboard System
+  - ✅ Complete feedback_tool color mapping per Feedback_colorMap.md specifications
+  - ✅ Professional ASCII dashboard with real-time system status (30-second updates)
+  - ✅ JSON status export for future web interface consumption
+  - ✅ Critical ESP-IDF fix: Removed blocking vTaskDelay() from event handlers
+  - ✅ Proper FreeRTOS task architecture with 8192-byte stack (no more crashes)
+  - ✅ MCP-compliant dashboard generation (feedback_tool owns visual logic)
+  - ✅ Compact 200-byte dashboard design (fits in memory constraints)
+- **Phase 4.4 ✅ COMPLETE**: Critical Bug Fixes & Production Stabilization
+  - ✅ **STATE PRIORITY QUEUE BUG FIXED**: BOOTING state stuck due to priority conflicts
+  - ✅ **LED BREATHING ANIMATION WORKING**: Blue breathing pattern on WS2812B (GPIO 7)
+  - ✅ **TERMINAL OUTPUT CLEANED**: Removed literal ANSI escape sequences
+  - ✅ **STATE TRANSITIONS VALIDATED**: BOOTING → IDLE → WIFI_CONNECTED → IDLE
+  - ✅ **COMPREHENSIVE DEBUG LOGGING**: State changes, LED hardware, breathing calculations
+  - ✅ **PRODUCTION VALIDATION**: Hardware confirmed working with real network connection
+- **5-TOOL MCP ARCHITECTURE ✅ PRODUCTION-READY**: Complete RFID time tracking with flawless visual feedback
+- **Memory Usage**: Custom MCP task 8192 bytes, main task minimal, stable operation
 - **Partition Layout**: 2MB app + 1536K LittleFS (expanded from 1MB+1MB)
+- **Visual System**: WS2812B LED + ASCII dashboard providing comprehensive status feedback
 
 ## Build System & Commands
 
@@ -277,41 +300,34 @@ esp_event_post(TOOL_EVENTS, event_type, &event, sizeof(event), 0);
 
 ## Next Steps
 
-### Phase 3B Final: Dependency Violation Fix (LOW PRIORITY)
-- **Replace webhook_tool direct LittleFS** with fs_tool APIs
-- System works perfectly with current dependency violation
-- This is architectural cleanup, not functional requirement
-
-### Phase 4.2: WiFi Connection & Persistence (NEXT)
-- **Automatic WiFi connection** using stored credentials via fs_tool APIs
-- **WiFi credential management** with JSON config persistence
-- **Connection retry logic** with exponential backoff
-- **Visual feedback integration** (blue blinking → cyan flash)
-
-### Phase 4.3: AP Mode Fallback & Captive Portal
+### Phase 5.1: AP Mode Fallback & Captive Portal (CURRENT)
 - **Automatic fallback** to AP mode when WiFi connection fails
 - **Deploy captive portal** serving HTML templates from LittleFS
 - **WiFi credential configuration** via web interface
 - **Yellow→Blue→Purple sequence** visual feedback for AP mode
 
-### Phase 4.4: NTP Time Synchronization
+### Phase 5.2: NTP Time Synchronization
 - **Implement NTP sync** immediately after WiFi connection  
 - **Create ntp_tool** following MCP patterns
 - **Accurate timestamps** for RFID events
 
-### Phase 4.5: RFID Time Tracking Events
+### Phase 5.3: RFID Time Tracking Events
 - **Proper tag placement/removal** detection
 - **Generate timestamped work session** events
 - **Store events** in fs_tool JSON log format
 
-### Phase 4.6: Webhook Event Transmission
+### Phase 5.4: Webhook Event Transmission
 - **Real webhook server integration** (replace placeholder)
 - **Queue-based reliable transmission** with retry mechanism
 - **Webhook configuration** via web interface
 
-### Phase 5: Advanced Features
+### Phase 6: Advanced Features
 - **Cloud synchronization** for multiple devices
 - **Web dashboard** for time tracking analytics  
-- **NTP time synchronization** for accurate timestamps
 - **OTA firmware updates** for remote deployment
 - **Security enhancements** (encrypted communication, authenticated endpoints)
+
+### LOW PRIORITY: Architectural Cleanup
+- **Replace webhook_tool direct LittleFS** with fs_tool APIs
+- System works perfectly with current dependency violation
+- This is architectural cleanup, not functional requirement

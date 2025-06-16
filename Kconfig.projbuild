@@ -1,5 +1,8 @@
 menu "Time Tracker Device Configuration"
 
+    # Include Feedback Tool Configuration
+    source "$PROJECT_PATH/tools/feedback_tool/Kconfig"
+
     # Include RFID Tool Configuration
     source "$PROJECT_PATH/tools/rfid_tool/Kconfig"
 

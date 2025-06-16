@@ -19,6 +19,10 @@
 extern "C" {
 #endif
 
+// Forward declarations for MCP tool dependencies
+typedef struct fs_tool_context* fs_tool_handle_t;
+typedef struct cJSON cJSON;
+
 // =============================================================================
 // MCP Tool Metadata & Constants
 // =============================================================================
@@ -248,6 +252,29 @@ esp_err_t wifi_tool_get_status(wifi_tool_handle_t handle, wifi_tool_status_t *st
  * @return Pointer to registry entry
  */
 const wifi_tool_registry_t* wifi_tool_get_registry_entry(void);
+
+/**
+ * @brief Set filesystem tool dependency (MCP dependency injection)
+ * @param handle WiFi tool handle
+ * @param fs_handle Filesystem tool handle
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t wifi_tool_set_fs_dependency(wifi_tool_handle_t handle, fs_tool_handle_t fs_handle);
+
+/**
+ * @brief Start automatic WiFi connection if networks are configured
+ * @param handle WiFi tool handle
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t wifi_tool_start_auto_connection(wifi_tool_handle_t handle);
+
+/**
+ * @brief Load WiFi networks from JSON configuration
+ * @param handle WiFi tool handle
+ * @param wifi_config JSON configuration object
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t wifi_tool_load_networks_from_json(wifi_tool_handle_t handle, const cJSON *wifi_config);
 
 // =============================================================================
 // WiFi Operations Interface

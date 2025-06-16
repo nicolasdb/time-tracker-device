@@ -311,6 +311,44 @@ const char* feedback_tool_priority_to_string(feedback_priority_t priority);
  */
 feedback_tool_config_t feedback_tool_create_default_config(void);
 
+// =============================================================================
+// Dashboard & Status Aggregation (Phase 4.3 Enhancement)
+// =============================================================================
+
+/**
+ * @brief System dashboard data structure
+ */
+typedef struct {
+    char ascii_dashboard[512];           // ASCII formatted dashboard (reduced)
+    char json_status[256];               // JSON structured status (reduced)
+    uint32_t timestamp;                  // Dashboard generation timestamp
+    bool is_operational;                 // Overall system health
+} feedback_dashboard_t;
+
+/**
+ * @brief Generate ASCII dashboard with system status
+ * @param handle Tool handle
+ * @param dashboard Output dashboard structure
+ * @return ESP_OK on success
+ */
+esp_err_t feedback_tool_generate_dashboard(feedback_tool_handle_t handle, feedback_dashboard_t* dashboard);
+
+/**
+ * @brief Subscribe to tool events for status aggregation
+ * @param handle Tool handle
+ * @return ESP_OK on success
+ */
+esp_err_t feedback_tool_subscribe_to_all_events(feedback_tool_handle_t handle);
+
+/**
+ * @brief Get latest system status as JSON string
+ * @param handle Tool handle
+ * @param json_buffer Output buffer for JSON
+ * @param buffer_size Size of output buffer
+ * @return ESP_OK on success
+ */
+esp_err_t feedback_tool_get_status_json(feedback_tool_handle_t handle, char* json_buffer, size_t buffer_size);
+
 #ifdef __cplusplus
 }
 #endif

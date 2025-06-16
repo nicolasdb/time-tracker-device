@@ -11,3 +11,6 @@ idf_component_register(
         fs_tool
         webhook_tool
 )
+
+# Create LittleFS partition image from data directory  
+littlefs_create_partition_image(storage ../data FLASH_IN_PROJECT)

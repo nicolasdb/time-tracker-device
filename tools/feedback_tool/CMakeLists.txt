@@ -6,4 +6,6 @@ idf_component_register(
         log 
         driver
         led_strip
+        esp_event
+        json
 )

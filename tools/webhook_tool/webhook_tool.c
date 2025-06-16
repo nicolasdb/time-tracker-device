@@ -71,7 +71,7 @@ static esp_err_t webhook_tool_save_log_internal(webhook_tool_handle_t handle);
 static esp_err_t webhook_tool_send_http_request(webhook_tool_handle_t handle, const webhook_event_t *event);
 static char* webhook_tool_create_json_payload(webhook_tool_handle_t handle, const webhook_event_t *event);
 static void webhook_tool_format_iso_time(char* buf, size_t buf_size, time_t time_value);
-static esp_err_t webhook_tool_create_default_log(webhook_tool_handle_t handle);
+// static esp_err_t webhook_tool_create_default_log(webhook_tool_handle_t handle); // TODO: Implement if needed
 
 // Event Handlers (Breaking coupling violations)
 static void webhook_tool_wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);

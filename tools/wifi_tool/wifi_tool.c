@@ -74,6 +74,9 @@ struct wifi_tool_context {
     EventGroupHandle_t wifi_event_group;
     SemaphoreHandle_t config_mutex;
     
+    // MCP Tool Dependencies
+    fs_tool_handle_t fs_tool;
+    
     // Event Publishing
     TaskHandle_t event_task;
     bool publish_events;
@@ -87,6 +90,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static esp_err_t publish_wifi_event(struct wifi_tool_context *ctx, wifi_tool_event_type_t type, void* data);
 static esp_err_t load_networks_from_config(struct wifi_tool_context *ctx);
+static esp_err_t load_networks_from_json(struct wifi_tool_context *ctx, const cJSON *wifi_config);
 static esp_err_t try_connect_next_network(struct wifi_tool_context *ctx);
 static esp_err_t start_sta_mode(struct wifi_tool_context *ctx);
 static esp_err_t start_ap_mode(struct wifi_tool_context *ctx);
@@ -332,6 +336,63 @@ esp_err_t wifi_tool_get_status(wifi_tool_handle_t handle, wifi_tool_status_t *st
     return ESP_OK;
 }
 
+esp_err_t wifi_tool_set_fs_dependency(wifi_tool_handle_t handle, fs_tool_handle_t fs_handle)
+{
+    if (!handle || !fs_handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ctx->fs_tool = fs_handle;
+    
+    ESP_LOGI(TAG, "Filesystem dependency set (use wifi_tool_load_networks_from_json to load config)");
+    
+    return ESP_OK;
+}
+
+esp_err_t wifi_tool_start_auto_connection(wifi_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (ctx->config.network_count == 0) {
+        ESP_LOGW(TAG, "No WiFi networks configured, cannot start auto connection");
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    ESP_LOGI(TAG, "Starting automatic WiFi connection (%d networks available)", ctx->config.network_count);
+    
+    // Start STA mode which will automatically trigger connection attempt
+    return wifi_tool_start_sta(handle);
+}
+
+esp_err_t wifi_tool_load_networks_from_json(wifi_tool_handle_t handle, const cJSON *wifi_config)
+{
+    if (!handle || !wifi_config) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct wifi_tool_context *ctx = (struct wifi_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    return load_networks_from_json(ctx, wifi_config);
+}
+
 // =============================================================================
 // WiFi Operations Implementation
 // =============================================================================
@@ -575,11 +636,77 @@ static esp_err_t publish_wifi_event(struct wifi_tool_context *ctx, wifi_tool_eve
 
 static esp_err_t load_networks_from_config(struct wifi_tool_context *ctx)
 {
-    // For now, use a simple default network setup
-    // TODO: Implement JSON file loading
-    ESP_LOGD(TAG, "Loading networks from config (simplified)");
-    
+    ESP_LOGD(TAG, "Loading networks from config (placeholder - will be set via dependency injection)");
     ctx->config.network_count = 0;
+    return ESP_OK;
+}
+
+static esp_err_t load_networks_from_json(struct wifi_tool_context *ctx, const cJSON *wifi_config)
+{
+    if (!wifi_config) {
+        ESP_LOGE(TAG, "WiFi config JSON is NULL");
+        ctx->config.network_count = 0;
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Loading WiFi networks from JSON configuration");
+    
+    // Parse networks array
+    cJSON *networks_array = cJSON_GetObjectItem(wifi_config, "networks");
+    if (!networks_array || !cJSON_IsArray(networks_array)) {
+        ESP_LOGE(TAG, "wifi.json missing 'networks' array");
+        ctx->config.network_count = 0;
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    int network_count = cJSON_GetArraySize(networks_array);
+    if (network_count > WIFI_TOOL_MAX_NETWORKS) {
+        ESP_LOGW(TAG, "Too many networks in config (%d), limiting to %d", 
+                 network_count, WIFI_TOOL_MAX_NETWORKS);
+        network_count = WIFI_TOOL_MAX_NETWORKS;
+    }
+    
+    // Parse each network entry
+    ctx->config.network_count = 0;
+    for (int i = 0; i < network_count; i++) {
+        cJSON *network_item = cJSON_GetArrayItem(networks_array, i);
+        if (!network_item) continue;
+        
+        cJSON *ssid_item = cJSON_GetObjectItem(network_item, "ssid");
+        cJSON *password_item = cJSON_GetObjectItem(network_item, "password");
+        
+        if (!ssid_item || !cJSON_IsString(ssid_item)) {
+            ESP_LOGW(TAG, "Network %d missing SSID, skipping", i);
+            continue;
+        }
+        
+        wifi_network_config_t *network = &ctx->config.networks[ctx->config.network_count];
+        
+        // Copy SSID
+        snprintf(network->ssid, sizeof(network->ssid), "%s", cJSON_GetStringValue(ssid_item));
+        
+        // Copy password (if present)
+        if (password_item && cJSON_IsString(password_item)) {
+            snprintf(network->password, sizeof(network->password), "%s", cJSON_GetStringValue(password_item));
+        } else {
+            network->password[0] = '\0';  // Open network
+        }
+        
+        // Set defaults
+        network->priority = 1;
+        network->auth_mode = (strlen(network->password) > 0) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+        network->hidden = false;
+        
+        ESP_LOGI(TAG, "Loaded network %d: '%s' (auth: %s)", 
+                 ctx->config.network_count,
+                 network->ssid,
+                 strlen(network->password) > 0 ? "WPA2" : "Open");
+        
+        ctx->config.network_count++;
+    }
+    
+    ESP_LOGI(TAG, "Successfully loaded %d WiFi networks from JSON config", ctx->config.network_count);
+    
     return ESP_OK;
 }
 
@@ -598,6 +725,13 @@ static esp_err_t try_connect_next_network(struct wifi_tool_context *ctx)
     strncpy((char*)wifi_config.sta.password, network->password, sizeof(wifi_config.sta.password) - 1);
     
     ESP_LOGI(TAG, "Connecting to network: %s", network->ssid);
+    
+    // Publish connecting event for feedback coordination
+    wifi_tool_event_t connecting_event = {
+        .type = WIFI_TOOL_EVENT_STA_CONNECTING
+    };
+    snprintf(connecting_event.data.sta_info.ssid, sizeof(connecting_event.data.sta_info.ssid), "%s", network->ssid);
+    publish_wifi_event(ctx, WIFI_TOOL_EVENT_STA_CONNECTING, &connecting_event);
     
     esp_err_t ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     if (ret != ESP_OK) {
