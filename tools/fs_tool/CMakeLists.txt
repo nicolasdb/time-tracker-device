@@ -1,15 +1,14 @@
 idf_component_register(
-    SRCS "webhook_tool.c"
+    SRCS "fs_tool.c"
     INCLUDE_DIRS "include"
     REQUIRES 
         freertos 
         log 
-        esp_http_client 
-        json 
         esp_littlefs
         esp_event
-        esp_wifi
+        esp_system
+        json
+        vfs
     PRIV_REQUIRES
-        wifi_tool
-        rfid_tool
+        esp_partition
 )

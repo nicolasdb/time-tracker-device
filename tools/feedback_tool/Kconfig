@@ -1,0 +1,51 @@
+menu "Feedback Tool Configuration"
+
+    config FEEDBACK_TOOL_LED_GPIO
+        int "WS2812B LED GPIO Pin"
+        default 7
+        range 0 48
+        help
+            GPIO pin number for the WS2812B LED strip data line.
+            Default is GPIO 7 for the time tracker hardware.
+
+    config FEEDBACK_TOOL_MAX_BRIGHTNESS
+        int "Maximum LED Brightness"
+        default 150
+        range 1 255
+        help
+            Maximum brightness level for the WS2812B LED (1-255).
+            Lower values save power and reduce eye strain.
+
+    config FEEDBACK_TOOL_BREATHING_PERIOD_MS
+        int "Breathing Period (milliseconds)"
+        default 4000
+        range 1000 10000
+        help
+            Duration of one complete breathing cycle for idle state (in ms).
+            Default 4000ms provides a calm, slow breathing effect.
+
+    config FEEDBACK_TOOL_QUEUE_SIZE
+        int "State Queue Size"
+        default 8
+        range 4 16
+        help
+            Maximum number of states that can be queued simultaneously.
+            Higher values allow more complex state management.
+
+    config FEEDBACK_TOOL_TASK_STACK_SIZE
+        int "Task Stack Size"
+        default 4096
+        range 2048 8192
+        help
+            Stack size for the feedback tool background task (in bytes).
+            Must be sufficient for LED operations and state management.
+
+    config FEEDBACK_TOOL_TASK_PRIORITY
+        int "Task Priority"
+        default 5
+        range 1 25
+        help
+            Priority level for the feedback tool task.
+            Higher values give more responsive LED updates.
+
+endmenu

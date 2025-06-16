@@ -3,4 +3,10 @@ menu "Time Tracker Device Configuration"
     # Include RFID Tool Configuration
     source "$PROJECT_PATH/tools/rfid_tool/Kconfig"
 
+    # Include Filesystem Tool Configuration
+    source "$PROJECT_PATH/tools/fs_tool/Kconfig"
+
+    # Include Webhook Tool Configuration
+    source "$PROJECT_PATH/tools/webhook_tool/Kconfig"
+
 endmenu

@@ -1,9 +1,15 @@
 dependencies:
+  espressif/led_strip:
+    component_hash: null
+    source:
+      path: /home/nicolas/github/time-tracker-device/managed_components/espressif__led_strip
+      type: local
+    version: 3.0.1
   idf:
     component_hash: null
     source:
       type: idf
     version: 5.4.1
-manifest_hash: 72e3d35ac4dafd450282c4d030a2d14575e488aab6f8b0edf69f89f2fc2a768d
+manifest_hash: 13561f0221b26d571d88e77a94e553a52dc1167ab26091d8b47f1bbbc12618fa
 target: esp32c3
 version: 1.0.0

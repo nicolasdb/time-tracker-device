@@ -8,4 +8,6 @@ idf_component_register(
         feedback_tool
         wifi_tool
         rfid_tool
+        fs_tool
+        webhook_tool
 )

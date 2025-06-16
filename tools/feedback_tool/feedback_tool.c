@@ -1,0 +1,860 @@
+/**
+ * @file feedback_tool.c
+ * @brief MCP-Inspired Feedback Tool Implementation
+ * 
+ * Transformed from feedback_manager to follow MCP tool composition patterns.
+ * Preserves the excellent priority queue architecture and animation system.
+ */
+
+#include "feedback_tool.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "esp_system.h"
+#include "driver/gpio.h"
+#include "led_strip.h"
+#include <string.h>
+#include <math.h>
+#include <inttypes.h>
+
+static const char *TAG = "FEEDBACK_TOOL";
+
+// =============================================================================
+// MCP Tool Configuration & Constants
+// =============================================================================
+
+// Default configuration values
+#define DEFAULT_MAX_BRIGHTNESS      CONFIG_FEEDBACK_TOOL_MAX_BRIGHTNESS
+#define DEFAULT_BREATHING_PERIOD    (CONFIG_FEEDBACK_TOOL_BREATHING_PERIOD_MS / 50)  // Convert to cycles
+#define DEFAULT_CLEANUP_INTERVAL    50      // 50ms task interval
+#define FEEDBACK_QUEUE_SIZE         CONFIG_FEEDBACK_TOOL_QUEUE_SIZE
+#define TASK_STACK_SIZE             CONFIG_FEEDBACK_TOOL_TASK_STACK_SIZE
+#define TASK_PRIORITY               CONFIG_FEEDBACK_TOOL_TASK_PRIORITY
+
+// LED color definitions (RGB format)
+typedef struct {
+    uint8_t r;
+    uint8_t g; 
+    uint8_t b;
+} rgb_color_t;
+
+static const rgb_color_t COLOR_OFF    = {0, 0, 0};
+static const rgb_color_t COLOR_RED    = {255, 0, 0};
+static const rgb_color_t COLOR_GREEN  = {0, 255, 0};
+static const rgb_color_t COLOR_BLUE   = {0, 0, 255};
+static const rgb_color_t COLOR_YELLOW = {255, 255, 0};
+static const rgb_color_t COLOR_PURPLE = {128, 0, 128};
+static const rgb_color_t COLOR_WHITE  = {255, 255, 255};
+static const rgb_color_t COLOR_ORANGE = {255, 165, 0};
+static const rgb_color_t COLOR_CYAN   = {0, 255, 255};
+
+// =============================================================================
+// Internal Tool Structure (Enhanced from Original)
+// =============================================================================
+
+/**
+ * @brief State queue entry with enhanced MCP metadata
+ */
+typedef struct {
+    feedback_state_t state;
+    feedback_priority_t priority;
+    uint32_t timestamp;
+    uint32_t duration_ms;          // 0 = permanent, >0 = temporary
+    const char* source_tool;       // Which tool set this state (Phase 2)
+} feedback_state_entry_t;
+
+/**
+ * @brief MCP-Inspired Feedback Tool Structure
+ */
+struct feedback_tool {
+    // Tool Metadata (MCP Pattern)
+    feedback_tool_config_t config;
+    feedback_tool_capabilities_t capabilities;
+    bool is_initialized;
+    bool is_active;
+    uint32_t uptime_start;
+    
+    // Hardware Resources
+    led_strip_handle_t led_strip;
+    
+    // Priority Queue System (Preserved from Original)
+    feedback_state_entry_t state_queue[FEEDBACK_QUEUE_SIZE];
+    uint8_t queue_head;
+    uint8_t queue_count;
+    feedback_state_t current_state;
+    feedback_priority_t current_priority;
+    
+    // Task Management
+    TaskHandle_t task_handle;
+    SemaphoreHandle_t queue_mutex;
+    
+    // Animation State
+    uint32_t cycle_counter;        // For breathing and pattern animations
+    bool led_state;                // Current LED on/off state for blinking
+};
+
+// =============================================================================
+// Forward Declarations
+// =============================================================================
+
+static void feedback_tool_task(void *arg);
+static esp_err_t queue_state_change(struct feedback_tool *tool, 
+                                   feedback_state_t state, 
+                                   feedback_priority_t priority, 
+                                   uint32_t duration_ms);
+static feedback_state_t get_highest_priority_state(struct feedback_tool *tool);
+static feedback_priority_t get_state_default_priority(feedback_state_t state);
+static rgb_color_t get_state_color(feedback_state_t state);
+static void update_led_display(struct feedback_tool *tool);
+
+// =============================================================================
+// MCP Tool Interface Implementation
+// =============================================================================
+
+const char* feedback_tool_get_id(void)
+{
+    return FEEDBACK_TOOL_ID;
+}
+
+const char* feedback_tool_get_version(void)
+{
+    return FEEDBACK_TOOL_VERSION;
+}
+
+feedback_tool_config_t feedback_tool_create_default_config(void)
+{
+    feedback_tool_config_t config = {
+        .led_gpio = CONFIG_FEEDBACK_TOOL_LED_GPIO,  // Configurable GPIO
+        .max_brightness = DEFAULT_MAX_BRIGHTNESS,   
+        .breathing_period_ms = DEFAULT_BREATHING_PERIOD * DEFAULT_CLEANUP_INTERVAL,
+        .auto_cleanup_enabled = true,
+        .cleanup_interval_ms = DEFAULT_CLEANUP_INTERVAL
+    };
+    return config;
+}
+
+feedback_tool_handle_t feedback_tool_init(const feedback_tool_config_t *config)
+{
+    if (!config) {
+        ESP_LOGE(TAG, "Configuration cannot be NULL");
+        return NULL;
+    }
+    
+    ESP_LOGI(TAG, "Initializing MCP-inspired feedback tool v%s", FEEDBACK_TOOL_VERSION);
+    
+    // Allocate tool structure
+    struct feedback_tool *tool = calloc(1, sizeof(struct feedback_tool));
+    if (!tool) {
+        ESP_LOGE(TAG, "Failed to allocate tool structure");
+        return NULL;
+    }
+    
+    // Copy configuration
+    tool->config = *config;
+    tool->uptime_start = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    
+    // Set capabilities
+    tool->capabilities = FEEDBACK_CAP_LED_CONTROL | 
+                        FEEDBACK_CAP_PRIORITY_QUEUE |
+                        FEEDBACK_CAP_ANIMATIONS |
+                        FEEDBACK_CAP_AUTO_EXPIRE |
+                        FEEDBACK_CAP_THREAD_SAFE;
+    
+    // Initialize queue mutex
+    tool->queue_mutex = xSemaphoreCreateMutex();
+    if (!tool->queue_mutex) {
+        ESP_LOGE(TAG, "Failed to create queue mutex");
+        free(tool);
+        return NULL;
+    }
+    
+    // Initialize LED strip
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = config->led_gpio,
+        .max_leds = 1,
+        .led_model = LED_MODEL_WS2812,
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
+        .flags = {
+            .invert_out = false,
+        }
+    };
+    
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000, // 10MHz
+        .mem_block_symbols = 64,
+        .flags = {
+            .with_dma = false,
+        }
+    };
+    
+    esp_err_t ret = led_strip_new_rmt_device(&strip_config, &rmt_config, &tool->led_strip);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create LED strip: %s", esp_err_to_name(ret));
+        vSemaphoreDelete(tool->queue_mutex);
+        free(tool);
+        return NULL;
+    }
+    
+    // Clear LED
+    led_strip_clear(tool->led_strip);
+    
+    // Initialize state queue with IDLE state
+    tool->queue_count = 1;
+    tool->state_queue[0] = (feedback_state_entry_t){
+        .state = FEEDBACK_STATE_IDLE,
+        .priority = FEEDBACK_PRIORITY_LOW,
+        .timestamp = tool->uptime_start,
+        .duration_ms = 0, // Permanent
+        .source_tool = "system"
+    };
+    tool->current_state = FEEDBACK_STATE_IDLE;
+    tool->current_priority = FEEDBACK_PRIORITY_LOW;
+    
+    // Mark as active before creating task to avoid race condition
+    tool->is_active = true;
+    
+    // Create background task
+    BaseType_t task_ret = xTaskCreate(
+        feedback_tool_task,
+        "feedback_tool",
+        TASK_STACK_SIZE,
+        tool,
+        TASK_PRIORITY,
+        &tool->task_handle
+    );
+    
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create background task");
+        led_strip_del(tool->led_strip);
+        vSemaphoreDelete(tool->queue_mutex);
+        free(tool);
+        return NULL;
+    }
+    
+    // Wait for task to start and initialize
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    tool->is_initialized = true;
+    
+    ESP_LOGI(TAG, "Feedback tool initialized successfully");
+    ESP_LOGI(TAG, "  GPIO: %d, Brightness: %d, Period: %" PRIu32 "ms", 
+             config->led_gpio, config->max_brightness, config->breathing_period_ms);
+    ESP_LOGI(TAG, "  Capabilities: 0x%02X", tool->capabilities);
+    
+    return tool;
+}
+
+esp_err_t feedback_tool_deinit(feedback_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    ESP_LOGI(TAG, "Deinitializing feedback tool");
+    
+    // Stop background task
+    tool->is_active = false;
+    if (tool->task_handle) {
+        vTaskDelete(tool->task_handle);
+        tool->task_handle = NULL;
+    }
+    
+    // Clear LED
+    if (tool->led_strip) {
+        led_strip_clear(tool->led_strip);
+        led_strip_del(tool->led_strip);
+    }
+    
+    // Cleanup synchronization
+    if (tool->queue_mutex) {
+        vSemaphoreDelete(tool->queue_mutex);
+    }
+    
+    // Free tool structure
+    free(tool);
+    
+    ESP_LOGI(TAG, "Feedback tool deinitialized");
+    return ESP_OK;
+}
+
+feedback_tool_capabilities_t feedback_tool_get_capabilities(feedback_tool_handle_t handle)
+{
+    if (!handle) {
+        return 0;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    return tool->capabilities;
+}
+
+esp_err_t feedback_tool_get_status(feedback_tool_handle_t handle, feedback_tool_status_t *status)
+{
+    if (!handle || !status) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    status->is_initialized = tool->is_initialized;
+    status->is_active = tool->is_active;
+    status->queue_count = tool->queue_count;
+    status->current_state = tool->current_state;
+    status->uptime_ms = (xTaskGetTickCount() * portTICK_PERIOD_MS) - tool->uptime_start;
+    status->capabilities = tool->capabilities;
+    
+    return ESP_OK;
+}
+
+// =============================================================================
+// State Management Implementation (Enhanced from Original)
+// =============================================================================
+
+esp_err_t feedback_tool_set_state(feedback_tool_handle_t handle, 
+                                  feedback_state_t state,
+                                  feedback_priority_t priority,
+                                  uint32_t duration_ms)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    if (!tool->is_initialized) {
+        ESP_LOGW(TAG, "Tool not initialized, ignoring state change");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGD(TAG, "Setting state: %s (priority: %d, duration: %" PRIu32 "ms)", 
+             feedback_tool_state_to_string(state), priority, duration_ms);
+    
+    return queue_state_change(tool, state, priority, duration_ms);
+}
+
+esp_err_t feedback_tool_set_state_simple(feedback_tool_handle_t handle, feedback_state_t state)
+{
+    feedback_priority_t priority = get_state_default_priority(state);
+    uint32_t duration = 0; // Permanent by default
+    
+    // Some states are naturally temporary
+    switch (state) {
+        case FEEDBACK_STATE_WIFI_CONNECTED:
+        case FEEDBACK_STATE_TIME_SYNCED:
+        case FEEDBACK_STATE_WEBHOOK_SUCCESS:
+            duration = 1000; // Flash for 1 second
+            break;
+        default:
+            break;
+    }
+    
+    return feedback_tool_set_state(handle, state, priority, duration);
+}
+
+feedback_state_t feedback_tool_get_current_state(feedback_tool_handle_t handle)
+{
+    if (!handle) {
+        return FEEDBACK_STATE_ERROR;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    return tool->current_state;
+}
+
+uint8_t feedback_tool_get_queue_count(feedback_tool_handle_t handle)
+{
+    if (!handle) {
+        return 0;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    return tool->queue_count;
+}
+
+esp_err_t feedback_tool_clear_state(feedback_tool_handle_t handle, feedback_state_t state)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    if (xSemaphoreTake(tool->queue_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to acquire mutex for state clear");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // Remove all instances of the specified state
+    uint8_t write_idx = 0;
+    bool state_found = false;
+    
+    for (uint8_t read_idx = 0; read_idx < tool->queue_count; read_idx++) {
+        if (tool->state_queue[read_idx].state != state) {
+            if (write_idx != read_idx) {
+                tool->state_queue[write_idx] = tool->state_queue[read_idx];
+            }
+            write_idx++;
+        } else {
+            state_found = true;
+        }
+    }
+    
+    tool->queue_count = write_idx;
+    
+    xSemaphoreGive(tool->queue_mutex);
+    
+    if (state_found) {
+        ESP_LOGD(TAG, "Cleared state: %s", feedback_tool_state_to_string(state));
+    }
+    
+    return ESP_OK;
+}
+
+esp_err_t feedback_tool_reset(feedback_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    if (xSemaphoreTake(tool->queue_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // Clear all states and reset to IDLE
+    tool->queue_count = 1;
+    tool->state_queue[0] = (feedback_state_entry_t){
+        .state = FEEDBACK_STATE_IDLE,
+        .priority = FEEDBACK_PRIORITY_LOW,
+        .timestamp = xTaskGetTickCount() * portTICK_PERIOD_MS,
+        .duration_ms = 0,
+        .source_tool = "system"
+    };
+    
+    xSemaphoreGive(tool->queue_mutex);
+    
+    ESP_LOGI(TAG, "Tool reset to IDLE state");
+    return ESP_OK;
+}
+
+// =============================================================================
+// Background Task Implementation (Enhanced from Original)
+// =============================================================================
+
+static void feedback_tool_task(void *arg)
+{
+    struct feedback_tool *tool = (struct feedback_tool*)arg;
+    TickType_t last_wake_time = xTaskGetTickCount();
+    
+    ESP_LOGI(TAG, "Feedback tool task started");
+    
+    while (tool->is_active) {
+        // Process state queue and update current state
+        feedback_state_t new_state = get_highest_priority_state(tool);
+        
+        if (new_state != tool->current_state) {
+            ESP_LOGD(TAG, "State transition: %s -> %s", 
+                     feedback_tool_state_to_string(tool->current_state),
+                     feedback_tool_state_to_string(new_state));
+            tool->current_state = new_state;
+            tool->cycle_counter = 0; // Reset animation cycle
+        }
+        
+        // Update LED display based on current state
+        update_led_display(tool);
+        
+        // Increment cycle counter for animations
+        tool->cycle_counter++;
+        
+        // Wait for next cycle
+        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tool->config.cleanup_interval_ms));
+    }
+    
+    ESP_LOGI(TAG, "Feedback tool task ended");
+    vTaskDelete(NULL);
+}
+
+// =============================================================================
+// State Queue Management (Preserved from Original)
+// =============================================================================
+
+static esp_err_t queue_state_change(struct feedback_tool *tool, 
+                                   feedback_state_t state, 
+                                   feedback_priority_t priority, 
+                                   uint32_t duration_ms)
+{
+    if (xSemaphoreTake(tool->queue_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to acquire mutex for state queue");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // Create new state entry
+    feedback_state_entry_t new_entry = {
+        .state = state,
+        .priority = priority,
+        .timestamp = xTaskGetTickCount() * portTICK_PERIOD_MS,
+        .duration_ms = duration_ms,
+        .source_tool = "unknown" // TODO: Phase 2 - track source tool
+    };
+    
+    // Find insertion point (sorted by priority, then timestamp)
+    uint8_t insert_pos = 0;
+    for (uint8_t i = 0; i < tool->queue_count; i++) {
+        if (tool->state_queue[i].priority < priority ||
+            (tool->state_queue[i].priority == priority && 
+             tool->state_queue[i].timestamp > new_entry.timestamp)) {
+            insert_pos = i;
+            break;
+        }
+        insert_pos = i + 1;
+    }
+    
+    // Check if queue is full
+    if (tool->queue_count >= FEEDBACK_QUEUE_SIZE) {
+        // Remove lowest priority item
+        if (insert_pos >= FEEDBACK_QUEUE_SIZE) {
+            ESP_LOGW(TAG, "Queue full, dropping low priority state");
+            xSemaphoreGive(tool->queue_mutex);
+            return ESP_ERR_NO_MEM;
+        }
+        tool->queue_count = FEEDBACK_QUEUE_SIZE - 1;
+    }
+    
+    // Shift elements to make room
+    for (uint8_t i = tool->queue_count; i > insert_pos; i--) {
+        tool->state_queue[i] = tool->state_queue[i - 1];
+    }
+    
+    // Insert new entry
+    tool->state_queue[insert_pos] = new_entry;
+    tool->queue_count++;
+    
+    xSemaphoreGive(tool->queue_mutex);
+    
+    return ESP_OK;
+}
+
+static feedback_state_t get_highest_priority_state(struct feedback_tool *tool)
+{
+    if (xSemaphoreTake(tool->queue_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        return tool->current_state; // Keep current state if can't acquire mutex
+    }
+    
+    uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    feedback_state_t highest_state = FEEDBACK_STATE_IDLE;
+    feedback_priority_t highest_priority = FEEDBACK_PRIORITY_LOW;
+    
+    // Clean expired entries and find highest priority
+    uint8_t write_idx = 0;
+    for (uint8_t read_idx = 0; read_idx < tool->queue_count; read_idx++) {
+        feedback_state_entry_t *entry = &tool->state_queue[read_idx];
+        
+        // Check if entry has expired
+        bool expired = (entry->duration_ms > 0) && 
+                      ((current_time - entry->timestamp) >= entry->duration_ms);
+        
+        if (!expired) {
+            // Keep this entry and update highest priority
+            if (write_idx != read_idx) {
+                tool->state_queue[write_idx] = *entry;
+            }
+            
+            if (entry->priority > highest_priority) {
+                highest_priority = entry->priority;
+                highest_state = entry->state;
+            }
+            
+            write_idx++;
+        }
+    }
+    
+    tool->queue_count = write_idx;
+    
+    // Ensure we always have at least IDLE state
+    if (tool->queue_count == 0) {
+        tool->queue_count = 1;
+        tool->state_queue[0] = (feedback_state_entry_t){
+            .state = FEEDBACK_STATE_IDLE,
+            .priority = FEEDBACK_PRIORITY_LOW,
+            .timestamp = current_time,
+            .duration_ms = 0,
+            .source_tool = "system"
+        };
+        highest_state = FEEDBACK_STATE_IDLE;
+    }
+    
+    xSemaphoreGive(tool->queue_mutex);
+    
+    return highest_state;
+}
+
+// =============================================================================
+// State Mapping & LED Control (Enhanced from Original)
+// =============================================================================
+
+static feedback_priority_t get_state_default_priority(feedback_state_t state)
+{
+    // MCP-inspired state categorization by priority
+    switch (state & 0xFF00) { // Check state category
+        case 0x0000: // System core states
+            switch (state) {
+                case FEEDBACK_STATE_ERROR:
+                case FEEDBACK_STATE_SHUTDOWN:
+                    return FEEDBACK_PRIORITY_CRITICAL;
+                case FEEDBACK_STATE_BOOTING:
+                    return FEEDBACK_PRIORITY_HIGH;
+                default:
+                    return FEEDBACK_PRIORITY_LOW;
+            }
+            
+        case 0x0100: // WiFi states
+        case 0x0200: // Time states
+        case 0x0500: // Webserver states
+            return FEEDBACK_PRIORITY_MEDIUM;
+            
+        case 0x0300: // RFID states
+            switch (state) {
+                case FEEDBACK_STATE_TAG_DETECTED:
+                    return FEEDBACK_PRIORITY_HIGH;
+                case FEEDBACK_STATE_RFID_ERROR:
+                case FEEDBACK_STATE_TAG_READ_ERROR:
+                    return FEEDBACK_PRIORITY_CRITICAL;
+                default:
+                    return FEEDBACK_PRIORITY_MEDIUM;
+            }
+            
+        case 0x0400: // Webhook states
+            switch (state) {
+                case FEEDBACK_STATE_WEBHOOK_ERROR:
+                    return FEEDBACK_PRIORITY_HIGH;
+                default:
+                    return FEEDBACK_PRIORITY_MEDIUM;
+            }
+            
+        case 0x1000: // Initialization states
+            return FEEDBACK_PRIORITY_MEDIUM;
+            
+        case 0x2000: // Tool communication states
+            return FEEDBACK_PRIORITY_HIGH;
+            
+        default:
+            return FEEDBACK_PRIORITY_LOW;
+    }
+}
+
+static rgb_color_t get_state_color(feedback_state_t state)
+{
+    switch (state) {
+        // System Core States
+        case FEEDBACK_STATE_BOOTING:
+        case FEEDBACK_STATE_INIT_START:
+        case FEEDBACK_STATE_INIT_COMPLETE:
+            return COLOR_WHITE;
+            
+        case FEEDBACK_STATE_IDLE:
+            return COLOR_BLUE;
+            
+        case FEEDBACK_STATE_ERROR:
+        case FEEDBACK_STATE_RFID_ERROR:
+        case FEEDBACK_STATE_TAG_READ_ERROR:
+        case FEEDBACK_STATE_WEBHOOK_ERROR:
+        case FEEDBACK_STATE_TOOL_ERROR:
+            return COLOR_RED;
+            
+        // WiFi States
+        case FEEDBACK_STATE_WIFI_CONNECTING:
+            return COLOR_BLUE; // Blinking blue
+            
+        case FEEDBACK_STATE_WIFI_CONNECTED:
+        case FEEDBACK_STATE_TIME_SYNCED:
+        case FEEDBACK_STATE_WEBHOOK_SUCCESS:
+            return COLOR_CYAN; // Flash cyan
+            
+        case FEEDBACK_STATE_WIFI_FAILED:
+        case FEEDBACK_STATE_TIME_SYNC_FAILED:
+            return COLOR_RED; // Red/orange sequence
+            
+        case FEEDBACK_STATE_WIFI_AP_MODE:
+            return COLOR_YELLOW; // Yellow-blue-purple sequence
+            
+        // RFID States
+        case FEEDBACK_STATE_TAG_DETECTED:
+            return COLOR_GREEN; // Solid green
+            
+        case FEEDBACK_STATE_RFID_INITIALIZING:
+        case FEEDBACK_STATE_RFID_ACTIVE:
+            return COLOR_PURPLE;
+            
+        // Webhook States
+        case FEEDBACK_STATE_WEBHOOK_SENDING:
+        case FEEDBACK_STATE_WEBHOOK_QUEUED:
+            return COLOR_YELLOW;
+            
+        // Initialization States
+        case FEEDBACK_STATE_INIT_FS:
+        case FEEDBACK_STATE_INIT_WIFI_PREP:
+        case FEEDBACK_STATE_INIT_TIME:
+        case FEEDBACK_STATE_INIT_WEBHOOK:
+        case FEEDBACK_STATE_INIT_RFID:
+            return COLOR_PURPLE;
+            
+        // Tool States
+        case FEEDBACK_STATE_TOOL_REGISTERED:
+            return COLOR_GREEN;
+            
+        case FEEDBACK_STATE_TOOL_DISCONNECTED:
+            return COLOR_ORANGE;
+            
+        default:
+            return COLOR_WHITE;
+    }
+}
+
+static void update_led_display(struct feedback_tool *tool)
+{
+    rgb_color_t color = get_state_color(tool->current_state);
+    rgb_color_t display_color = COLOR_OFF;
+    
+    // Apply state-specific animation patterns
+    switch (tool->current_state) {
+        case FEEDBACK_STATE_IDLE: {
+            // Breathing effect (4-second cycle)
+            uint32_t breathing_period = tool->config.breathing_period_ms / tool->config.cleanup_interval_ms;
+            float phase = (2.0 * M_PI * tool->cycle_counter) / breathing_period;
+            float intensity = (sin(phase) + 1.0) / 2.0; // 0.0 to 1.0
+            
+            display_color.r = (uint8_t)(color.r * intensity * tool->config.max_brightness / 255);
+            display_color.g = (uint8_t)(color.g * intensity * tool->config.max_brightness / 255);
+            display_color.b = (uint8_t)(color.b * intensity * tool->config.max_brightness / 255);
+            break;
+        }
+        
+        case FEEDBACK_STATE_WIFI_CONNECTING: {
+            // Fast blinking (500ms on/off)
+            uint32_t blink_period = 1000 / tool->config.cleanup_interval_ms; // 1 second period
+            bool on = (tool->cycle_counter % blink_period) < (blink_period / 2);
+            
+            if (on) {
+                display_color.r = color.r * tool->config.max_brightness / 255;
+                display_color.g = color.g * tool->config.max_brightness / 255;
+                display_color.b = color.b * tool->config.max_brightness / 255;
+            }
+            break;
+        }
+        
+        case FEEDBACK_STATE_TAG_DETECTED: {
+            // Solid color
+            display_color.r = color.r * tool->config.max_brightness / 255;
+            display_color.g = color.g * tool->config.max_brightness / 255;
+            display_color.b = color.b * tool->config.max_brightness / 255;
+            break;
+        }
+        
+        case FEEDBACK_STATE_WIFI_AP_MODE: {
+            // Yellow -> Blue -> Purple sequence (0.3s, 0.3s, 2.0s)
+            uint32_t sequence_period = 2600 / tool->config.cleanup_interval_ms; // 2.6 second cycle
+            uint32_t phase = tool->cycle_counter % sequence_period;
+            uint32_t yellow_phase = 300 / tool->config.cleanup_interval_ms;
+            uint32_t blue_phase = yellow_phase + (300 / tool->config.cleanup_interval_ms);
+            
+            if (phase < yellow_phase) {
+                display_color = COLOR_YELLOW;
+            } else if (phase < blue_phase) {
+                display_color = COLOR_BLUE;
+            } else {
+                display_color = COLOR_PURPLE;
+            }
+            
+            display_color.r = display_color.r * tool->config.max_brightness / 255;
+            display_color.g = display_color.g * tool->config.max_brightness / 255;
+            display_color.b = display_color.b * tool->config.max_brightness / 255;
+            break;
+        }
+        
+        default: {
+            // Default: solid color or temporary flash
+            display_color.r = color.r * tool->config.max_brightness / 255;
+            display_color.g = color.g * tool->config.max_brightness / 255;
+            display_color.b = color.b * tool->config.max_brightness / 255;
+            break;
+        }
+    }
+    
+    // Update LED strip
+    led_strip_set_pixel(tool->led_strip, 0, display_color.r, display_color.g, display_color.b);
+    led_strip_refresh(tool->led_strip);
+}
+
+// =============================================================================
+// Utility Functions Implementation
+// =============================================================================
+
+esp_err_t feedback_tool_validate_init_step(feedback_tool_handle_t handle, 
+                                           const char* step_name,
+                                           bool success)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Init step '%s': %s", step_name ? step_name : "unknown", 
+             success ? "SUCCESS" : "FAILED");
+    
+    feedback_state_t flash_state = success ? FEEDBACK_STATE_INIT_COMPLETE : FEEDBACK_STATE_ERROR;
+    return feedback_tool_set_state(handle, flash_state, FEEDBACK_PRIORITY_HIGH, 300);
+}
+
+const char* feedback_tool_state_to_string(feedback_state_t state)
+{
+    switch (state) {
+        case FEEDBACK_STATE_BOOTING: return "BOOTING";
+        case FEEDBACK_STATE_IDLE: return "IDLE";
+        case FEEDBACK_STATE_ERROR: return "ERROR";
+        case FEEDBACK_STATE_WIFI_CONNECTING: return "WIFI_CONNECTING";
+        case FEEDBACK_STATE_WIFI_CONNECTED: return "WIFI_CONNECTED";
+        case FEEDBACK_STATE_WIFI_FAILED: return "WIFI_FAILED";
+        case FEEDBACK_STATE_WIFI_AP_MODE: return "WIFI_AP_MODE";
+        case FEEDBACK_STATE_TAG_DETECTED: return "TAG_DETECTED";
+        case FEEDBACK_STATE_WEBHOOK_SUCCESS: return "WEBHOOK_SUCCESS";
+        case FEEDBACK_STATE_WEBHOOK_ERROR: return "WEBHOOK_ERROR";
+        // Add more as needed
+        default: return "UNKNOWN";
+    }
+}
+
+const char* feedback_tool_priority_to_string(feedback_priority_t priority)
+{
+    switch (priority) {
+        case FEEDBACK_PRIORITY_LOW: return "LOW";
+        case FEEDBACK_PRIORITY_MEDIUM: return "MEDIUM";
+        case FEEDBACK_PRIORITY_HIGH: return "HIGH";
+        case FEEDBACK_PRIORITY_CRITICAL: return "CRITICAL";
+        default: return "UNKNOWN";
+    }
+}
+
+// =============================================================================
+// Tool Registry Implementation (Phase 2 Target)
+// =============================================================================
+
+const feedback_tool_registry_t* feedback_tool_get_registry_entry(void)
+{
+    static const feedback_tool_registry_t registry_entry = {
+        .tool_id = FEEDBACK_TOOL_ID,
+        .version = FEEDBACK_TOOL_VERSION,
+        .description = FEEDBACK_TOOL_DESCRIPTION,
+        .capabilities = FEEDBACK_CAP_LED_CONTROL | 
+                       FEEDBACK_CAP_PRIORITY_QUEUE |
+                       FEEDBACK_CAP_ANIMATIONS |
+                       FEEDBACK_CAP_AUTO_EXPIRE |
+                       FEEDBACK_CAP_THREAD_SAFE,
+        .init_func = feedback_tool_init,
+        .deinit_func = feedback_tool_deinit
+    };
+    
+    return &registry_entry;
+}

@@ -1,7 +1,7 @@
 # Partition Table for MCP-Inspired Time Tracker Device
-# Production partitions with sufficient storage for tools and data
+# Phase 3C: Expanded partitions for full tool ecosystem
 # Name,   Type, SubType, Offset,  Size,     Flags
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 1M,
-littlefs, data, spiffs,  0x110000, 1M,
+factory,  app,  factory, 0x10000, 2M,
+storage, data, littlefs, 0x210000, 1536K,
