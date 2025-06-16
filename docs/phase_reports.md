@@ -295,8 +295,13 @@ Archiving .pio/build/esp32c3_mcp/esp-idf/rfid_tool/librfid_tool.a
 
 ### Flash Memory Analysis
 ```
+# Phase 3A (Original partition)
 RAM:   [=         ]   8.9% (used 29016 bytes from 327680 bytes)
 Flash: [========  ]  82.2% (used 861584 bytes from 1048576 bytes)
+
+# Phase 4.1 (Expanded partition with WS2812B)
+RAM:   [=         ]   9.6% (used 31560 bytes from 327680 bytes)
+Flash: [=====     ]  53.8% (used 1127934 bytes from 2097152 bytes)
 ```
 
 **Partition Usage**:
