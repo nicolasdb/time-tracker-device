@@ -20,7 +20,6 @@ terminal_log.txt
 data/log.json
 
 # claude
-CLAUDE.local.md
 .claudeignore
 
 # IDE Files

@@ -1,64 +1,132 @@
-# Save Progress Command
+# Save Progress Command [SPR-Optimized]
 
-Maintain documentation consistency across project tracking files.
+> _Maintain documentation consistency with optimized SPR structure_
+
+## 📖 Essential Background
+
+- **docs/SPR_GUIDE.md** → What is SPR? How to read/write SPR format
+- **docs/MAINTENANCE_STRATEGY.md** → Detailed update workflow and quality control
 
 ## Usage
 
-```
+```bash
 /save_progress <phase_name> <status>
 ```
 
-## Document Roles
+## Document Roles [Updated Structure]
 
-### CLAUDE.md - Project Memory & Guidelines
-- Current system state and next priorities
-- Build commands and development workflow
-- Critical architecture principles and common mistakes
-- Configuration management patterns
+### CLAUDE.md - Current Context Only (150 lines max)
 
-### docs/architecture_insights.md - Technical Patterns
-- Reusable MCP architecture patterns
-- Critical technical fixes and solutions
-- Hardware integration patterns
-- Build system and deployment knowledge
+- Current phase status and immediate next steps [SPR format]
+- Build commands and user/Claude role separation
+- Critical architecture principles [SPR references]
+- Hardware validation status [SPR summary]
 
-### docs/phase_reports.md - Historical Development Log
-- Hardware validation results by phase
-- Memory usage progression
-- Performance metrics and benchmarks
-- Detailed timeline and achievements
+### docs/architecture/ - Technical Knowledge Base [SPR Compressed]
 
-### refactor_mission_brief.md - Master Plan & Objectives
-- Overall mission goals and success criteria
-- Phase breakdown and dependencies
-- Architecture transformation strategy
-- Long-term vision and roadmap
+- **mcp_patterns_spr.md**: Universal tool patterns (handle-based, event-driven)
+- **esp32_solutions_spr.md**: Platform-specific fixes (string handling, events, memory)
+- **build_system_spr.md**: Deployment patterns (PlatformIO, dependencies, archives)
+
+### docs/project/ - Project Context [SPR Compressed]
+
+- **current_state_spr.md**: Live phase status, tool ecosystem, capabilities
+- **hardware_validation_spr.md**: Essential test results, performance metrics
+- **development_summary.md**: High-level progress tracking
+
+### docs/archive/ - Historical Preservation
+
+- **development_history_complete.md**: Complete phase logs and validation details
+- **architecture_insights_complete.md**: Full technical evolution history
+- **original_mission_brief.md**: Complete transformation plan and objectives
+
+### tools/*/CLAUDE.md - Tool Integration Guides
+
+- Tool-specific configuration and integration patterns
+- Keep current structure (unchanged)
+
+## SPR Update Protocol
+
+### Phase Completion Updates [In Order]
+
+1. **docs/project/current_state_spr.md**:
+
+   ```txt
+   COMPLETE: Phase-X.Y|feature-achieved|validation-status
+   TOOLS: updated-capabilities|new-integrations|performance
+   NEXT: Phase-X.Z|target-feature|dependencies
+   ```
+
+2. **docs/project/hardware_validation_spr.md**:
+
+   ```txt
+   VALIDATED: Phase-X.Y|hardware-config|duration|performance-metrics
+   RESULTS: tool-coordination|memory-usage|operation-stability
+   ```
+
+3. **CLAUDE.md**: Update "Current State [SPR]" section only
+
+4. **Archive if needed**: Move detailed logs to docs/archive/
+
+## SPR Format Guidelines
+
+### Use SPR Compression For
+
+- **Repeated patterns** across multiple tools
+- **Technical fixes** that apply broadly  
+- **Validation results** with consistent structure
+- **Architecture principles** used project-wide
+
+### SPR Pattern Examples
+
+```txt
+TOOLS: tool1(caps)|tool2(caps)|tool3(caps)|status
+VALIDATION: hardware|duration|performance|status
+PATTERNS: principle1|principle2|principle3|application
+FIXES: problem1-solution|problem2-solution|context
+```
+
+### Keep Detailed For
+
+- **Unique implementation details** specific to single components
+- **Debug logs** that may be referenced later
+- **Performance metrics** requiring precise values
+- **Integration commands** requiring exact syntax
+
+## Quick Reference: Core SPR Vocabulary
+
+### MCP Architecture
+
+```txt
+HANDLE: tool_init→context→tool_deinit|no-static-globals
+EVENTS: publish-subscribe|ESP_EVENT_POST|no-coupling
+REGISTRY: capabilities-bitmask|metadata-discovery|tool-version
+```
+
+### ESP32 Critical Fixes
+
+```txt  
+STRING: snprintf-not-strncpy|buffer-safety|avoid-truncation
+EVENTS: no-vTaskDelay|immediate-return|event-loop-safe
+MEMORY: 8192-stack|handle-context|no-leaks
+```
+
+### Tool Development
+
+```txt
+LIFECYCLE: init→register→subscribe→operate→publish→deinit
+TESTING: isolation-first|integration-second|hardware-final
+DEPLOYMENT: self-contained|embedded-deps|portable-archive
+```
 
 ## Example Usage
 
 ```bash
-/save_progress "Phase 3C" COMPLETE "fs_tool initialized successfully, 5-tool architecture validated"
+/save_progress "Phase 5.2" COMPLETE "ntp_tool implemented, time sync working, WiFi-triggered sync validated"
 ```
 
-## Quick Reference
+This command now maintains SPR-optimized documentation that grows smarter, not larger, with each development phase.
 
-### MCP Architecture Principles (Always Check)
-- Handle-based design (no static globals)
-- Event-driven communication (no direct coupling)
-- Self-contained tools (embedded dependencies)
-- Tool registry and capabilities discovery
+---
 
-### Common ESP32 Fixes
-- Use `snprintf()` not `strncpy()` for strings
-- Use `PRIu32` macros for format specifiers
-- Set main task stack to 8192 bytes minimum
-- Use fs_tool APIs, not direct filesystem calls
-
-### Tool Development Checklist
-- [ ] MCP interface implemented
-- [ ] Handle-based context structure
-- [ ] Event publishing/subscribing
-- [ ] Kconfig + CLAUDE.md documentation
-- [ ] Hardware validation completed
-
-This command maintains information distribution across documents to optimize for their distinct purposes while preventing duplication.
+> Optimized for documentation size reduction while preserving all critical information
