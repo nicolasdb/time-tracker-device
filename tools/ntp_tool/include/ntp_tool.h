@@ -70,6 +70,7 @@ typedef struct {
         struct {
             esp_err_t error_code;
             const char* error_message;
+            uint32_t retry_count;
         } error_info;
     } data;
 } ntp_tool_event_t;

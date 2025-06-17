@@ -423,6 +423,10 @@ static void mcp_init_task(void *arg)
         ESP_LOGW(TAG, "⚠️  Webserver tool dependency injection failed: %s", esp_err_to_name(webserver_dep_ret));
     }
     
+    // Clear BOOTING state to allow WiFi feedback during connection attempts
+    feedback_tool_clear_state(feedback_tool, FEEDBACK_STATE_BOOTING);
+    ESP_LOGI(TAG, "✅ Component initialization complete - enabling WiFi feedback");
+    
     // Don't enter IDLE yet - wait for WiFi connection to complete
     // IDLE state will be triggered by IP_ACQUIRED event in wifi_event_handler
     ESP_LOGI(TAG, "🔄 System initialization complete - WiFi connection will trigger IDLE state");
