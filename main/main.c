@@ -17,6 +17,7 @@
 #include "rfid_tool.h"
 #include "fs_tool.h"
 #include "webhook_tool.h"
+#include "webserver_tool.h"
 
 static const char *TAG = "MCP_ORCHESTRATOR";
 
@@ -26,6 +27,7 @@ static wifi_tool_handle_t wifi_tool = NULL;
 static rfid_tool_handle_t rfid_tool = NULL;
 static fs_tool_handle_t fs_tool = NULL;
 static webhook_tool_handle_t webhook_tool = NULL;
+static webserver_tool_handle_t webserver_tool = NULL;
 
 // MCP Task configuration
 #define MCP_TASK_STACK_SIZE 8192   // Adequate stack for 5-tool init + dashboard
@@ -58,10 +60,16 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             ESP_LOGI(TAG, "🌐 IP acquired: %s - returning to idle", wifi_event->data.ip_info.ip_address);
             // Return to idle breathing (no blocking in event handler!)
             feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);
+            // Stop webserver since we're now connected to WiFi
+            if (webserver_tool) {
+                ESP_LOGI(TAG, "🌐 Stopping webserver - WiFi connected");
+                webserver_tool_stop(webserver_tool);
+            }
             break;
             
         case WIFI_TOOL_EVENT_STA_DISCONNECTED:
             ESP_LOGW(TAG, "📶 WiFi disconnected - returning to connecting state");
+            // Only set connecting state if not in AP mode
             feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_WIFI_CONNECTING);
             break;
             
@@ -73,6 +81,37 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         case WIFI_TOOL_EVENT_AP_STARTED:
             ESP_LOGI(TAG, "📶 WiFi AP mode started - AP mode sequence");
             feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_WIFI_AP_MODE);
+            // Start webserver for configuration interface
+            if (webserver_tool) {
+                ESP_LOGI(TAG, "🌐 Starting webserver for AP mode configuration");
+                webserver_tool_start(webserver_tool);
+            }
+            break;
+            
+        default:
+            break;
+    }
+}
+
+// =========================================================================
+// RFID Event Handler for Visual Feedback
+// =========================================================================
+
+static void rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    if (event_base != RFID_TOOL_EVENTS || !feedback_tool) {
+        return;
+    }
+    
+    switch (event_id) {
+        case RFID_TOOL_EVENT_TAG_DETECTED:
+            ESP_LOGI(TAG, "🏷️  RFID tag detected - green solid (active session)");
+            feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_TAG_DETECTED);
+            break;
+            
+        case RFID_TOOL_EVENT_TAG_REMOVED:
+            ESP_LOGI(TAG, "🏷️  RFID tag removed - returning to idle");
+            feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);
             break;
             
         default:
@@ -184,6 +223,23 @@ static void mcp_init_task(void *arg)
     webhook_tool_capabilities_t webhook_caps = webhook_tool_get_capabilities(webhook_tool);
     ESP_LOGI(TAG, "Webhook Capabilities: 0x%02X", webhook_caps);
     
+    // Initialize webserver_tool with MCP configuration pattern (Phase 5.1)
+    webserver_tool_config_t webserver_config = webserver_tool_create_default_config();
+    
+    webserver_tool = webserver_tool_init(&webserver_config);
+    if (!webserver_tool) {
+        ESP_LOGE(TAG, "Failed to initialize webserver tool");
+        return;
+    }
+    
+    // Display webserver_tool information (MCP discovery pattern)
+    ESP_LOGI(TAG, "Webserver Tool: %s v%s", 
+             webserver_tool_get_id(), 
+             webserver_tool_get_version());
+    
+    webserver_tool_capabilities_t webserver_caps = webserver_tool_get_capabilities(webserver_tool);
+    ESP_LOGI(TAG, "Webserver Capabilities: 0x%02X", webserver_caps);
+    
     // =========================================================================
     // Phase 3C+3B: Enhanced MCP Self-Test Sequence with Visual Feedback
     // =========================================================================
@@ -192,25 +248,25 @@ static void mcp_init_task(void *arg)
     
     // Show booting state
     feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_BOOTING);
-    ESP_LOGI(TAG, "🔄 Starting 5-tool system initialization...");
+    ESP_LOGI(TAG, "🔄 Starting 7-tool system initialization...");
     vTaskDelay(pdMS_TO_TICKS(1500));
     
     // Test 1: Tool Registry System
-    ESP_LOGI(TAG, "📋 TEST 1/6: Tool Registry System");
+    ESP_LOGI(TAG, "📋 TEST 1/7: Tool Registry System");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_START, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     feedback_tool_validate_init_step(feedback_tool, "Tool Registry", true);
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 2: Feedback Tool (Self-Test)
-    ESP_LOGI(TAG, "💡 TEST 2/6: feedback_tool (LED Visual Feedback)");
+    ESP_LOGI(TAG, "💡 TEST 2/7: feedback_tool (LED Visual Feedback)");
     feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_WIFI_CONNECTING); // Show blinking pattern
     vTaskDelay(pdMS_TO_TICKS(1000));
     feedback_tool_validate_init_step(feedback_tool, "feedback_tool", feedback_tool != NULL);
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 3: WiFi Tool
-    ESP_LOGI(TAG, "📶 TEST 3/6: wifi_tool (Network Connectivity)");
+    ESP_LOGI(TAG, "📶 TEST 3/7: wifi_tool (Network Connectivity)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_WIFI_PREP, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     wifi_tool_status_t wifi_status;
@@ -219,7 +275,7 @@ static void mcp_init_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 4: RFID Tool
-    ESP_LOGI(TAG, "🏷️  TEST 4/6: rfid_tool (RC522 RFID Scanner)");
+    ESP_LOGI(TAG, "🏷️  TEST 4/7: rfid_tool (RC522 RFID Scanner)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_RFID, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     rfid_tool_status_t rfid_status;
@@ -228,7 +284,7 @@ static void mcp_init_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 5: Filesystem Tool
-    ESP_LOGI(TAG, "💾 TEST 5/6: fs_tool (LittleFS Persistent Storage)");
+    ESP_LOGI(TAG, "💾 TEST 5/7: fs_tool (LittleFS Persistent Storage)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_FS, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     fs_tool_status_t fs_status;
@@ -241,7 +297,7 @@ static void mcp_init_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 6: Webhook Tool
-    ESP_LOGI(TAG, "🌐 TEST 6/6: webhook_tool (HTTP Event Transmission)");
+    ESP_LOGI(TAG, "🌐 TEST 6/7: webhook_tool (HTTP Event Transmission)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_WEBHOOK, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     webhook_tool_status_t webhook_status;
@@ -249,8 +305,17 @@ static void mcp_init_task(void *arg)
     feedback_tool_validate_init_step(feedback_tool, "webhook_tool", webhook_test_ok);
     vTaskDelay(pdMS_TO_TICKS(700));
     
+    // Test 7: Webserver Tool
+    ESP_LOGI(TAG, "🌐 TEST 7/7: webserver_tool (AP Mode Configuration Interface)");
+    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_WEBSERVER_STARTING, FEEDBACK_PRIORITY_MEDIUM, 1000);
+    vTaskDelay(pdMS_TO_TICKS(800));
+    webserver_tool_status_t webserver_status;
+    bool webserver_test_ok = (webserver_tool_get_status(webserver_tool, &webserver_status) == ESP_OK);
+    feedback_tool_validate_init_step(feedback_tool, "webserver_tool", webserver_test_ok);
+    vTaskDelay(pdMS_TO_TICKS(700));
+    
     // All tests complete - celebrate with success pattern
-    ESP_LOGI(TAG, "🎉 All 5 tools initialized successfully!");
+    ESP_LOGI(TAG, "🎉 All 7 tools initialized successfully!");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_COMPLETE, FEEDBACK_PRIORITY_HIGH, 2000);
     vTaskDelay(pdMS_TO_TICKS(2500));
     
@@ -258,7 +323,7 @@ static void mcp_init_task(void *arg)
     // Phase 4.2: MCP Dependency Injection - WiFi Tool Configuration Loading
     // =========================================================================
     
-    ESP_LOGI(TAG, "🔌 Setting up MCP tool dependencies (Phase 4.2)");
+    ESP_LOGI(TAG, "🔌 Setting up MCP tool dependencies");
     
     // Register WiFi event handler for visual feedback coordination
     ESP_LOGI(TAG, "🎯 Registering event coordination handlers...");
@@ -267,6 +332,14 @@ static void mcp_init_task(void *arg)
         ESP_LOGI(TAG, "✅ WiFi→Feedback event coordination registered");
     } else {
         ESP_LOGW(TAG, "⚠️  Event handler registration failed: %s", esp_err_to_name(event_ret));
+    }
+    
+    // Register RFID event handler for visual feedback coordination
+    esp_err_t rfid_event_ret = esp_event_handler_register(RFID_TOOL_EVENTS, ESP_EVENT_ANY_ID, rfid_event_handler, NULL);
+    if (rfid_event_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ RFID→Feedback event coordination registered");
+    } else {
+        ESP_LOGW(TAG, "⚠️  RFID event handler registration failed: %s", esp_err_to_name(rfid_event_ret));
     }
     
     // Inject fs_tool dependency into wifi_tool  
@@ -308,10 +381,18 @@ static void mcp_init_task(void *arg)
         ESP_LOGW(TAG, "⚠️  WiFi tool dependency injection failed: %s", esp_err_to_name(dep_ret));
     }
     
-    // Enter IDLE state (beautiful blue breathing)
-    ESP_LOGI(TAG, "🔄 Requesting IDLE state transition...");
-    esp_err_t idle_ret = feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);
-    ESP_LOGI(TAG, "💤 System ready - entering IDLE state (blue breathing pattern) - ret: %s", esp_err_to_name(idle_ret));
+    // Inject fs_tool dependency into webserver_tool
+    ESP_LOGI(TAG, "📁 Setting up Webserver tool dependencies...");
+    esp_err_t webserver_dep_ret = webserver_tool_set_fs_dependency(webserver_tool, fs_tool);
+    if (webserver_dep_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Webserver tool dependency injection successful");
+    } else {
+        ESP_LOGW(TAG, "⚠️  Webserver tool dependency injection failed: %s", esp_err_to_name(webserver_dep_ret));
+    }
+    
+    // Don't enter IDLE yet - wait for WiFi connection to complete
+    // IDLE state will be triggered by IP_ACQUIRED event in wifi_event_handler
+    ESP_LOGI(TAG, "🔄 System initialization complete - WiFi connection will trigger IDLE state");
     
     // Allow feedback task to process state change before dashboard generation
     ESP_LOGI(TAG, "⏳ Waiting for state transition to process...");

@@ -78,7 +78,7 @@
 
 **Pattern**: `Y→B→P→P` (fully configurable cycle)
 
-- **Yellow**: "Warning - no WiFi available" (CONFIG_AP_MODE_YELLOW_DURATION)
+- **Yellow**: "Warning - no WiFi available" fast flash (CONFIG_AP_MODE_WARNING_FLASH_INTERVAL)
 - **Blue**: "Trying to connect" (CONFIG_AP_MODE_BLUE_DURATION)
 - **Purple**: "AP mode active" (CONFIG_AP_MODE_PURPLE_DURATION - emphasized)
 - **Total cycle**: CONFIG_AP_MODE_TOTAL_CYCLE
@@ -129,7 +129,7 @@ CONFIG_URGENCY_PULSE_DURATION        = 2000ms     // 90min+ pulsing cycle
 
 // === CONNECTION STATES ===
 CONFIG_WIFI_BLINK_INTERVAL           = 500ms      // WiFi connection attempt blink
-CONFIG_AP_MODE_YELLOW_DURATION       = 1000ms     // AP sequence: warning phase
+CONFIG_AP_MODE_WARNING_FLASH_INTERVAL = 100ms      // AP sequence: warning flash speed
 CONFIG_AP_MODE_BLUE_DURATION         = 1000ms     // AP sequence: attempt phase  
 CONFIG_AP_MODE_PURPLE_DURATION       = 2000ms     // AP sequence: active phase
 CONFIG_AP_MODE_TOTAL_CYCLE           = 4000ms     // Complete AP mode cycle

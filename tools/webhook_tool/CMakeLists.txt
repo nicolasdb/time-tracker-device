@@ -6,7 +6,7 @@ idf_component_register(
         log 
         esp_http_client 
         json 
-        esp_littlefs
+        joltwallet__littlefs
         esp_event
         esp_wifi
     PRIV_REQUIRES

@@ -4,7 +4,7 @@ idf_component_register(
     REQUIRES 
         freertos 
         log 
-        esp_littlefs
+        joltwallet__littlefs
         esp_event
         esp_system
         json

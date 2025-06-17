@@ -48,4 +48,13 @@ menu "Feedback Tool Configuration"
             Priority level for the feedback tool task.
             Higher values give more responsive LED updates.
 
+    config FEEDBACK_TOOL_AP_WARNING_FLASH_INTERVAL
+        int "AP Mode Warning Flash Interval (ms)"
+        default 100
+        range 50 500
+        help
+            Flash interval for yellow warning phase during AP mode fallback.
+            Fast flashing (100ms) attracts attention to WiFi configuration needed.
+            Total yellow phase duration is 1000ms with this flash pattern.
+
 endmenu

@@ -34,9 +34,16 @@ ESP_EVENT_DEFINE_BASE(WIFI_TOOL_EVENTS);
 
 #define WIFI_TOOL_TASK_STACK_SIZE    4096
 #define WIFI_TOOL_TASK_PRIORITY      5
-#define WIFI_TOOL_MAX_RETRY_DEFAULT  5
-#define WIFI_TOOL_RETRY_DELAY_MS     5000
-#define WIFI_TOOL_CONNECT_TIMEOUT_MS 30000
+// Use Kconfig values with fallback defaults
+#ifndef CONFIG_WIFI_TOOL_MAX_RETRY_ATTEMPTS
+#define CONFIG_WIFI_TOOL_MAX_RETRY_ATTEMPTS 3
+#endif
+#ifndef CONFIG_WIFI_TOOL_RETRY_DELAY_MS
+#define CONFIG_WIFI_TOOL_RETRY_DELAY_MS 2000
+#endif
+#ifndef CONFIG_WIFI_TOOL_CONNECT_TIMEOUT_MS
+#define CONFIG_WIFI_TOOL_CONNECT_TIMEOUT_MS 10000
+#endif
 
 // WiFi event group bits
 #define WIFI_CONNECTED_BIT    BIT0
@@ -113,21 +120,21 @@ wifi_tool_config_t wifi_tool_create_default_config(void)
 {
     wifi_tool_config_t config = {0};
     
-    // Default AP configuration
+    // Default AP configuration (Proof of Concept - Low Risk Scenario)
     strncpy(config.ap_config.ssid, "TimeTracker-Setup", sizeof(config.ap_config.ssid) - 1);
-    strncpy(config.ap_config.password, "configure", sizeof(config.ap_config.password) - 1);
+    config.ap_config.password[0] = '\0';  // Open network for simple PoC setup
     config.ap_config.channel = 1;
     config.ap_config.max_connections = 4;
-    config.ap_config.auth_mode = WIFI_AUTH_WPA2_PSK;
+    config.ap_config.auth_mode = WIFI_AUTH_OPEN;
     config.ap_config.ssid_hidden = false;
     strncpy(config.ap_config.ip_address, "192.168.4.1", sizeof(config.ap_config.ip_address) - 1);
     strncpy(config.ap_config.gateway, "192.168.4.1", sizeof(config.ap_config.gateway) - 1);
     strncpy(config.ap_config.netmask, "255.255.255.0", sizeof(config.ap_config.netmask) - 1);
     
-    // Default behavior settings
-    config.connect_timeout_ms = WIFI_TOOL_CONNECT_TIMEOUT_MS;
-    config.max_retry_attempts = WIFI_TOOL_MAX_RETRY_DEFAULT;
-    config.retry_delay_ms = WIFI_TOOL_RETRY_DELAY_MS;
+    // Default behavior settings (from Kconfig)
+    config.connect_timeout_ms = CONFIG_WIFI_TOOL_CONNECT_TIMEOUT_MS;
+    config.max_retry_attempts = CONFIG_WIFI_TOOL_MAX_RETRY_ATTEMPTS;
+    config.retry_delay_ms = CONFIG_WIFI_TOOL_RETRY_DELAY_MS;
     config.auto_reconnect = true;
     config.enable_ap_fallback = true;
     
@@ -374,6 +381,10 @@ esp_err_t wifi_tool_start_auto_connection(wifi_tool_handle_t handle)
     
     ESP_LOGI(TAG, "Starting automatic WiFi connection (%d networks available)", ctx->config.network_count);
     
+    // Reset network index to start from first network (essential for multi-network iteration)
+    ctx->current_network_index = 0;
+    ctx->retry_count = 0;
+    
     // Start STA mode which will automatically trigger connection attempt
     return wifi_tool_start_sta(handle);
 }
@@ -530,16 +541,34 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             };
             publish_wifi_event(ctx, WIFI_TOOL_EVENT_STA_DISCONNECTED, &wifi_event);
             
-            // Handle reconnection
+            // Handle reconnection - try same network again
             if (ctx->config.auto_reconnect && ctx->retry_count < ctx->config.max_retry_attempts) {
                 ctx->retry_count++;
                 ESP_LOGI(TAG, "Retrying connection (%d/%d)", ctx->retry_count, ctx->config.max_retry_attempts);
                 vTaskDelay(pdMS_TO_TICKS(ctx->config.retry_delay_ms));
                 esp_wifi_connect();
-            } else if (ctx->config.enable_ap_fallback) {
-                ESP_LOGI(TAG, "Max retries reached, starting AP mode");
-                xEventGroupSetBits(ctx->wifi_event_group, WIFI_FAIL_BIT);
-                start_ap_mode(ctx);
+            } else {
+                // Max retries for current network reached - try next network
+                ctx->current_network_index++;
+                ctx->retry_count = 0; // Reset retry count for new network
+                
+                if (ctx->current_network_index < ctx->config.network_count) {
+                    // Try next network in the list
+                    ESP_LOGI(TAG, "Trying next network (%d/%d)", 
+                             ctx->current_network_index + 1, ctx->config.network_count);
+                    vTaskDelay(pdMS_TO_TICKS(ctx->config.retry_delay_ms));
+                    try_connect_next_network(ctx);
+                } else if (ctx->config.enable_ap_fallback) {
+                    // All networks exhausted - start AP mode
+                    ESP_LOGI(TAG, "All networks failed, starting AP mode");
+                    xEventGroupSetBits(ctx->wifi_event_group, WIFI_FAIL_BIT);
+                    start_ap_mode(ctx);
+                } else {
+                    // No AP fallback - reset to first network and stop
+                    ESP_LOGI(TAG, "All networks failed, no AP fallback configured");
+                    ctx->current_network_index = 0;
+                    xEventGroupSetBits(ctx->wifi_event_group, WIFI_FAIL_BIT);
+                }
             }
             break;
         }

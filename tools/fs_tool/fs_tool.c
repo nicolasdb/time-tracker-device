@@ -2,7 +2,7 @@
  * @file fs_tool.c
  * @brief MCP-Inspired Filesystem Tool Implementation
  * 
- * Self-contained LittleFS management with embedded esp_littlefs component.
+ * Self-contained LittleFS management with managed joltwallet/littlefs component.
  * Provides JSON config/log APIs for other tools, eliminating direct filesystem coupling.
  * Follows MCP patterns with handle-based lifecycle and event publishing.
  */

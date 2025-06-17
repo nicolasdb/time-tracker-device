@@ -2,13 +2,13 @@
 
 ## Overview
 
-The `fs_tool` is a self-contained MCP-style tool that provides persistent storage management for ESP32-C3 devices. It embeds the `esp_littlefs` component and offers JSON configuration/log APIs for other tools, eliminating direct filesystem coupling.
+The `fs_tool` is a self-contained MCP-style tool that provides persistent storage management for ESP32-C3 devices. It uses the managed `joltwallet/littlefs` component and offers JSON configuration/log APIs for other tools, eliminating direct filesystem coupling.
 
 ## Key Features
 
 - **MCP Architecture**: Handle-based lifecycle, event publishing, capabilities discovery
 - **JSON APIs**: Simplified config/log storage for other tools
-- **Self-Contained**: Embedded esp_littlefs component, no external dependencies
+- **Self-Contained**: Uses managed joltwallet/littlefs component via idf_component.yml
 - **Space Monitoring**: Automatic disk usage tracking with low-space warnings
 - **Atomic Operations**: Safe file operations with temporary files and atomic rename
 - **Health Monitoring**: Periodic filesystem health checks
@@ -30,8 +30,8 @@ The `fs_tool` is a self-contained MCP-style tool that provides persistent storag
 Higher-level tools (webhook_tool, wifi_tool, etc.)
     ↓ (use fs_tool APIs)
 fs_tool 
-    ↓ (embeds)
-esp_littlefs component
+    ↓ (uses via idf_component.yml)
+joltwallet/littlefs managed component
     ↓ (uses)
 ESP32 partition system
 ```

@@ -10,6 +10,12 @@ dependencies:
     source:
       type: idf
     version: 5.4.1
-manifest_hash: 13561f0221b26d571d88e77a94e553a52dc1167ab26091d8b47f1bbbc12618fa
+  joltwallet/littlefs:
+    component_hash: null
+    source:
+      path: /home/nicolas/github/time-tracker-device/managed_components/joltwallet__littlefs
+      type: local
+    version: 1.20.0
+manifest_hash: bb879c0c53cb661b9e9e21d7dd0010b33824cd2b5f5211fae2aa71d903e8dc12
 target: esp32c3
 version: 1.0.0

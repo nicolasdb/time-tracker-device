@@ -4,7 +4,7 @@
  * 
  * Self-contained LittleFS management tool providing JSON config/log APIs.
  * Other tools depend on fs_tool for persistent storage instead of direct filesystem calls.
- * Follows MCP patterns with handle-based lifecycle and embedded esp_littlefs component.
+ * Follows MCP patterns with handle-based lifecycle and managed joltwallet/littlefs component.
  */
 
 #ifndef FS_TOOL_H

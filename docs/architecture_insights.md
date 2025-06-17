@@ -27,6 +27,46 @@ tool_capabilities_t tool_get_capabilities(tool_handle_t handle);
 esp_err_t tool_get_status(tool_handle_t handle, tool_status_t *status);
 ```
 
+## Phase 5.1: Multi-Network WiFi Architecture Fix
+
+### **Critical WiFi Network Iteration Bug (FIXED)**
+
+**Problem**: WiFi tool only tried first network, never iterated through multiple SSIDs.
+
+**Root Cause**: Missing network index advancement in disconnect handler:
+```c
+// BROKEN: Only retried same network
+esp_wifi_connect(); // Always tries current_network_index (stuck at 0)
+```
+
+**Solution**: Proper multi-network iteration logic:
+```c
+// FIXED: Try next network when current fails
+ctx->current_network_index++;
+ctx->retry_count = 0; // Reset for new network
+
+if (ctx->current_network_index < ctx->config.network_count) {
+    ESP_LOGI(TAG, "Trying next network (%d/%d)", 
+             ctx->current_network_index + 1, ctx->config.network_count);
+    try_connect_next_network(ctx);
+} else if (ctx->config.enable_ap_fallback) {
+    ESP_LOGI(TAG, "All networks failed, starting AP mode");
+    start_ap_mode(ctx);
+}
+```
+
+**Essential Initialization**: Always reset network index on auto-connection:
+```c
+esp_err_t wifi_tool_start_auto_connection(wifi_tool_handle_t handle) {
+    // CRITICAL: Reset to start from first network
+    ctx->current_network_index = 0;
+    ctx->retry_count = 0;
+    return wifi_tool_start_sta(handle);
+}
+```
+
+**Impact**: Device now works seamlessly across multiple locations (home/office/coworking).
+
 ### **Event-Driven Communication (Critical)**
 ```c
 // Tools publish events, others subscribe (no direct coupling)
@@ -297,6 +337,79 @@ esp_err_t feedback_tool_set_state_simple(handle, state) {
         feedback_tool_clear_state(handle, FEEDBACK_STATE_BOOTING);
         feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTING);
         feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTED);
+
+---
+
+## **🔧 IoT Device Kconfig Best Practices**
+
+### **✅ ESSENTIAL: Kconfig for Field-Critical Settings**
+```c
+// ✅ CORRECT: Network connectivity affects field deployment
+menu "WiFi Tool Configuration"
+    config WIFI_TOOL_MAX_RETRY_ATTEMPTS
+        int "Maximum WiFi connection retry attempts"
+        default 3  # Short for testing, configurable for production
+        range 1 10
+
+    config WIFI_TOOL_CONNECT_TIMEOUT_MS
+        int "WiFi connection timeout per attempt (milliseconds)"
+        default 10000  # Quick fallback for development
+        range 3000 60000
+endmenu
+
+// ✅ CORRECT: Hardware pins must match physical wiring
+config FEEDBACK_TOOL_LED_GPIO
+    int "WS2812B LED GPIO Pin"
+    default 7  # Hardware-specific
+    range 0 48
+```
+
+### **❌ WRONG: Runtime Settings in Kconfig**
+```c
+// ❌ WRONG: User preferences should be runtime configurable
+config WEBHOOK_TOOL_DEFAULT_URL
+    string "Default webhook URL"
+    default "https://api.example.com/webhook"  # ❌ Business logic, not hardware
+
+// ❌ WRONG: Temporary service configuration
+config WEBSERVER_TOOL_PORT
+    int "HTTP server port"
+    default 80  # ❌ Only used during AP mode, runtime is better
+```
+
+### **🏗️ IoT Kconfig Classification**
+
+**✅ USE KCONFIG FOR:**
+1. **Hardware Dependencies** - GPIO pins, SPI hosts, I2C addresses
+2. **Network Critical** - Connection timeouts, retry limits, fallback timing
+3. **Memory Constraints** - Stack sizes, queue sizes, buffer limits
+4. **Security Compile-Time** - Encryption keys, authentication modes
+
+**❌ AVOID KCONFIG FOR:**
+1. **User Preferences** - URLs, credentials, business configuration
+2. **Runtime Services** - Temporary server settings, dynamic behavior
+3. **Development Options** - Debug flags that bloat production builds
+4. **Complex Business Logic** - Should be in JSON config files
+
+### **📱 Headless IoT Golden Rules**
+
+1. **"Can this change in the field without reflashing firmware?"** → Runtime config
+2. **"Does this affect initial connectivity/hardware interface?"** → Kconfig
+3. **"Is this a user preference or business setting?"** → JSON config file
+4. **"Does this impact memory/performance optimization?"** → Kconfig
+
+### **🔍 Current Tool Analysis**
+
+**✅ GOOD Examples:**
+- `feedback_tool` - LED GPIO, brightness, stack sizes (hardware-dependent)
+- `rfid_tool` - SPI pins, module selection (hardware interface)
+- `wifi_tool` - Retry/timeout for connectivity (field-critical)
+
+**⚠️ QUESTIONABLE Examples:**
+- `webhook_tool` - Default URL, log retention (should be runtime)
+- `fs_tool` - Mount point path (could be runtime)
+
+**📊 Recommendation**: Keep current tool Kconfigs as-is (functional), but future tools should follow stricter guidelines
     }
     return feedback_tool_set_state(handle, state, priority, duration);
 }

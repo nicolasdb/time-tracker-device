@@ -652,6 +652,13 @@ static feedback_priority_t get_state_default_priority(feedback_state_t state)
             }
             
         case 0x0100: // WiFi states
+            switch (state) {
+                case FEEDBACK_STATE_WIFI_AP_MODE:
+                    return FEEDBACK_PRIORITY_HIGH; // AP mode should override connecting state
+                default:
+                    return FEEDBACK_PRIORITY_MEDIUM;
+            }
+            
         case 0x0200: // Time states
         case 0x0500: // Webserver states
             return FEEDBACK_PRIORITY_MEDIUM;
