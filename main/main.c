@@ -18,6 +18,7 @@
 #include "fs_tool.h"
 #include "webhook_tool.h"
 #include "webserver_tool.h"
+#include "ntp_tool.h"
 
 static const char *TAG = "MCP_ORCHESTRATOR";
 
@@ -28,9 +29,10 @@ static rfid_tool_handle_t rfid_tool = NULL;
 static fs_tool_handle_t fs_tool = NULL;
 static webhook_tool_handle_t webhook_tool = NULL;
 static webserver_tool_handle_t webserver_tool = NULL;
+static ntp_tool_handle_t ntp_tool = NULL;
 
 // MCP Task configuration
-#define MCP_TASK_STACK_SIZE 8192   // Adequate stack for 5-tool init + dashboard
+#define MCP_TASK_STACK_SIZE 8192   // Adequate stack for 8-component init + dashboard
 #define MCP_TASK_PRIORITY   5      // Normal priority
 
 // =========================================================================
@@ -64,6 +66,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             if (webserver_tool) {
                 ESP_LOGI(TAG, "🌐 Stopping webserver - WiFi connected");
                 webserver_tool_stop(webserver_tool);
+            }
+            // Trigger NTP sync on WiFi connection (Phase 5.2)
+            if (ntp_tool) {
+                ESP_LOGI(TAG, "🕐 WiFi connected - triggering NTP time sync");
+                ntp_tool_sync_now(ntp_tool);
             }
             break;
             
@@ -240,6 +247,23 @@ static void mcp_init_task(void *arg)
     webserver_tool_capabilities_t webserver_caps = webserver_tool_get_capabilities(webserver_tool);
     ESP_LOGI(TAG, "Webserver Capabilities: 0x%02X", webserver_caps);
     
+    // Initialize ntp_tool with MCP configuration pattern (Phase 5.2)
+    ntp_tool_config_t ntp_config = ntp_tool_create_default_config();
+    
+    ntp_tool = ntp_tool_init(&ntp_config);
+    if (!ntp_tool) {
+        ESP_LOGE(TAG, "Failed to initialize ntp tool");
+        return;
+    }
+    
+    // Display ntp_tool information (MCP discovery pattern)
+    ESP_LOGI(TAG, "NTP Tool: %s v%s", 
+             ntp_tool_get_id(), 
+             ntp_tool_get_version());
+    
+    ntp_tool_capabilities_t ntp_caps = ntp_tool_get_capabilities(ntp_tool);
+    ESP_LOGI(TAG, "NTP Capabilities: 0x%02X", ntp_caps);
+    
     // =========================================================================
     // Phase 3C+3B: Enhanced MCP Self-Test Sequence with Visual Feedback
     // =========================================================================
@@ -248,25 +272,25 @@ static void mcp_init_task(void *arg)
     
     // Show booting state
     feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_BOOTING);
-    ESP_LOGI(TAG, "🔄 Starting 7-tool system initialization...");
+    ESP_LOGI(TAG, "🔄 Starting 8-component system initialization...");
     vTaskDelay(pdMS_TO_TICKS(1500));
     
     // Test 1: Tool Registry System
-    ESP_LOGI(TAG, "📋 TEST 1/7: Tool Registry System");
+    ESP_LOGI(TAG, "📋 TEST 1/8: Tool Registry System");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_START, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     feedback_tool_validate_init_step(feedback_tool, "Tool Registry", true);
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 2: Feedback Tool (Self-Test)
-    ESP_LOGI(TAG, "💡 TEST 2/7: feedback_tool (LED Visual Feedback)");
+    ESP_LOGI(TAG, "💡 TEST 2/8: feedback_tool (LED Visual Feedback)");
     feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_WIFI_CONNECTING); // Show blinking pattern
     vTaskDelay(pdMS_TO_TICKS(1000));
     feedback_tool_validate_init_step(feedback_tool, "feedback_tool", feedback_tool != NULL);
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 3: WiFi Tool
-    ESP_LOGI(TAG, "📶 TEST 3/7: wifi_tool (Network Connectivity)");
+    ESP_LOGI(TAG, "📶 TEST 3/8: wifi_tool (Network Connectivity)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_WIFI_PREP, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     wifi_tool_status_t wifi_status;
@@ -275,7 +299,7 @@ static void mcp_init_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 4: RFID Tool
-    ESP_LOGI(TAG, "🏷️  TEST 4/7: rfid_tool (RC522 RFID Scanner)");
+    ESP_LOGI(TAG, "🏷️  TEST 4/8: rfid_tool (RC522 RFID Scanner)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_RFID, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     rfid_tool_status_t rfid_status;
@@ -284,7 +308,7 @@ static void mcp_init_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 5: Filesystem Tool
-    ESP_LOGI(TAG, "💾 TEST 5/7: fs_tool (LittleFS Persistent Storage)");
+    ESP_LOGI(TAG, "💾 TEST 5/8: fs_tool (LittleFS Persistent Storage)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_FS, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     fs_tool_status_t fs_status;
@@ -297,7 +321,7 @@ static void mcp_init_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 6: Webhook Tool
-    ESP_LOGI(TAG, "🌐 TEST 6/7: webhook_tool (HTTP Event Transmission)");
+    ESP_LOGI(TAG, "🌐 TEST 6/8: webhook_tool (HTTP Event Transmission)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_WEBHOOK, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     webhook_tool_status_t webhook_status;
@@ -306,7 +330,7 @@ static void mcp_init_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(700));
     
     // Test 7: Webserver Tool
-    ESP_LOGI(TAG, "🌐 TEST 7/7: webserver_tool (AP Mode Configuration Interface)");
+    ESP_LOGI(TAG, "🌐 TEST 7/8: webserver_tool (AP Mode Configuration Interface)");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_WEBSERVER_STARTING, FEEDBACK_PRIORITY_MEDIUM, 1000);
     vTaskDelay(pdMS_TO_TICKS(800));
     webserver_tool_status_t webserver_status;
@@ -314,8 +338,17 @@ static void mcp_init_task(void *arg)
     feedback_tool_validate_init_step(feedback_tool, "webserver_tool", webserver_test_ok);
     vTaskDelay(pdMS_TO_TICKS(700));
     
+    // Test 8: NTP Tool (Phase 5.2)
+    ESP_LOGI(TAG, "🕐 TEST 8/8: ntp_tool (NTP Time Synchronization)");
+    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_START, FEEDBACK_PRIORITY_MEDIUM, 1000);
+    vTaskDelay(pdMS_TO_TICKS(800));
+    ntp_tool_status_t ntp_status;
+    bool ntp_test_ok = (ntp_tool_get_status(ntp_tool, &ntp_status) == ESP_OK && ntp_status.is_initialized);
+    feedback_tool_validate_init_step(feedback_tool, "ntp_tool", ntp_test_ok);
+    vTaskDelay(pdMS_TO_TICKS(700));
+    
     // All tests complete - celebrate with success pattern
-    ESP_LOGI(TAG, "🎉 All 7 tools initialized successfully!");
+    ESP_LOGI(TAG, "🎉 All 8 components initialized successfully!");
     feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_COMPLETE, FEEDBACK_PRIORITY_HIGH, 2000);
     vTaskDelay(pdMS_TO_TICKS(2500));
     

@@ -1,17 +1,21 @@
 # What is SPR? (Sparse Priming Representation)
-*Essential reading for anyone working with this project's documentation*
+
+> *Essential reading for anyone working with this project's documentation*
 
 ## Quick Overview
+
 **SPR** compresses verbose explanations into dense, scannable patterns that preserve all essential information. Instead of writing 50-line explanations repeatedly, we create 5-line compressed blocks that experienced developers can rapidly expand into full context.
 
 ## SPR Format Rules
 
 ### Basic Structure
-```
+
+```txt
 CATEGORY: keyword1-description|keyword2-description|keyword3-description
 ```
 
 ### Separator Meanings
+
 - **Pipe (|)** = separate related concepts
 - **Hyphen (-)** = connects problem-solution pairs  
 - **Colon (:)** = starts category grouping
@@ -19,7 +23,8 @@ CATEGORY: keyword1-description|keyword2-description|keyword3-description
 
 ## Real Example from This Project
 
-### Before SPR (50+ lines):
+### Before SPR (50+ lines)
+
 ```markdown
 ### Common ESP32 Fixes
 
@@ -48,7 +53,8 @@ tool initialization sequences.
 [... continues for 30+ more lines]
 ```
 
-### After SPR (4 lines):
+### After SPR (4 lines)
+
 ```markdown
 ## ESP32 Critical Solutions [SPR]
 STRING: snprintf-not-strncpy|buffer-safety|avoid-stringop-truncation
@@ -59,13 +65,15 @@ EVENTS: no-vTaskDelay|immediate-return|event-loop-safe|no-blocking-handlers
 
 ## How to Read SPR
 
-### Mental Expansion Process:
+### Mental Expansion Process
+
 1. **See category**: `STRING:` → "This is about string handling"
 2. **Read pattern**: `snprintf-not-strncpy` → "Use snprintf, not strncpy"  
 3. **Add context**: `buffer-safety` → "Because of buffer safety concerns"
 4. **Full reconstruction**: "Use snprintf() instead of strncpy() for buffer safety and to avoid stringop-truncation warnings"
 
-### Practice Examples:
+### Practice Examples
+
 ```markdown
 TOOLS: feedback(0x1F)|wifi(0x7F)|rfid(0x6F)
 → "Tools in system: feedback_tool with capabilities 0x1F, wifi_tool with 0x7F, rfid_tool with 0x6F"
@@ -79,14 +87,16 @@ HANDLE: tool_init→context→tool_deinit|no-static-globals
 
 ## When to Use SPR vs. Detailed Documentation
 
-### ✅ USE SPR FOR:
+### ✅ USE SPR FOR
+
 - **Repeated patterns** across multiple tools/phases
 - **Critical fixes** that apply broadly (like ESP32 solutions)
 - **Architecture principles** used throughout project
 - **Status updates** that follow consistent format
 - **Validation results** with standard structure
 
-### ❌ DON'T USE SPR FOR:
+### ❌ DON'T USE SPR FOR
+
 - **Complex code examples** requiring exact syntax
 - **Unique debugging sessions** specific to one issue
 - **Detailed implementation guides** for new team members
@@ -95,24 +105,27 @@ HANDLE: tool_init→context→tool_deinit|no-static-globals
 
 ## SPR Vocabulary for This Project
 
-### Core MCP Concepts:
-```
+### Core MCP Concepts
+
+```txt
 HANDLE: tool_init→context→tool_deinit|no-static-globals|opaque-pointers
 EVENTS: publish-subscribe|ESP_EVENT_POST|no-coupling|immediate-return
 REGISTRY: capabilities-bitmask|metadata-discovery|tool-version|health-status
 LIFECYCLE: init→register→subscribe→operate→publish→deinit
 ```
 
-### ESP32 Standards:
-```
+### ESP32 Standards
+
+```txt
 STRING: snprintf-not-strncpy|buffer-safety|avoid-truncation
 FORMAT: PRIu32-macros|inttypes-include|proper-specifiers
 MEMORY: 8192-stack|handle-context|no-leaks|partition-planning
 BUILD: private-includes|managed-deps|platformio-flags|self-contained
 ```
 
-### Project States:
-```
+### Project States
+
+```txt
 COMPLETE: phase-name|feature-achieved|validation-status
 VALIDATED: hardware-config|duration|performance-metrics|operation-stability
 NEXT: target-phase|dependencies|success-criteria
@@ -121,19 +134,22 @@ TOOLS: tool-name(capabilities)|status|integration-level
 
 ## Working with SPR Documentation
 
-### Reading SPR Files:
+### Reading SPR Files
+
 1. **Scan categories** to find relevant section
 2. **Expand keywords** mentally based on context
 3. **Reference archives** when full detail needed
 4. **Use cross-references** to related SPR blocks
 
-### Updating SPR Files:
+### Updating SPR Files
+
 1. **Check existing patterns** before adding new information
 2. **Extend categories** rather than replacing them
 3. **Maintain vocabulary consistency** with existing blocks
 4. **Archive detailed logs** while keeping SPR summary
 
-### Creating New SPR Blocks:
+### Creating New SPR Blocks
+
 1. **Identify repeated pattern** across multiple instances
 2. **Extract core concepts** into keyword format
 3. **Test readability** - can others expand the pattern?
@@ -141,14 +157,16 @@ TOOLS: tool-name(capabilities)|status|integration-level
 
 ## Benefits of SPR in This Project
 
-### Before SPR (Problems):
+### Before SPR (Problems)
+
 - 2,800+ lines of documentation to maintain
 - Critical information scattered across multiple files
 - Redundant explanations in every phase report
 - Difficult to find specific technical fixes quickly
 - Documentation growing larger with each development phase
 
-### After SPR (Solutions):
+### After SPR (Solutions)
+
 - 500 lines of active documentation (82% reduction)
 - Patterns immediately scannable and recognizable
 - Single source of truth for technical knowledge
@@ -157,8 +175,9 @@ TOOLS: tool-name(capabilities)|status|integration-level
 
 ## Quick Reference Card
 
-### SPR Reading Cheat Sheet:
-```
+### SPR Reading Cheat Sheet
+
+```txt
 CATEGORY: concept1|concept2|concept3
          ↑        ↑       ↑        ↑
     Group type   Main    Related  Additional
@@ -170,7 +189,8 @@ feature(value) = "Feature has specific value"
 status|duration|result = "Three related pieces of information"
 ```
 
-### Most Common Patterns:
+### Most Common Patterns
+
 - `tool-name(capabilities)` = Tool with specific capability bitmask
 - `phase-X.Y-complete` = Development phase finished
 - `hardware|duration|status` = Validation results summary
@@ -178,4 +198,4 @@ status|duration|result = "Three related pieces of information"
 - `concept1→concept2→concept3` = Process flow or sequence
 
 ---
-*This SPR system enables 82% documentation reduction while preserving 100% of critical information*
+> *This SPR system enables 82% documentation reduction while preserving 100% of critical information*

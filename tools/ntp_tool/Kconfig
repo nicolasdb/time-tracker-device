@@ -1,0 +1,55 @@
+menu "NTP Tool Configuration"
+
+    config NTP_TOOL_DEFAULT_SYNC_INTERVAL
+        int "Default sync interval (seconds)"
+        range 60 86400
+        default 3600
+        help
+            Default automatic synchronization interval in seconds.
+            Range: 60 seconds (1 minute) to 86400 seconds (24 hours).
+
+    config NTP_TOOL_DEFAULT_TIMEOUT
+        int "Default sync timeout (milliseconds)"
+        range 1000 30000
+        default 10000
+        help
+            Default timeout for NTP synchronization requests in milliseconds.
+
+    config NTP_TOOL_MAX_RETRY_ATTEMPTS
+        int "Maximum retry attempts"
+        range 1 10
+        default 3
+        help
+            Maximum number of retry attempts for failed NTP synchronization.
+
+    config NTP_TOOL_RETRY_DELAY
+        int "Retry delay (milliseconds)"
+        range 500 10000
+        default 2000
+        help
+            Delay between retry attempts in milliseconds.
+
+    config NTP_TOOL_DEFAULT_TIMEZONE
+        string "Default timezone"
+        default "UTC0"
+        help
+            Default timezone string (POSIX format).
+            Examples:
+            - UTC0 (UTC)
+            - EST5EDT,M3.2.0,M11.1.0 (US Eastern)
+            - PST8PDT,M3.2.0,M11.1.0 (US Pacific)
+
+    config NTP_TOOL_EVENT_TASK_STACK_SIZE
+        int "Event task stack size"
+        range 2048 8192
+        default 4096
+        help
+            Stack size for NTP tool event handling task.
+
+    config NTP_TOOL_ENABLE_DEBUG_LOGS
+        bool "Enable debug logging"
+        default n
+        help
+            Enable detailed debug logging for NTP tool operations.
+
+endmenu

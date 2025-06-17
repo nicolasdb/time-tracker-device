@@ -10,6 +10,8 @@ idf_component_register(
         rfid_tool
         fs_tool
         webhook_tool
+        webserver_tool
+        ntp_tool
 )
 
 # Create LittleFS partition image from data directory  
