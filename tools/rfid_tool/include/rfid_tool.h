@@ -23,7 +23,7 @@ extern "C" {
 // =============================================================================
 
 #define RFID_TOOL_ID            "rfid"
-#define RFID_TOOL_VERSION       "2.0.0"
+#define RFID_TOOL_VERSION       "2.1.0"
 #define RFID_TOOL_DESCRIPTION   "MCP-inspired RFID tag detection tool with RC522 support"
 
 #define RFID_TOOL_MAX_UID_LEN   10
@@ -65,7 +65,8 @@ typedef struct {
     uint8_t uid_length;                     ///< Length of UID in bytes
     uint8_t sak;                            ///< SAK (Select Acknowledge) value
     rfid_tag_type_t type;                   ///< Tag type
-    uint32_t detection_time;                ///< Detection timestamp (ms)
+    uint32_t detection_time;                ///< Detection timestamp (ms) - legacy
+    uint64_t boot_timestamp_us;             ///< Boot counter timestamp (microseconds) - Phase 5.4
 } rfid_tag_info_t;
 
 /**
@@ -224,6 +225,14 @@ rfid_tool_capabilities_t rfid_tool_get_capabilities(rfid_tool_handle_t handle);
  * @return ESP_OK on success, error code on failure
  */
 esp_err_t rfid_tool_get_status(rfid_tool_handle_t handle, rfid_tool_status_t *status);
+
+/**
+ * @brief Set FS tool handle for event logging (Phase 5.4)
+ * @param handle RFID tool handle
+ * @param fs_tool_handle FS tool handle (or NULL to disable logging)
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t rfid_tool_set_fs_tool_handle(rfid_tool_handle_t handle, void* fs_tool_handle);
 
 /**
  * @brief Get tool registry entry (MCP pattern)

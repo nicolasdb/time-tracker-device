@@ -27,6 +27,7 @@ idf_component_register(
         esp_system
     PRIV_REQUIRES
         esp_common
+        esp_timer
 )
 
 # Add compile options to ensure internal headers are found

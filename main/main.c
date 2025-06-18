@@ -107,8 +107,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 static void rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
     if (event_base != RFID_TOOL_EVENTS || !feedback_tool) {
+        ESP_LOGD(TAG, "📡 RFID event handler: base mismatch or no feedback_tool");
         return;
     }
+    
+    ESP_LOGI(TAG, "📡 RFID event received: event_id=%ld", event_id);
     
     switch (event_id) {
         case RFID_TOOL_EVENT_TAG_DETECTED:
@@ -122,6 +125,7 @@ static void rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             break;
             
         default:
+            ESP_LOGW(TAG, "📡 Unknown RFID event: %ld", event_id);
             break;
     }
 }

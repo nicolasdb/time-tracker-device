@@ -380,6 +380,7 @@ esp_err_t feedback_tool_set_state_simple(feedback_tool_handle_t handle, feedback
         feedback_tool_clear_state(handle, FEEDBACK_STATE_BOOTING);
         feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTING);
         feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTED);
+        feedback_tool_clear_state(handle, FEEDBACK_STATE_TAG_DETECTED);  // Phase 5.4: Clear RFID states
     }
     
     return feedback_tool_set_state(handle, state, priority, duration);

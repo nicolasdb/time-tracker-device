@@ -9,11 +9,13 @@
 #include "rfid_tool.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <string.h>
 #include <stdio.h>
+#include <inttypes.h>
 
 static const char *TAG = "RFID_TOOL";
 
@@ -22,6 +24,9 @@ static const char *TAG = "RFID_TOOL";
 // =============================================================================
 
 ESP_EVENT_DEFINE_BASE(RFID_TOOL_EVENTS);
+
+// External tool events for Phase 5.4 integration
+ESP_EVENT_DECLARE_BASE(FS_TOOL_EVENTS);
 
 // =============================================================================
 // MCP Tool Configuration & Constants
@@ -71,6 +76,13 @@ struct rfid_tool_context {
     // Thread Safety
     SemaphoreHandle_t state_mutex;
     bool publish_events;
+    
+    // Phase 5.4: FS Tool Integration for Event Logging
+    void* fs_tool_handle;                   ///< FS tool handle for event logging (opaque pointer)
+    bool enable_event_logging;              ///< Enable event logging to filesystem
+    
+    // State Change Detection (Clean approach)
+    char previous_tag_id[21];               ///< Last recorded tag state (empty = no tag)
 };
 
 // =============================================================================
@@ -83,6 +95,7 @@ static spi_host_device_t get_spi_host(int config_host);
 static void update_tag_type(rfid_tag_info_t *tag_info, uint8_t sak);
 #endif
 static esp_err_t publish_rfid_event(struct rfid_tool_context *ctx, rfid_tool_event_type_t type, void* data);
+static esp_err_t log_hardware_event(struct rfid_tool_context *ctx, const char* tag_id, bool tag_present, uint64_t boot_timestamp_us);
 
 // =============================================================================
 // MCP Tool Interface Implementation
@@ -364,6 +377,30 @@ esp_err_t rfid_tool_get_status(rfid_tool_handle_t handle, rfid_tool_status_t *st
     return ESP_ERR_TIMEOUT;
 }
 
+/**
+ * @brief Set FS tool handle for event logging (Phase 5.4)
+ */
+esp_err_t rfid_tool_set_fs_tool_handle(rfid_tool_handle_t handle, void* fs_tool_handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct rfid_tool_context *ctx = (struct rfid_tool_context *)handle;
+    
+    if (xSemaphoreTake(ctx->state_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        ctx->fs_tool_handle = fs_tool_handle;
+        ctx->enable_event_logging = (fs_tool_handle != NULL);
+        xSemaphoreGive(ctx->state_mutex);
+        
+        ESP_LOGI(TAG, "FS tool handle %s for event logging", 
+                 fs_tool_handle ? "enabled" : "disabled");
+        return ESP_OK;
+    }
+    
+    return ESP_ERR_TIMEOUT;
+}
+
 // =============================================================================
 // RFID Operations Implementation
 // =============================================================================
@@ -586,7 +623,7 @@ static spi_host_device_t get_spi_host(int config_host) {
 }
 
 /**
- * @brief RC522 PICC state changed event handler (Enhanced from legacy)
+ * @brief RC522 PICC state changed event handler (Phase 5.4: Clean state-change detection)
  */
 static void rfid_picc_state_changed_handler(void *arg, esp_event_base_t base, int32_t event_id, void *data)
 {
@@ -594,93 +631,75 @@ static void rfid_picc_state_changed_handler(void *arg, esp_event_base_t base, in
     rc522_picc_state_changed_event_t *event = (rc522_picc_state_changed_event_t *)data;
     rc522_picc_t *picc = event->picc;
     
-    ESP_LOGI(TAG, "RC522 event received: picc state changed from %d to %d", 
-             event->old_state, picc->state);
+    if (xSemaphoreTake(ctx->state_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to acquire mutex for state change");
+        return;
+    }
     
+    // Extract current tag ID (empty string if no tag)
+    char current_tag_id[21] = {0};
     if (picc->state == RC522_PICC_STATE_ACTIVE) {
-        // Tag detected
-        ESP_LOGI(TAG, "Tag detected");
-        rc522_picc_print(picc);
+        // Tag present - extract UID
+        rfid_tag_info_t temp_tag = {0};
+        temp_tag.uid_length = picc->uid.length <= RFID_TOOL_MAX_UID_LEN ? 
+                              picc->uid.length : RFID_TOOL_MAX_UID_LEN;
+        memcpy(temp_tag.uid, picc->uid.value, temp_tag.uid_length);
+        rfid_tool_tag_uid_to_string(&temp_tag, current_tag_id, sizeof(current_tag_id));
         
-        if (xSemaphoreTake(ctx->state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            // Create tag data
-            memset(&ctx->current_tag, 0, sizeof(ctx->current_tag));
-            
-            // Copy the UID from rc522_picc_uid_t structure
-            ctx->current_tag.uid_length = picc->uid.length <= RFID_TOOL_MAX_UID_LEN ? 
-                                         picc->uid.length : RFID_TOOL_MAX_UID_LEN;
-            memcpy(ctx->current_tag.uid, picc->uid.value, ctx->current_tag.uid_length);
-            
-            // Copy SAK and update tag type
-            ctx->current_tag.sak = picc->sak;
-            update_tag_type(&ctx->current_tag, picc->sak);
-            
-            // Set detection time
-            ctx->current_tag.detection_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
-            
-            ctx->tag_present = true;
+        // Update current_tag for compatibility (legacy code expects this)
+        ctx->current_tag = temp_tag;
+        ctx->current_tag.detection_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        ctx->current_tag.boot_timestamp_us = esp_timer_get_time();
+        ctx->current_tag.sak = picc->sak;
+        update_tag_type(&ctx->current_tag, picc->sak);
+        ctx->tag_present = true;
+    } else {
+        // No tag present - current_tag_id remains empty
+        ctx->tag_present = false;
+    }
+    
+    // State change detection: only log when tag_id changes
+    if (strcmp(ctx->previous_tag_id, current_tag_id) != 0) {
+        uint64_t timestamp_us = esp_timer_get_time();
+        
+        if (strlen(current_tag_id) > 0) {
+            // Tag insertion: current_tag_id has value
             ctx->tag_detection_count++;
             
-            xSemaphoreGive(ctx->state_mutex);
-            
-            // Create event data for publishing
+            // Publish legacy event for compatibility
             rfid_tool_event_t rfid_event = {
                 .type = RFID_TOOL_EVENT_TAG_DETECTED,
                 .data.tag_info.tag = ctx->current_tag
             };
-            
-            // Generate UID string
-            rfid_tool_tag_uid_to_string(&ctx->current_tag, 
-                                       rfid_event.data.tag_info.uid_string, 
-                                       sizeof(rfid_event.data.tag_info.uid_string));
-            
-            // Publish event for other tools
+            strncpy(rfid_event.data.tag_info.uid_string, current_tag_id, sizeof(rfid_event.data.tag_info.uid_string));
+            ESP_LOGI(TAG, "🏷️ Tag detected, publishing TAG_DETECTED event");
             publish_rfid_event(ctx, RFID_TOOL_EVENT_TAG_DETECTED, &rfid_event);
             
-            // Also post to internal event loop for compatibility
-            esp_err_t ret = esp_event_post_to(ctx->event_loop, 
-                             RFID_TOOL_EVENTS, 
-                             RFID_TOOL_EVENT_TAG_DETECTED, 
-                             &rfid_event, 
-                             sizeof(rfid_event), 
-                             pdMS_TO_TICKS(100));
+            // Log hardware state change
+            log_hardware_event(ctx, current_tag_id, true, timestamp_us);
             
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "Failed to post tag detected event: %s", esp_err_to_name(ret));
-            }
-        }
-    }
-    else if (picc->state == RC522_PICC_STATE_IDLE && event->old_state >= RC522_PICC_STATE_ACTIVE) {
-        // Tag removed
-        ESP_LOGI(TAG, "Tag removed");
-        
-        if (xSemaphoreTake(ctx->state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            ctx->tag_present = false;
-            memset(&ctx->current_tag, 0, sizeof(ctx->current_tag));
+        } else {
+            // Tag removal: use previous_tag_id (current is empty)
             
-            xSemaphoreGive(ctx->state_mutex);
-            
-            // Create event data
+            // Publish legacy event for compatibility
             rfid_tool_event_t rfid_event = {
                 .type = RFID_TOOL_EVENT_TAG_REMOVED
             };
-            
-            // Publish event for other tools
+            ESP_LOGI(TAG, "🏷️ Tag removed, publishing TAG_REMOVED event");
             publish_rfid_event(ctx, RFID_TOOL_EVENT_TAG_REMOVED, &rfid_event);
             
-            // Also post to internal event loop for compatibility
-            esp_err_t ret = esp_event_post_to(ctx->event_loop, 
-                             RFID_TOOL_EVENTS, 
-                             RFID_TOOL_EVENT_TAG_REMOVED, 
-                             &rfid_event, 
-                             sizeof(rfid_event), 
-                             pdMS_TO_TICKS(100));
-            
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "Failed to post tag removed event: %s", esp_err_to_name(ret));
-            }
+            // Log hardware state change (with previous tag_id)
+            log_hardware_event(ctx, ctx->previous_tag_id, false, timestamp_us);
         }
+        
+        ESP_LOGI(TAG, "State change detected: '%s' → '%s'", 
+                 ctx->previous_tag_id, current_tag_id);
+        
+        // Update previous state for next comparison
+        strncpy(ctx->previous_tag_id, current_tag_id, sizeof(ctx->previous_tag_id));
     }
+    
+    xSemaphoreGive(ctx->state_mutex);
 }
 #endif
 
@@ -698,9 +717,41 @@ static esp_err_t publish_rfid_event(struct rfid_tool_context *ctx, rfid_tool_eve
         memcpy(&event, data, sizeof(rfid_tool_event_t));
     }
     
-    ESP_LOGD(TAG, "Publishing RFID event: %s", rfid_tool_event_to_string(type));
+    ESP_LOGI(TAG, "📡 Publishing RFID event: %s", rfid_tool_event_to_string(type));
     
     return esp_event_post(RFID_TOOL_EVENTS, type, &event, sizeof(event), 0);
+}
+
+/**
+ * @brief Log RFID hardware state change to filesystem via FS tool (Phase 5.4)
+ */
+static esp_err_t log_hardware_event(struct rfid_tool_context *ctx, const char* tag_id, bool tag_present, uint64_t boot_timestamp_us)
+{
+    if (!ctx->enable_event_logging || !ctx->fs_tool_handle) {
+        return ESP_OK; // Logging disabled or no FS tool available
+    }
+
+    // Create JSON log entry with clean state model
+    char log_entry[256];
+    int ret = snprintf(log_entry, sizeof(log_entry), 
+                      "{\"tag_id\":\"%s\",\"tag_present\":%s,\"boot_timestamp_us\":%" PRIu64 "}",
+                      tag_id, tag_present ? "true" : "false", boot_timestamp_us);
+    
+    if (ret >= sizeof(log_entry)) {
+        ESP_LOGW(TAG, "Log entry truncated");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Publish event to FS tool for logging via event system (MCP pattern)
+    esp_err_t event_ret = esp_event_post(FS_TOOL_EVENTS, 0, log_entry, strlen(log_entry) + 1, 0);
+    
+    if (event_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to post FS logging event: %s", esp_err_to_name(event_ret));
+    } else {
+        ESP_LOGI(TAG, "Hardware state change: tag_id='%s' present=%s", tag_id, tag_present ? "true" : "false");
+    }
+    
+    return event_ret;
 }
 
 #if CONFIG_RFID_MODULE_RC522
