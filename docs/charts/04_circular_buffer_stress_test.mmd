@@ -1,0 +1,118 @@
+sequenceDiagram
+    participant User
+    participant RFID as rfid_tool  
+    participant Main as main.c
+    participant Buffer as circular_buffer
+    participant FS as fs_tool
+    participant Debug as debug_tool
+    participant LED as feedback_tool
+    
+    Note over User: Rapid tag operations - stress test
+    
+    User->>RFID: Places tag "3A:FD:90:2E"
+    RFID->>RFID: Debounce check: OK (> 5s since last)
+    RFID->>Buffer: Add event to circular buffer [0]
+    Buffer->>Buffer: write_index = 1, count = 1
+    RFID->>Main: 🔔 Event ready
+    
+    Note over User: 0.5 seconds later...
+    User->>RFID: Removes same tag
+    RFID->>RFID: Debounce check: OK (different event type)
+    RFID->>Buffer: Add event to circular buffer [1]  
+    Buffer->>Buffer: write_index = 2, count = 2
+    RFID->>Main: 🔔 Event ready
+    
+    Note over User: 0.2 seconds later (too fast!)
+    User->>RFID: Places tag again
+    RFID->>RFID: Debounce check: FAIL (< 5s since placement)
+    RFID->>Main: 🟡 Duplicate ignored
+    Main->>LED: feedback_show_state(IGNORED)
+    LED->>LED: Quick yellow flash
+    
+    Note over User: 1 second later...
+    User->>RFID: Different tag "2B:AE:CD:9F"
+    RFID->>RFID: Debounce check: OK (different tag)
+    RFID->>Buffer: Add event to circular buffer [2]
+    Buffer->>Buffer: write_index = 3, count = 3
+    RFID->>Main: 🔔 Event ready
+    
+    loop Main Processing Loop
+        Main->>Buffer: buffer_get_event(&event)
+        Buffer->>Main: Event [0]: tag_placed "3A:FD:90:2E"
+        Buffer->>Buffer: read_index = 1, count = 2
+        
+        Main->>Main: Process event through payload_tool
+        Main->>FS: fs_write_payload(&payload)
+        FS->>Main: ✅ Saved
+        
+        Main->>Debug: debug_update_dashboard()
+        Debug->>Debug: Show "Events: 3 queued, 1 processed"
+        Debug->>Debug: Show buffer status: "●●●○○...○"
+        
+        Main->>Buffer: buffer_get_event(&event)  
+        Buffer->>Main: Event [1]: tag_removed "3A:FD:90:2E"
+        Buffer->>Buffer: read_index = 2, count = 1
+        
+        Main->>Main: Process removal event
+        Main->>FS: fs_write_payload(&payload)
+        FS->>Main: ✅ Saved
+        
+        Main->>Debug: debug_update_dashboard()
+        Debug->>Debug: Show "Events: 1 queued, 2 processed"
+        Debug->>Debug: Show buffer status: "●○○○○...○"
+        
+        Main->>Buffer: buffer_get_event(&event)
+        Buffer->>Main: Event [2]: tag_placed "2B:AE:CD:9F"  
+        Buffer->>Buffer: read_index = 3, count = 0
+        
+        Main->>Main: Process new tag event
+        Main->>FS: fs_write_payload(&payload)
+        FS->>Main: ✅ Saved
+        
+        Main->>Debug: debug_update_dashboard()
+        Debug->>Debug: Show "Events: 0 queued, 3 processed"
+        Debug->>Debug: Show buffer status: "○○○○○...○"
+        
+        Main->>Buffer: buffer_get_event(&event)
+        Buffer->>Main: false (buffer empty)
+        
+        Note over Main: All events processed
+    end
+    
+    alt Extreme Stress Case: Buffer Overflow
+        Note over User: Rapidly scanning 60 tags in 10 seconds
+        
+        loop 60 rapid scans
+            User->>RFID: Scan tag (various IDs)
+            RFID->>RFID: Some pass debounce, some don't
+            
+            alt Valid event (passes debounce)
+                RFID->>Buffer: Add to circular buffer
+                
+                alt Buffer not full (count < 50)
+                    Buffer->>Buffer: Normal add: write_index++, count++
+                else Buffer full (count = 50)
+                    Buffer->>Buffer: Overwrite oldest: read_index++
+                    Buffer->>Buffer: Set overflow flag = true
+                    Note over Buffer: Oldest event lost!
+                end
+                
+                RFID->>Main: 🔔 Event ready
+            else Invalid (debounce fail)
+                RFID->>Main: 🟡 Ignored
+            end
+        end
+        
+        Main->>Debug: debug_update_dashboard()
+        Debug->>Debug: Update robot face: (ಠ_ಠ)っ (stress!)
+        Debug->>Debug: Show "BUFFER OVERFLOW - Data lost!"
+        Debug->>Debug: Show "Processing: 50 events..."
+        
+        Main->>LED: feedback_show_state(BUFFER_OVERFLOW)
+        LED->>LED: RED fast blinks (critical warning)
+        
+        Note over Main: System continues, processes recent 50 events
+        Note over Main: Oldest events lost but system stable
+    end
+    
+    Note over Main: Stress test complete - system survived!
