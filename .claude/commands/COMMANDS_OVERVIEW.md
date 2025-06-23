@@ -1,103 +1,242 @@
-# Claude Commands Overview [SPR-Optimized]
+# Claude Commands Overview - Ecosystem-Aware Development
 
-> _Custom commands optimized for SPR documentation system_
+> _Custom commands optimized for ecosystem-aware development with process map authority_
 
-## Active Commands
+## 🌐 **Ecosystem-Aware Commands**
 
-### 🔄 `/spr_reload` - Context Loading
-**Purpose**: Instantly load compressed SPR knowledge for development session
+### 🔗 `/ecosystem_context` - Complete System Understanding
+**Purpose**: Load full cognitive wealth ecosystem context before architectural changes
 
-**When to use**: 
-- Starting new development session
-- After breaks or context switches
-- When you need full project context quickly
+**When to use**:
+- Starting work on ecosystem integration features
+- Before making interface or protocol changes
+- When developing webhook server components
+- Before implementing new data formats
 
 **What it loads**:
-- Current phase status and next steps
-- MCP architecture patterns 
-- ESP32 critical fixes
-- Build system knowledge
-- Tool ecosystem capabilities
+- Complete 5-layer system architecture (Device → Server → DB → Agents → Interface)
+- Device role and responsibilities in ecosystem
+- Integration requirements (webhook API, database schema)
+- Agent system expectations and data needs
+- Architectural patterns (fs_tool similarity with webhook server)
 
 ---
 
-### 📊 `/phase_status` - Quick Health Check  
-**Purpose**: Current development status using SPR compressed information
+### 🗺️ `/map_check` - Process Map Validation
+**Purpose**: Validate proposed changes against constitutional process maps
 
-**When to use**:
-- Before starting new development work
-- To check what's complete vs. what's next
-- Validate system health and readiness
-- Quick phase reference
+**Usage**: `/map_check <component> <proposed_change>`
 
-**What it shows**:
-- Current phase completion status
-- Tool ecosystem operational status
-- Hardware validation results
-- Next priority tasks and dependencies
-- Critical checks before continuing
+**Examples**:
+```bash
+/map_check "rfid_tool" "add_session_metadata"
+/map_check "fs_tool" "implement_event_logging"
+/map_check "main.c" "modify_boot_sequence"
+```
 
----
-
-### 💾 `/save_progress` - Phase Completion
-**Purpose**: Update documentation when phase milestones achieved
-
-**When to use**:
-- Completing development phases
-- After major breakthroughs or fixes
-- When significant validation achieved
-
-**What it updates**:
-- Phase status in SPR format
-- Hardware validation results
-- Current project state
-- Archives detailed logs appropriately
-
-**Usage**: `/save_progress "Phase 5.2" COMPLETE "ntp_tool working, WiFi-triggered sync validated"`
+**Validation checks**:
+- Process map sequence compliance
+- Tool boundary respect
+- Ecosystem integration compatibility
+- State machine adherence
+- Error handling preservation
 
 ---
 
-## Recommended Workflow
+## 📊 **Development Commands**
 
-### 🚀 Starting Development Session:
-1. `/spr_reload` → Load full context
-2. `/phase_status` → Check current status and next steps
-3. Begin development work
-4. `/save_progress` → Update when milestones achieved
+### 🔄 `/spr_reload` - Context Loading
+**Purpose**: Load SPR-compressed knowledge for development session
 
-### 🔄 During Development:
-- `/phase_status` → Quick health checks
-- `/spr_reload` → If context needs refreshing
-
-### 📈 Completing Phases:
-- `/save_progress <phase> COMPLETE <achievement>` → Document progress
-- `/phase_status` → Confirm next phase readiness
-
-## Benefits of SPR Command System
-
-### ⚡ Speed:
-- **Context loading**: Seconds vs. minutes
-- **Status checking**: SPR format vs. verbose logs
-- **Information density**: 10x more information per line
-
-### 🎯 Focus:
-- Commands designed for active development
-- SPR compressed knowledge immediately usable
-- Clear next-step identification
-
-### 📚 Knowledge Preservation:
-- All detailed information preserved in archives
-- SPR maintains critical patterns and fixes
-- Cross-references when detail needed
-
-## File References
-
-Commands reference these SPR files:
-- `docs/project/current_state_spr.md` → Phase status
-- `docs/project/hardware_validation_spr.md` → Test results  
-- `docs/architecture/mcp_patterns_spr.md` → Architecture patterns
-- `docs/architecture/esp32_solutions_spr.md` → Platform fixes
-- `docs/archive/` → Detailed historical logs
+**Enhanced with ecosystem awareness**:
+- Current phase status with ecosystem integration readiness
+- MCP architecture patterns with ecosystem context
+- ESP32 solutions with webhook compatibility notes
+- Tool ecosystem capabilities with integration status
 
 ---
-*Optimized for 82% documentation reduction while maintaining full development efficiency*
+
+### 📈 `/phase_status` - Development Health Check
+**Purpose**: Current status with ecosystem integration tracking
+
+**Enhanced information**:
+- Development phase completion with ecosystem readiness
+- Tool operational status with integration capabilities
+- Hardware validation with ecosystem testing results
+- Next steps with ecosystem impact assessment
+
+---
+
+### 💾 `/save_progress` - Ecosystem-Aware Progress Tracking
+**Purpose**: Document milestones with ecosystem integration impact
+
+**Enhanced tracking**:
+```bash
+/save_progress "Phase 5.5" COMPLETE "FS logging implemented - webhook server integration ready"
+```
+
+**What it now tracks**:
+- Device development milestones
+- Ecosystem integration readiness
+- Interface compatibility status
+- Cross-layer impact assessment
+
+---
+
+## 🔄 **Recommended Ecosystem-Aware Workflow**
+
+### 🚀 **Starting Major Development**
+1. **`/ecosystem_context`** → Understand device role in complete system
+2. **`/spr_reload`** → Load technical patterns and current state
+3. **`/phase_status`** → Check integration readiness and dependencies
+
+### 🛠️ **Making Architectural Changes**
+1. **`/map_check "component" "change"`** → Validate against process maps
+2. **Review ecosystem impact** → Consider webhook server, agents, database
+3. **Proceed only if approved** → Follow process map authority strictly
+
+### 🔄 **During Development**
+- **`/phase_status`** → Quick health checks with ecosystem status
+- **`/map_check`** → Validate any architectural adjustments
+- **Follow process maps** → Use charts/ as constitutional authority
+
+### 📈 **Completing Phases**
+- **`/save_progress "phase" COMPLETE "achievement with ecosystem impact"`** → Document progress
+- **`/ecosystem_context`** → Verify readiness for next ecosystem layer
+
+---
+
+## 🎯 **Process Map Authority Integration**
+
+### **Constitutional Documents**
+Process maps in `/docs/charts/` are **constitutional authority** - they define fundamental system behavior:
+
+- **`01_boot_sequence.mmd`** → Initialization order and grace period
+- **`02_tag_placement_happy_path.mmd`** → Normal operation flow
+- **`03_error_handling_http_retry.mmd`** → Error recovery patterns
+- **`04_circular_buffer_stress_test.mmd`** → Load handling
+- **`05_device_state_machine.mmd`** → Overall behavior states
+
+### **Process Map Rules**
+1. **NEVER modify** during implementation phases
+2. **ALWAYS validate** changes with `/map_check`
+3. **FOLLOW exactly** during development
+4. **UPDATE only** during architectural reviews
+
+### **Ecosystem Integration Rules**
+1. **Consider impact** on webhook server interface
+2. **Maintain compatibility** with agent expectations
+3. **Preserve data formats** for database integration
+4. **Document changes** with ecosystem context
+
+---
+
+## 🏗️ **Benefits of Ecosystem-Aware Command System**
+
+### ⚡ **Enhanced Development Speed**
+- **Context loading**: Ecosystem awareness in seconds
+- **Validation**: Automated process map compliance checking
+- **Integration**: Clear understanding of system dependencies
+- **Documentation**: Automatic ecosystem impact tracking
+
+### 🎯 **Improved Development Quality**
+- **Architectural consistency**: Process maps prevent drift
+- **Integration confidence**: Ecosystem requirements validated
+- **Future-proofing**: Changes consider multi-layer impact
+- **Knowledge preservation**: SPR maintains institutional memory
+
+### 🔄 **Sustainable Development Process**
+- **Session continuity**: Commands bridge context windows
+- **Team scalability**: Clear workflows for collaboration
+- **System evolution**: Ecosystem context guides decisions
+- **Documentation quality**: Automatic consistency maintenance
+
+---
+
+## 📚 **Command Reference Files**
+
+### **Core Command Documentation**
+- `/ecosystem_context.md` → Complete system understanding
+- `/map_check.md` → Process map validation guide
+- `/save_progress.md` → Progress tracking workflow
+- `/spr_reload.md` → Context loading mechanism
+
+### **Supporting Documentation**
+- `docs/ecosystem/` → Complete system architecture
+- `docs/charts/` → Process maps (constitutional authority)
+- `docs/architecture/` → SPR-compressed technical patterns
+- `docs/project/` → Current development status
+
+### **Integration Points**
+- `CLAUDE.md` → Development context and authority
+- `README.md` → Ecosystem discovery for new developers
+- `docs/SPR_GUIDE.md` → SPR format explanation
+- `docs/MAINTENANCE_STRATEGY.md` → Documentation workflow
+
+---
+
+## 🚀 **Advanced Usage Patterns**
+
+### **Ecosystem Integration Development**
+```bash
+# 1. Load complete system context
+/ecosystem_context
+
+# 2. Validate major interface changes  
+/map_check "http_tool" "modify_webhook_payload"
+
+# 3. Implement following process maps exactly
+# [Development work with constitutional authority]
+
+# 4. Track progress with ecosystem impact
+/save_progress "Phase 5.5" COMPLETE "Webhook integration ready"
+```
+
+### **Cross-Layer Development Planning**
+```bash
+# 1. Understand current ecosystem readiness
+/phase_status
+
+# 2. Load patterns for next layer development
+/spr_reload
+
+# 3. Plan changes considering system impact
+/ecosystem_context
+
+# 4. Validate architectural decisions
+/map_check "system" "add_webhook_server"
+```
+
+### **Multi-Session Development Continuity**
+```bash
+# Session Start
+/ecosystem_context     # System understanding
+/spr_reload           # Technical patterns
+/phase_status         # Current state
+
+# Session Work
+/map_check [changes]  # Validate decisions
+
+# Session End  
+/save_progress [milestone] # Document with ecosystem context
+```
+
+---
+
+## 🔮 **Future Command Evolution**
+
+### **Planned Enhancements**
+- **`/integration_test`** → Validate device-server communication
+- **`/ecosystem_deploy`** → Coordinate multi-layer deployments  
+- **`/agent_compatibility`** → Check data format compatibility
+- **`/system_health`** → Monitor complete ecosystem status
+
+### **Advanced Automation**
+- **Automatic validation** → Process map compliance checking
+- **Integration testing** → End-to-end ecosystem validation
+- **Configuration management** → Dynamic settings coordination
+- **Performance monitoring** → Cross-layer optimization
+
+---
+
+*Optimized for ecosystem-aware development with constitutional process map authority and seamless multi-layer integration*
