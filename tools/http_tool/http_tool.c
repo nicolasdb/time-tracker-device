@@ -1,14 +1,15 @@
 /**
- * @file webhook_tool.c
- * @brief MCP-Inspired Webhook Tool Implementation
+ * @file http_tool.c
+ * @brief MCP-Inspired HTTP Tool Implementation
  * 
  * Event-driven HTTP webhook transmission tool that subscribes to WiFi and RFID events.
  * Breaks coupling violations by using ESP event system instead of direct function calls.
  * Follows MCP patterns with handle-based lifecycle and capabilities discovery.
+ * Renamed from webhook_tool per process map authority.
  */
 
-#include "webhook_tool.h"
-#include "wifi_tool.h"
+#include "http_tool.h"
+#include "network_tool.h"
 #include "rfid_tool.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -20,7 +21,7 @@
 #include <stdio.h>
 #include <time.h>
 
-static const char *TAG = "WEBHOOK_TOOL";
+static const char *TAG = "HTTP_TOOL";
 
 // =============================================================================
 // Tool Context Structure (Handle-based Design)
@@ -29,10 +30,10 @@ static const char *TAG = "WEBHOOK_TOOL";
 /**
  * @brief Webhook Tool Context (Replaces static globals)
  */
-struct webhook_tool_context {
+struct http_tool_context {
     // MCP Tool Metadata
-    webhook_tool_config_t config;
-    webhook_tool_capabilities_t capabilities;
+    http_tool_config_t config;
+    http_tool_capabilities_t capabilities;
     bool is_initialized;
     bool is_active;
     uint32_t uptime_start;
@@ -47,7 +48,7 @@ struct webhook_tool_context {
     uint32_t last_retry_time;
     
     // Event Queue & Retry Management
-    webhook_event_t events[WEBHOOK_TOOL_MAX_LOG_ENTRIES];
+    webhook_event_t events[HTTP_TOOL_MAX_LOG_ENTRIES];
     uint16_t event_count;
     QueueHandle_t event_queue;
     TaskHandle_t transmission_task;
@@ -66,58 +67,58 @@ struct webhook_tool_context {
 // Forward Declarations
 // =============================================================================
 
-static esp_err_t webhook_tool_load_log_internal(webhook_tool_handle_t handle);
-static esp_err_t webhook_tool_save_log_internal(webhook_tool_handle_t handle);
-static esp_err_t webhook_tool_send_http_request(webhook_tool_handle_t handle, const webhook_event_t *event);
-static char* webhook_tool_create_json_payload(webhook_tool_handle_t handle, const webhook_event_t *event);
-static void webhook_tool_format_iso_time(char* buf, size_t buf_size, time_t time_value);
-// static esp_err_t webhook_tool_create_default_log(webhook_tool_handle_t handle); // TODO: Implement if needed
+static esp_err_t http_tool_load_log_internal(http_tool_handle_t handle);
+static esp_err_t http_tool_save_log_internal(http_tool_handle_t handle);
+static esp_err_t http_tool_send_http_request(http_tool_handle_t handle, const webhook_event_t *event);
+static char* http_tool_create_json_payload(http_tool_handle_t handle, const webhook_event_t *event);
+static void http_tool_format_iso_time(char* buf, size_t buf_size, time_t time_value);
+// static esp_err_t http_tool_create_default_log(http_tool_handle_t handle); // TODO: Implement if needed
 
 // Event Handlers (Breaking coupling violations)
-static void webhook_tool_wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-static void webhook_tool_rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static void http_tool_wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static void http_tool_rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 
 // Background transmission task
-static void webhook_tool_transmission_task(void* pvParameters);
+static void http_tool_transmission_task(void* pvParameters);
 
 // HTTP event handler
-static esp_err_t webhook_tool_http_event_handler(esp_http_client_event_t *evt);
+static esp_err_t http_tool_http_event_handler(esp_http_client_event_t *evt);
 
 // =============================================================================
 // MCP Tool Interface Implementation
 // =============================================================================
 
-const char* webhook_tool_get_id(void) {
-    return WEBHOOK_TOOL_ID;
+const char* http_tool_get_id(void) {
+    return HTTP_TOOL_ID;
 }
 
-const char* webhook_tool_get_version(void) {
-    return WEBHOOK_TOOL_VERSION;
+const char* http_tool_get_version(void) {
+    return HTTP_TOOL_VERSION;
 }
 
-webhook_tool_config_t webhook_tool_create_default_config(void) {
-    webhook_tool_config_t config = {
-        .webhook_url = CONFIG_WEBHOOK_TOOL_DEFAULT_URL,
+http_tool_config_t http_tool_create_default_config(void) {
+    http_tool_config_t config = {
+        .webhook_url = CONFIG_HTTP_TOOL_DEFAULT_URL,
         .device_id = "ESP32_DEVICE",
-        .timeout_ms = CONFIG_WEBHOOK_TOOL_REQUEST_TIMEOUT_MS,
-        .max_retries = CONFIG_WEBHOOK_TOOL_MAX_RETRIES,
-        .retry_delay_ms = CONFIG_WEBHOOK_TOOL_RETRY_DELAY_MS,
+        .timeout_ms = CONFIG_HTTP_TOOL_REQUEST_TIMEOUT_MS,
+        .max_retries = CONFIG_HTTP_TOOL_MAX_RETRIES,
+        .retry_delay_ms = CONFIG_HTTP_TOOL_RETRY_DELAY_MS,
         .exponential_backoff = false,
-        .max_queue_size = CONFIG_WEBHOOK_TOOL_MAX_QUEUE_SIZE,
+        .max_queue_size = CONFIG_HTTP_TOOL_MAX_QUEUE_SIZE,
         .queue_timeout_ms = 1000,
         .config_file_path = "/littlefs/webhook_config.json",
         .log_file_path = "/littlefs/webhook_log.json",
         .auto_save_log = true,
         .auto_process_pending = true,
-        .subscribe_to_rfid_events = true,
+        .subscribe_to_rfid_events = false,  // DISABLED - Process Map Authority: use http_send_payload() instead
         .subscribe_to_wifi_events = true,
         .publish_events = true,
-        .event_task_stack_size = CONFIG_WEBHOOK_TOOL_TASK_STACK_SIZE,
+        .event_task_stack_size = CONFIG_HTTP_TOOL_TASK_STACK_SIZE,
     };
     return config;
 }
 
-webhook_tool_handle_t webhook_tool_init(const webhook_tool_config_t *config) {
+http_tool_handle_t http_tool_init(const http_tool_config_t *config) {
     ESP_LOGI(TAG, "Initializing webhook tool with MCP architecture");
     
     if (config == NULL) {
@@ -126,19 +127,19 @@ webhook_tool_handle_t webhook_tool_init(const webhook_tool_config_t *config) {
     }
     
     // Allocate context (handle-based design)
-    webhook_tool_handle_t handle = calloc(1, sizeof(struct webhook_tool_context));
+    http_tool_handle_t handle = calloc(1, sizeof(struct http_tool_context));
     if (handle == NULL) {
         ESP_LOGE(TAG, "Failed to allocate webhook tool context");
         return NULL;
     }
     
     // Copy configuration
-    memcpy(&handle->config, config, sizeof(webhook_tool_config_t));
+    memcpy(&handle->config, config, sizeof(http_tool_config_t));
     
     // Initialize MCP metadata
-    handle->capabilities = WEBHOOK_CAP_HTTP_POST | WEBHOOK_CAP_RETRY_QUEUE | 
-                          WEBHOOK_CAP_EVENT_SUBSCRIBE | WEBHOOK_CAP_PERSISTENT_LOG |
-                          WEBHOOK_CAP_JSON_PAYLOAD | WEBHOOK_CAP_AUTO_TRANSMISSION;
+    handle->capabilities = HTTP_CAP_HTTP_POST | HTTP_CAP_RETRY_QUEUE | 
+                          HTTP_CAP_EVENT_SUBSCRIBE | HTTP_CAP_PERSISTENT_LOG |
+                          HTTP_CAP_JSON_PAYLOAD | HTTP_CAP_AUTO_TRANSMISSION;
     
     handle->is_initialized = false;
     handle->is_active = false;
@@ -172,39 +173,42 @@ webhook_tool_handle_t webhook_tool_init(const webhook_tool_config_t *config) {
     }
     
     // Load persistent event log
-    webhook_tool_load_log_internal(handle);
+    http_tool_load_log_internal(handle);
     
     // Subscribe to WiFi events (BREAKING COUPLING VIOLATION)
     if (handle->config.subscribe_to_wifi_events) {
         esp_err_t err = esp_event_handler_instance_register(
-            WIFI_TOOL_EVENTS, ESP_EVENT_ANY_ID,
-            webhook_tool_wifi_event_handler, handle,
+            NETWORK_TOOL_EVENTS, ESP_EVENT_ANY_ID,
+            http_tool_wifi_event_handler, handle,
             &handle->wifi_event_handler
         );
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Failed to register WiFi event handler: %s", esp_err_to_name(err));
         } else {
-            ESP_LOGI(TAG, "✅ Subscribed to WIFI_TOOL_EVENTS (coupling broken!)");
+            ESP_LOGI(TAG, "✅ Subscribed to NETWORK_TOOL_EVENTS (coupling broken!)");
         }
     }
     
-    // Subscribe to RFID events (AUTO-TRANSMISSION)
+    // RFID event subscription DISABLED per Process Map Authority
+    // Main.c will call http_send_payload() directly instead of auto-subscription
     if (handle->config.subscribe_to_rfid_events) {
+        ESP_LOGW(TAG, "⚠️ RFID auto-subscription is DEPRECATED - use http_send_payload() instead");
+        // Legacy support: keep for backward compatibility but log warning
         esp_err_t err = esp_event_handler_instance_register(
             RFID_TOOL_EVENTS, ESP_EVENT_ANY_ID,
-            webhook_tool_rfid_event_handler, handle,
+            http_tool_rfid_event_handler, handle,
             &handle->rfid_event_handler
         );
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Failed to register RFID event handler: %s", esp_err_to_name(err));
-        } else {
-            ESP_LOGI(TAG, "✅ Subscribed to RFID_TOOL_EVENTS (auto-transmission enabled!)");
         }
+    } else {
+        ESP_LOGI(TAG, "✅ RFID auto-subscription DISABLED - Process Map compliant");
     }
     
     // Create background transmission task
     BaseType_t task_result = xTaskCreate(
-        webhook_tool_transmission_task,
+        http_tool_transmission_task,
         "webhook_task",
         handle->config.event_task_stack_size,
         handle,
@@ -214,7 +218,7 @@ webhook_tool_handle_t webhook_tool_init(const webhook_tool_config_t *config) {
     
     if (task_result != pdPASS) {
         ESP_LOGE(TAG, "Failed to create transmission task");
-        webhook_tool_deinit(handle);
+        http_tool_deinit(handle);
         return NULL;
     }
     
@@ -229,7 +233,7 @@ webhook_tool_handle_t webhook_tool_init(const webhook_tool_config_t *config) {
     return handle;
 }
 
-esp_err_t webhook_tool_deinit(webhook_tool_handle_t handle) {
+esp_err_t http_tool_deinit(http_tool_handle_t handle) {
     if (handle == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -240,12 +244,12 @@ esp_err_t webhook_tool_deinit(webhook_tool_handle_t handle) {
     
     // Save log before cleanup
     if (handle->config.auto_save_log) {
-        webhook_tool_save_log_internal(handle);
+        http_tool_save_log_internal(handle);
     }
     
     // Unregister event handlers
     if (handle->wifi_event_handler) {
-        esp_event_handler_instance_unregister(WIFI_TOOL_EVENTS, ESP_EVENT_ANY_ID, handle->wifi_event_handler);
+        esp_event_handler_instance_unregister(NETWORK_TOOL_EVENTS, ESP_EVENT_ANY_ID, handle->wifi_event_handler);
     }
     if (handle->rfid_event_handler) {
         esp_event_handler_instance_unregister(RFID_TOOL_EVENTS, ESP_EVENT_ANY_ID, handle->rfid_event_handler);
@@ -275,14 +279,14 @@ esp_err_t webhook_tool_deinit(webhook_tool_handle_t handle) {
     return ESP_OK;
 }
 
-webhook_tool_capabilities_t webhook_tool_get_capabilities(webhook_tool_handle_t handle) {
+http_tool_capabilities_t http_tool_get_capabilities(http_tool_handle_t handle) {
     if (handle == NULL) {
         return 0;
     }
     return handle->capabilities;
 }
 
-esp_err_t webhook_tool_get_status(webhook_tool_handle_t handle, webhook_tool_status_t *status) {
+esp_err_t http_tool_get_status(http_tool_handle_t handle, http_tool_status_t *status) {
     if (handle == NULL || status == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -306,16 +310,16 @@ esp_err_t webhook_tool_get_status(webhook_tool_handle_t handle, webhook_tool_sta
     return ESP_OK;
 }
 
-const webhook_tool_registry_t* webhook_tool_get_registry_entry(void) {
-    static const webhook_tool_registry_t registry = {
-        .tool_id = WEBHOOK_TOOL_ID,
-        .version = WEBHOOK_TOOL_VERSION,
-        .description = WEBHOOK_TOOL_DESCRIPTION,
-        .capabilities = WEBHOOK_CAP_HTTP_POST | WEBHOOK_CAP_RETRY_QUEUE | 
-                       WEBHOOK_CAP_EVENT_SUBSCRIBE | WEBHOOK_CAP_PERSISTENT_LOG |
-                       WEBHOOK_CAP_JSON_PAYLOAD | WEBHOOK_CAP_AUTO_TRANSMISSION,
-        .init_func = webhook_tool_init,
-        .deinit_func = webhook_tool_deinit,
+const http_tool_registry_t* http_tool_get_registry_entry(void) {
+    static const http_tool_registry_t registry = {
+        .tool_id = HTTP_TOOL_ID,
+        .version = HTTP_TOOL_VERSION,
+        .description = HTTP_TOOL_DESCRIPTION,
+        .capabilities = HTTP_CAP_HTTP_POST | HTTP_CAP_RETRY_QUEUE | 
+                       HTTP_CAP_EVENT_SUBSCRIBE | HTTP_CAP_PERSISTENT_LOG |
+                       HTTP_CAP_JSON_PAYLOAD | HTTP_CAP_AUTO_TRANSMISSION,
+        .init_func = http_tool_init,
+        .deinit_func = http_tool_deinit,
     };
     return &registry;
 }
@@ -328,18 +332,18 @@ const webhook_tool_registry_t* webhook_tool_get_registry_entry(void) {
  * @brief WiFi Event Handler - Replaces direct wifi_manager_is_connected() calls
  * 🔥 FIXES COUPLING VIOLATION: Lines 352, 377 in legacy webhook_manager.c
  */
-static void webhook_tool_wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    webhook_tool_handle_t handle = (webhook_tool_handle_t)arg;
+static void http_tool_wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    http_tool_handle_t handle = (http_tool_handle_t)arg;
     
-    if (event_base != WIFI_TOOL_EVENTS || handle == NULL) {
+    if (event_base != NETWORK_TOOL_EVENTS || handle == NULL) {
         return;
     }
     
     xSemaphoreTake(handle->mutex, portMAX_DELAY);
     
     switch (event_id) {
-        case WIFI_TOOL_EVENT_STA_CONNECTED:
-        case WIFI_TOOL_EVENT_IP_ACQUIRED:
+        case NETWORK_TOOL_EVENT_STA_CONNECTED:
+        case NETWORK_TOOL_EVENT_IP_ACQUIRED:
             if (!handle->wifi_connected) {
                 handle->wifi_connected = true;
                 ESP_LOGI(TAG, "🌐 WiFi connected - processing pending webhooks");
@@ -353,18 +357,18 @@ static void webhook_tool_wifi_event_handler(void* arg, esp_event_base_t event_ba
                 
                 // Publish connectivity restored event
                 if (handle->config.publish_events) {
-                    webhook_tool_event_t pub_event = {
-                        .type = WEBHOOK_TOOL_EVENT_CONNECTIVITY_RESTORED,
+                    http_tool_event_t pub_event = {
+                        .type = HTTP_TOOL_EVENT_CONNECTIVITY_RESTORED,
                         .data.queue_info.pending_count = handle->pending_count
                     };
-                    esp_event_post(WEBHOOK_TOOL_EVENTS, WEBHOOK_TOOL_EVENT_CONNECTIVITY_RESTORED, 
+                    esp_event_post(HTTP_TOOL_EVENTS, HTTP_TOOL_EVENT_CONNECTIVITY_RESTORED, 
                                  &pub_event, sizeof(pub_event), 0);
                 }
             }
             break;
             
-        case WIFI_TOOL_EVENT_STA_DISCONNECTED:
-        case WIFI_TOOL_EVENT_IP_LOST:
+        case NETWORK_TOOL_EVENT_STA_DISCONNECTED:
+        case NETWORK_TOOL_EVENT_IP_LOST:
             if (handle->wifi_connected) {
                 handle->wifi_connected = false;
                 handle->webhook_reachable = false;
@@ -381,10 +385,10 @@ static void webhook_tool_wifi_event_handler(void* arg, esp_event_base_t event_ba
 
 /**
  * @brief RFID Event Handler - Automatic webhook transmission on tag events
- * 🎯 ENABLES AUTO-TRANSMISSION: No manual webhook_tool_send_event() calls needed
+ * 🎯 ENABLES AUTO-TRANSMISSION: No manual http_tool_send_event() calls needed
  */
-static void webhook_tool_rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    webhook_tool_handle_t handle = (webhook_tool_handle_t)arg;
+static void http_tool_rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    http_tool_handle_t handle = (http_tool_handle_t)arg;
     
     if (event_base != RFID_TOOL_EVENTS || handle == NULL || event_data == NULL) {
         return;
@@ -415,7 +419,7 @@ static void webhook_tool_rfid_event_handler(void* arg, esp_event_base_t event_ba
     }
     
     // Automatically send webhook event (no manual intervention required)
-    esp_err_t err = webhook_tool_send_event(handle, webhook_event_type, tag_uid, tag_type);
+    esp_err_t err = http_tool_send_event(handle, webhook_event_type, tag_uid, tag_type);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to auto-send webhook event: %s", esp_err_to_name(err));
     }
@@ -428,8 +432,8 @@ static void webhook_tool_rfid_event_handler(void* arg, esp_event_base_t event_ba
 /**
  * @brief Background task for processing webhook queue
  */
-static void webhook_tool_transmission_task(void* pvParameters) {
-    webhook_tool_handle_t handle = (webhook_tool_handle_t)pvParameters;
+static void http_tool_transmission_task(void* pvParameters) {
+    http_tool_handle_t handle = (http_tool_handle_t)pvParameters;
     webhook_event_t event;
     
     ESP_LOGI(TAG, "🚀 Webhook transmission task started");
@@ -438,11 +442,11 @@ static void webhook_tool_transmission_task(void* pvParameters) {
         // Wait for events in queue or timeout for periodic processing
         if (xQueueReceive(handle->event_queue, &event, pdMS_TO_TICKS(5000)) == pdTRUE) {
             // Process pending events when triggered
-            webhook_tool_process_pending(handle);
+            http_tool_process_pending(handle);
         } else {
             // Periodic processing (every 5 seconds)
             if (handle->wifi_connected && handle->pending_count > 0) {
-                webhook_tool_process_pending(handle);
+                http_tool_process_pending(handle);
             }
         }
     }
@@ -455,7 +459,7 @@ static void webhook_tool_transmission_task(void* pvParameters) {
 // HTTP Event Handler
 // =============================================================================
 
-static esp_err_t webhook_tool_http_event_handler(esp_http_client_event_t *evt) {
+static esp_err_t http_tool_http_event_handler(esp_http_client_event_t *evt) {
     switch(evt->event_id) {
         case HTTP_EVENT_ERROR:
             ESP_LOGE(TAG, "HTTP Client Error");
@@ -476,7 +480,77 @@ static esp_err_t webhook_tool_http_event_handler(esp_http_client_event_t *evt) {
 // Webhook Operations Implementation (Ported from legacy)
 // =============================================================================
 
-esp_err_t webhook_tool_send_event(webhook_tool_handle_t handle,
+esp_err_t http_send_payload(http_tool_handle_t handle,
+                           const char* json_payload,
+                           size_t payload_length) {
+    if (handle == NULL || json_payload == NULL || payload_length == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!handle->is_initialized || !handle->is_active) {
+        ESP_LOGW(TAG, "HTTP tool not initialized or not active");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "📡 Process Map Authority: Sending formatted payload (%zu bytes)", payload_length);
+    
+    // Check WiFi connectivity
+    if (!handle->wifi_connected) {
+        ESP_LOGW(TAG, "WiFi not connected, payload transmission skipped");
+        return ESP_ERR_WIFI_NOT_CONNECT;
+    }
+    
+    // Send HTTP request directly with formatted payload
+    esp_http_client_config_t config = {
+        .url = handle->config.webhook_url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = handle->config.timeout_ms,
+        .event_handler = http_tool_http_event_handler,
+    };
+    
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == NULL) {
+        ESP_LOGE(TAG, "Failed to initialize HTTP client");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Set headers
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "User-Agent", "ESP32-TimeTracker/1.0");
+    
+    // Set POST data
+    esp_err_t err = esp_http_client_set_post_field(client, json_payload, payload_length);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set POST data: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        return err;
+    }
+    
+    // Perform HTTP request
+    ESP_LOGI(TAG, "🌐 Sending POST to %s", handle->config.webhook_url);
+    err = esp_http_client_perform(client);
+    
+    if (err == ESP_OK) {
+        int status_code = esp_http_client_get_status_code(client);
+        if (status_code >= 200 && status_code < 300) {
+            ESP_LOGI(TAG, "✅ Payload sent successfully - HTTP %d", status_code);
+            handle->success_count++;
+            handle->last_transmission_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        } else {
+            ESP_LOGW(TAG, "❌ HTTP request failed - HTTP %d", status_code);
+            handle->failed_count++;
+            err = ESP_FAIL;
+        }
+    } else {
+        ESP_LOGE(TAG, "❌ HTTP request failed: %s", esp_err_to_name(err));
+        handle->failed_count++;
+    }
+    
+    esp_http_client_cleanup(client);
+    return err;
+}
+
+esp_err_t http_tool_send_event(http_tool_handle_t handle,
                                    webhook_event_type_t event_type,
                                    const char *tag_uid,
                                    const char *tag_type) {
@@ -487,9 +561,9 @@ esp_err_t webhook_tool_send_event(webhook_tool_handle_t handle,
     xSemaphoreTake(handle->mutex, portMAX_DELAY);
     
     // If log is full, shift everything to remove oldest
-    if (handle->event_count >= WEBHOOK_TOOL_MAX_LOG_ENTRIES) {
+    if (handle->event_count >= HTTP_TOOL_MAX_LOG_ENTRIES) {
         ESP_LOGW(TAG, "Event log full, dropping oldest event");
-        for (int i = 0; i < WEBHOOK_TOOL_MAX_LOG_ENTRIES - 1; i++) {
+        for (int i = 0; i < HTTP_TOOL_MAX_LOG_ENTRIES - 1; i++) {
             handle->events[i] = handle->events[i + 1];
         }
         handle->event_count--;
@@ -524,7 +598,7 @@ esp_err_t webhook_tool_send_event(webhook_tool_handle_t handle,
     // Try to send immediately if WiFi is connected (REPLACES COUPLING VIOLATION)
     if (handle->wifi_connected) {
         ESP_LOGI(TAG, "WiFi connected, sending event immediately");
-        if (webhook_tool_send_http_request(handle, evt) == ESP_OK) {
+        if (http_tool_send_http_request(handle, evt) == ESP_OK) {
             evt->sent = true;
             handle->success_count++;
             handle->pending_count--;
@@ -540,7 +614,7 @@ esp_err_t webhook_tool_send_event(webhook_tool_handle_t handle,
     
     // Save log after adding new event
     if (handle->config.auto_save_log) {
-        webhook_tool_save_log_internal(handle);
+        http_tool_save_log_internal(handle);
     }
     
     xSemaphoreGive(handle->mutex);
@@ -548,7 +622,7 @@ esp_err_t webhook_tool_send_event(webhook_tool_handle_t handle,
     return ESP_OK;
 }
 
-esp_err_t webhook_tool_process_pending(webhook_tool_handle_t handle) {
+esp_err_t http_tool_process_pending(http_tool_handle_t handle) {
     if (handle == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -580,7 +654,7 @@ esp_err_t webhook_tool_process_pending(webhook_tool_handle_t handle) {
         if (!evt->sent && evt->attempts < handle->config.max_retries) {
             pending_count++;
             
-            if (webhook_tool_send_http_request(handle, evt) == ESP_OK) {
+            if (http_tool_send_http_request(handle, evt) == ESP_OK) {
                 evt->sent = true;
                 sent_count++;
                 handle->success_count++;
@@ -605,7 +679,7 @@ esp_err_t webhook_tool_process_pending(webhook_tool_handle_t handle) {
         
         // Save log after processing
         if (handle->config.auto_save_log) {
-            webhook_tool_save_log_internal(handle);
+            http_tool_save_log_internal(handle);
         }
     }
     
@@ -614,7 +688,7 @@ esp_err_t webhook_tool_process_pending(webhook_tool_handle_t handle) {
     return ESP_OK;
 }
 
-esp_err_t webhook_tool_get_pending_count(webhook_tool_handle_t handle, uint32_t *pending_count) {
+esp_err_t http_tool_get_pending_count(http_tool_handle_t handle, uint32_t *pending_count) {
     if (handle == NULL || pending_count == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -630,7 +704,7 @@ esp_err_t webhook_tool_get_pending_count(webhook_tool_handle_t handle, uint32_t 
 // HTTP Implementation (Ported from legacy webhook_manager)
 // =============================================================================
 
-static esp_err_t webhook_tool_send_http_request(webhook_tool_handle_t handle, const webhook_event_t *event) {
+static esp_err_t http_tool_send_http_request(http_tool_handle_t handle, const webhook_event_t *event) {
     if (event == NULL) {
         ESP_LOGE(TAG, "Event is NULL");
         return ESP_ERR_INVALID_ARG;
@@ -641,7 +715,7 @@ static esp_err_t webhook_tool_send_http_request(webhook_tool_handle_t handle, co
     char *json_payload = NULL;
     
     // Create JSON payload
-    json_payload = webhook_tool_create_json_payload(handle, event);
+    json_payload = http_tool_create_json_payload(handle, event);
     if (json_payload == NULL) {
         ESP_LOGE(TAG, "Failed to create JSON payload");
         goto cleanup;
@@ -653,7 +727,7 @@ static esp_err_t webhook_tool_send_http_request(webhook_tool_handle_t handle, co
     // Configure HTTP client
     esp_http_client_config_t config = {
         .url = handle->config.webhook_url,
-        .event_handler = webhook_tool_http_event_handler,
+        .event_handler = http_tool_http_event_handler,
         .method = HTTP_METHOD_POST,
         .timeout_ms = handle->config.timeout_ms,
     };
@@ -691,12 +765,12 @@ static esp_err_t webhook_tool_send_http_request(webhook_tool_handle_t handle, co
         
         // Publish success event
         if (handle->config.publish_events) {
-            webhook_tool_event_t pub_event = {
-                .type = WEBHOOK_TOOL_EVENT_TRANSMISSION_SUCCESS,
+            http_tool_event_t pub_event = {
+                .type = HTTP_TOOL_EVENT_TRANSMISSION_SUCCESS,
                 .data.transmission_info.status_code = status_code
             };
             snprintf(pub_event.data.transmission_info.url, sizeof(pub_event.data.transmission_info.url), "%s", handle->config.webhook_url);
-            esp_event_post(WEBHOOK_TOOL_EVENTS, WEBHOOK_TOOL_EVENT_TRANSMISSION_SUCCESS, 
+            esp_event_post(HTTP_TOOL_EVENTS, HTTP_TOOL_EVENT_TRANSMISSION_SUCCESS, 
                          &pub_event, sizeof(pub_event), 0);
         }
     } else if (status_code == 429) {
@@ -712,11 +786,11 @@ static esp_err_t webhook_tool_send_http_request(webhook_tool_handle_t handle, co
         
         // Publish failure event
         if (handle->config.publish_events) {
-            webhook_tool_event_t pub_event = {
-                .type = WEBHOOK_TOOL_EVENT_TRANSMISSION_FAILED,
+            http_tool_event_t pub_event = {
+                .type = HTTP_TOOL_EVENT_TRANSMISSION_FAILED,
                 .data.error_info.error_code = ESP_FAIL
             };
-            esp_event_post(WEBHOOK_TOOL_EVENTS, WEBHOOK_TOOL_EVENT_TRANSMISSION_FAILED, 
+            esp_event_post(HTTP_TOOL_EVENTS, HTTP_TOOL_EVENT_TRANSMISSION_FAILED, 
                          &pub_event, sizeof(pub_event), 0);
         }
     }
@@ -733,7 +807,7 @@ cleanup:
     return err;
 }
 
-static char* webhook_tool_create_json_payload(webhook_tool_handle_t handle, const webhook_event_t *event) {
+static char* http_tool_create_json_payload(http_tool_handle_t handle, const webhook_event_t *event) {
     if (event == NULL) {
         ESP_LOGE(TAG, "Null event passed to create_json_payload");
         return NULL;
@@ -765,7 +839,7 @@ static char* webhook_tool_create_json_payload(webhook_tool_handle_t handle, cons
     
     // Format timestamp
     char timestamp_str[32] = {0};
-    webhook_tool_format_iso_time(timestamp_str, sizeof(timestamp_str), (time_t)event->timestamp);
+    http_tool_format_iso_time(timestamp_str, sizeof(timestamp_str), (time_t)event->timestamp);
     
     // Create the RFID poll result object (matching server expectations)
     cJSON *rfid_poll_result = cJSON_CreateObject();
@@ -824,7 +898,7 @@ static char* webhook_tool_create_json_payload(webhook_tool_handle_t handle, cons
     return json_str;
 }
 
-static void webhook_tool_format_iso_time(char* buf, size_t buf_size, time_t time_value) {
+static void http_tool_format_iso_time(char* buf, size_t buf_size, time_t time_value) {
     struct tm timeinfo;
     localtime_r(&time_value, &timeinfo);
     strftime(buf, buf_size, "%Y-%m-%dT%H:%M:%S", &timeinfo);
@@ -834,20 +908,20 @@ static void webhook_tool_format_iso_time(char* buf, size_t buf_size, time_t time
 // Configuration & Log Management (Stubs for now)
 // =============================================================================
 
-static esp_err_t webhook_tool_load_log_internal(webhook_tool_handle_t handle) {
+static esp_err_t http_tool_load_log_internal(http_tool_handle_t handle) {
     // TODO: Implement persistent log loading from LittleFS
     ESP_LOGI(TAG, "Loading webhook event log (placeholder)");
     return ESP_OK;
 }
 
-static esp_err_t webhook_tool_save_log_internal(webhook_tool_handle_t handle) {
+static esp_err_t http_tool_save_log_internal(http_tool_handle_t handle) {
     // TODO: Implement persistent log saving to LittleFS
     ESP_LOGD(TAG, "Saving webhook event log (placeholder)");
     return ESP_OK;
 }
 
 
-esp_err_t webhook_tool_set_device_id(webhook_tool_handle_t handle, const char *device_id) {
+esp_err_t http_tool_set_device_id(http_tool_handle_t handle, const char *device_id) {
     if (handle == NULL || device_id == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -860,7 +934,7 @@ esp_err_t webhook_tool_set_device_id(webhook_tool_handle_t handle, const char *d
     return ESP_OK;
 }
 
-esp_err_t webhook_tool_check_connectivity(webhook_tool_handle_t handle) {
+esp_err_t http_tool_check_connectivity(http_tool_handle_t handle) {
     if (handle == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -877,14 +951,14 @@ esp_err_t webhook_tool_check_connectivity(webhook_tool_handle_t handle) {
 // Utility Functions
 // =============================================================================
 
-const char* webhook_tool_event_to_string(webhook_tool_event_type_t event_type) {
+const char* http_tool_event_to_string(http_tool_event_type_t event_type) {
     switch (event_type) {
-        case WEBHOOK_TOOL_EVENT_TRANSMISSION_SUCCESS: return "TRANSMISSION_SUCCESS";
-        case WEBHOOK_TOOL_EVENT_TRANSMISSION_FAILED:  return "TRANSMISSION_FAILED";
-        case WEBHOOK_TOOL_EVENT_QUEUE_FULL:           return "QUEUE_FULL";
-        case WEBHOOK_TOOL_EVENT_CONNECTIVITY_RESTORED: return "CONNECTIVITY_RESTORED";
-        case WEBHOOK_TOOL_EVENT_RETRY_EXHAUSTED:      return "RETRY_EXHAUSTED";
-        case WEBHOOK_TOOL_EVENT_CONFIG_UPDATED:       return "CONFIG_UPDATED";
+        case HTTP_TOOL_EVENT_TRANSMISSION_SUCCESS: return "TRANSMISSION_SUCCESS";
+        case HTTP_TOOL_EVENT_TRANSMISSION_FAILED:  return "TRANSMISSION_FAILED";
+        case HTTP_TOOL_EVENT_QUEUE_FULL:           return "QUEUE_FULL";
+        case HTTP_TOOL_EVENT_CONNECTIVITY_RESTORED: return "CONNECTIVITY_RESTORED";
+        case HTTP_TOOL_EVENT_RETRY_EXHAUSTED:      return "RETRY_EXHAUSTED";
+        case HTTP_TOOL_EVENT_CONFIG_UPDATED:       return "CONFIG_UPDATED";
         default: return "UNKNOWN";
     }
 }
@@ -897,7 +971,7 @@ const char* webhook_event_to_string(webhook_event_type_t event_type) {
     }
 }
 
-const char* webhook_tool_http_status_to_string(int status_code) {
+const char* http_tool_http_status_to_string(int status_code) {
     switch (status_code) {
         case 200: return "OK";
         case 201: return "Created";
@@ -917,4 +991,4 @@ const char* webhook_tool_http_status_to_string(int status_code) {
 // Event Base Definition
 // =============================================================================
 
-ESP_EVENT_DEFINE_BASE(WEBHOOK_TOOL_EVENTS);
+ESP_EVENT_DEFINE_BASE(HTTP_TOOL_EVENTS);

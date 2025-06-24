@@ -18,7 +18,7 @@ managed_components/
 
 # Third-party component internals
 
-# Documentation and mission files (context-specific)
+# Old documentation and mission files (context-specific)
 docs/archive
 
 # Data files

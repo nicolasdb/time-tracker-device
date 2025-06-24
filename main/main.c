@@ -1,66 +1,358 @@
 /*
- * MCP-Inspired Time Tracker Device - Phase 2
- * Pure Orchestrator Main using feedback_tool + wifi_tool
+ * MCP-Inspired Time Tracker Device - Process Map Compliance
+ * Boot Sequence Authority: docs/charts/01_boot_sequence.mmd
  * 
- * Demonstrates MCP tool composition patterns with multiple tools.
- * Target: ~200 lines pure orchestrator (Phase 2 goal).
+ * Implements exact process map boot sequence with tool registry.
+ * Phase 5.5: Complete architectural compliance with new payload_tool and debug_tool.
  */
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include <inttypes.h>
-#include "feedback_tool.h"
-#include "wifi_tool.h"
-#include "rfid_tool.h"
+#include <string.h>  // For memcpy
+
+// New tools per process map authority
 #include "fs_tool.h"
-#include "webhook_tool.h"
-#include "webserver_tool.h"
+#include "debug_tool.h"
+#include "feedback_tool.h"
+#include "network_tool.h"       // Network connectivity per process maps
 #include "ntp_tool.h"
+#include "payload_tool.h"
+#include "rfid_tool.h"
+#include "http_tool.h"          // HTTP transmission per process maps
+#include "webserver_tool.h"
+
+// Tool registry system
+#include "tool_registry.h"
+// cJSON for fs_tool event logging integration
+#include "cJSON.h"
 
 static const char *TAG = "MCP_ORCHESTRATOR";
 
-// Global tool handles (will be moved to tool registry in Phase 6)
-static feedback_tool_handle_t feedback_tool = NULL;
-static wifi_tool_handle_t wifi_tool = NULL;
-static rfid_tool_handle_t rfid_tool = NULL;
-static fs_tool_handle_t fs_tool = NULL;
-static webhook_tool_handle_t webhook_tool = NULL;
-static webserver_tool_handle_t webserver_tool = NULL;
-static ntp_tool_handle_t ntp_tool = NULL;
+// Process map configuration
+#define BOOT_GRACE_PERIOD_MS 5000   // 5-second grace period per process maps
+#define DASHBOARD_UPDATE_INTERVAL_MS 30000  // Dashboard update every 30 seconds
 
 // MCP Task configuration
 #define MCP_TASK_STACK_SIZE 8192   // Adequate stack for 8-component init + dashboard
 #define MCP_TASK_PRIORITY   5      // Normal priority
 
-// =========================================================================
-// Phase 4.2: Event Coordination - WiFi to Feedback Tool
-// =========================================================================
+// RFID Event Processing Task (Stack Overflow Fix)
+#define RFID_PROCESSING_TASK_STACK_SIZE 8192  // Adequate stack for HTTP operations
+#define RFID_PROCESSING_TASK_PRIORITY   4     // Higher priority than dashboard
+#define RFID_EVENT_QUEUE_SIZE          10     // Queue for RFID events
+
+// Event Processing (Simple Orchestration Only)
+// Session tracking and batching logic moved to proper tools per process maps
+
+// RFID Event Processing Queue
+static QueueHandle_t rfid_event_queue = NULL;
+static TaskHandle_t rfid_processing_task_handle = NULL;
+
+// RFID Event Queue Item (Lightweight for event handler)
+typedef struct {
+    int32_t event_id;
+    rfid_tool_event_t rfid_event;  // Copy of event data
+} queued_rfid_event_t;
+
+// Simple orchestration structures only
+
+// =============================================================================
+// Tool Interface Definitions (MCP Pattern)
+// =============================================================================
+
+// Universal tool interface for fs_tool
+static const tool_interface_t fs_tool_interface = {
+    .get_id = fs_tool_get_id,
+    .get_version = fs_tool_get_version,
+    .get_capabilities = (tool_capabilities_t (*)(void*))fs_tool_get_capabilities,
+    .get_status = (esp_err_t (*)(void*, void*))fs_tool_get_status,
+    .cleanup = (esp_err_t (*)(void*))fs_tool_deinit
+};
+
+// Universal tool interface for debug_tool
+static const tool_interface_t debug_tool_interface = {
+    .get_id = debug_tool_get_id,
+    .get_version = debug_tool_get_version,
+    .get_capabilities = (tool_capabilities_t (*)(void*))debug_tool_get_capabilities,
+    .get_status = (esp_err_t (*)(void*, void*))debug_tool_get_status,
+    .cleanup = (esp_err_t (*)(void*))debug_tool_cleanup
+};
+
+// Universal tool interface for feedback_tool
+static const tool_interface_t feedback_tool_interface = {
+    .get_id = feedback_tool_get_id,
+    .get_version = feedback_tool_get_version,
+    .get_capabilities = (tool_capabilities_t (*)(void*))feedback_tool_get_capabilities,
+    .get_status = (esp_err_t (*)(void*, void*))feedback_tool_get_status,
+    .cleanup = (esp_err_t (*)(void*))feedback_tool_deinit
+};
+
+// Universal tool interface for wifi_tool (network_tool)
+static const tool_interface_t network_tool_interface = {
+    .get_id = network_tool_get_id,
+    .get_version = network_tool_get_version,
+    .get_capabilities = (tool_capabilities_t (*)(void*))network_tool_get_capabilities,
+    .get_status = (esp_err_t (*)(void*, void*))network_tool_get_status,
+    .cleanup = (esp_err_t (*)(void*))network_tool_deinit
+};
+
+// Universal tool interface for ntp_tool
+static const tool_interface_t ntp_tool_interface = {
+    .get_id = ntp_tool_get_id,
+    .get_version = ntp_tool_get_version,
+    .get_capabilities = (tool_capabilities_t (*)(void*))ntp_tool_get_capabilities,
+    .get_status = (esp_err_t (*)(void*, void*))ntp_tool_get_status,
+    .cleanup = (esp_err_t (*)(void*))ntp_tool_deinit
+};
+
+// Universal tool interface for payload_tool
+static const tool_interface_t payload_tool_interface = {
+    .get_id = payload_tool_get_id,
+    .get_version = payload_tool_get_version,
+    .get_capabilities = (tool_capabilities_t (*)(void*))payload_tool_get_capabilities,
+    .get_status = (esp_err_t (*)(void*, void*))payload_tool_get_status,
+    .cleanup = (esp_err_t (*)(void*))payload_tool_cleanup
+};
+
+// Universal tool interface for rfid_tool
+static const tool_interface_t rfid_tool_interface = {
+    .get_id = rfid_tool_get_id,
+    .get_version = rfid_tool_get_version,
+    .get_capabilities = (tool_capabilities_t (*)(void*))rfid_tool_get_capabilities,
+    .get_status = (esp_err_t (*)(void*, void*))rfid_tool_get_status,
+    .cleanup = (esp_err_t (*)(void*))rfid_tool_deinit
+};
+
+// Universal tool interface for webhook_tool (http_tool)
+static const tool_interface_t http_tool_interface = {
+    .get_id = http_tool_get_id,
+    .get_version = http_tool_get_version,
+    .get_capabilities = (tool_capabilities_t (*)(void*))http_tool_get_capabilities,
+    .get_status = (esp_err_t (*)(void*, void*))http_tool_get_status,
+    .cleanup = (esp_err_t (*)(void*))http_tool_deinit
+};
+
+// =============================================================================
+// Simple Orchestration Functions (Process Map Compliant)
+// =============================================================================
+
+// =============================================================================
+// RFID Event Processing Task (Stack Overflow Fix)
+// =============================================================================
+
+static void rfid_processing_task(void *arg)
+{
+    ESP_LOGI(TAG, "🔧 RFID processing task started (stack: %d bytes)", RFID_PROCESSING_TASK_STACK_SIZE);
+    
+    queued_rfid_event_t queued_event;
+    
+    while (1) {
+        // Wait for RFID events from the queue
+        if (xQueueReceive(rfid_event_queue, &queued_event, portMAX_DELAY) == pdTRUE) {
+            ESP_LOGI(TAG, "📡 Processing queued RFID event: event_id=%ld", queued_event.event_id);
+            
+            // Get tool handles from registry per process map authority
+            payload_tool_handle_t payload_tool = NULL;
+            tool_registry_get_handle("payload", (void**)&payload_tool);
+            
+            fs_tool_handle_t fs_tool = NULL;
+            tool_registry_get_handle("fs", (void**)&fs_tool);
+            
+            // Get feedback_tool handle for visual feedback
+            feedback_tool_handle_t feedback_tool = NULL;
+            tool_registry_get_handle("feedback", (void**)&feedback_tool);
+            
+            switch (queued_event.event_id) {
+                case RFID_TOOL_EVENT_TAG_DETECTED:
+                    ESP_LOGI(TAG, "🏷️  Processing tag detected event");
+                    if (feedback_tool) {
+                        feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_TAG_DETECTED);
+                    }
+                    
+                    // PROCESS MAP INTEGRATION: Format event payload
+                    if (payload_tool && fs_tool) {
+                        // Create payload event data
+                        payload_event_data_t event_payload = {
+                            .event_type = PAYLOAD_EVENT_TAG_PLACED,
+                            .internal_timestamp_us = esp_timer_get_time(),
+                            .ntp_synced = false, // TODO: Check with ntp_tool
+                            .boot_counter = 0    // TODO: Get from payload_tool
+                        };
+                        
+                        // Copy tag UID if available
+                        if (queued_event.rfid_event.data.tag_info.uid_string[0] != '\0') {
+                            strncpy(event_payload.tag_uid, queued_event.rfid_event.data.tag_info.uid_string, sizeof(event_payload.tag_uid) - 1);
+                            event_payload.tag_uid[sizeof(event_payload.tag_uid) - 1] = '\0';
+                        }
+                        
+                        // Format payload per process map: Main->Payload: payload_format_event(&event)
+                        payload_formatted_result_t result;
+                        esp_err_t format_ret = payload_tool_format_event(payload_tool, &event_payload, &result);
+                        
+                        if (format_ret == ESP_OK && result.formatting_success) {
+                            ESP_LOGI(TAG, "📦 Payload formatted successfully");
+                            
+                            // Store formatted payload per process map: Main->FS: fs_write_payload(&payload)
+                            cJSON *event_json = cJSON_Parse(result.json_string);
+                            if (event_json) {
+                                esp_err_t fs_ret = fs_tool_append_json_log(fs_tool, "rfid_events.json", event_json);
+                                if (fs_ret == ESP_OK) {
+                                    ESP_LOGI(TAG, "📂 Tag detected event stored to filesystem");
+                                } else {
+                                    ESP_LOGW(TAG, "📂 Failed to store event to filesystem: %s", esp_err_to_name(fs_ret));
+                                }
+                                cJSON_Delete(event_json);
+                            } else {
+                                ESP_LOGW(TAG, "📂 Failed to parse JSON payload for storage");
+                            }
+                            
+                            // Send to http_tool per process map: Main->HTTP: http_send_payload(&payload)
+                            http_tool_handle_t http_tool = NULL;
+                            tool_registry_get_handle("http", (void**)&http_tool);
+                            
+                            if (http_tool) {
+                                esp_err_t http_ret = http_send_payload(http_tool, result.json_string, result.json_length);
+                                if (http_ret == ESP_OK) {
+                                    ESP_LOGI(TAG, "🌐 Payload sent to webhook server");
+                                    // NOTE: For time tracking, events are kept in append-only log for analysis.
+                                    // Process map fs_delete_payload() would apply to individual payload files.
+                                } else {
+                                    ESP_LOGW(TAG, "🌐 Failed to send payload: %s", esp_err_to_name(http_ret));
+                                }
+                            } else {
+                                ESP_LOGW(TAG, "🌐 http_tool not available for payload transmission");
+                            }
+                            
+                            payload_tool_free_result(&result);
+                        } else {
+                            ESP_LOGW(TAG, "📦 Failed to format payload: %s", esp_err_to_name(format_ret));
+                        }
+                    } else {
+                        ESP_LOGW(TAG, "📦 payload_tool or fs_tool not available for event processing");
+                    }
+                    break;
+                    
+                case RFID_TOOL_EVENT_TAG_REMOVED:
+                    ESP_LOGI(TAG, "🏷️  Processing tag removed event");
+                    if (feedback_tool) {
+                        feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);
+                    }
+                    
+                    // PROCESS MAP INTEGRATION: Format removal event
+                    if (payload_tool && fs_tool) {
+                        payload_event_data_t event_payload = {
+                            .event_type = PAYLOAD_EVENT_TAG_REMOVED,
+                            .internal_timestamp_us = esp_timer_get_time(),
+                            .ntp_synced = false,
+                            .boot_counter = 0
+                        };
+                        
+                        if (queued_event.rfid_event.data.tag_info.uid_string[0] != '\0') {
+                            strncpy(event_payload.tag_uid, queued_event.rfid_event.data.tag_info.uid_string, sizeof(event_payload.tag_uid) - 1);
+                            event_payload.tag_uid[sizeof(event_payload.tag_uid) - 1] = '\0';
+                        }
+                        
+                        payload_formatted_result_t result;
+                        esp_err_t format_ret = payload_tool_format_event(payload_tool, &event_payload, &result);
+                        
+                        if (format_ret == ESP_OK && result.formatting_success) {
+                            ESP_LOGI(TAG, "📦 Tag removal payload formatted");
+                            
+                            // Store to filesystem per process map: Main->FS: fs_write_payload(&payload)
+                            cJSON *removal_json = cJSON_Parse(result.json_string);
+                            if (removal_json) {
+                                esp_err_t fs_ret = fs_tool_append_json_log(fs_tool, "rfid_events.json", removal_json);
+                                if (fs_ret == ESP_OK) {
+                                    ESP_LOGI(TAG, "📂 Tag removal event stored to filesystem");
+                                } else {
+                                    ESP_LOGW(TAG, "📂 Failed to store removal event to filesystem: %s", esp_err_to_name(fs_ret));
+                                }
+                                cJSON_Delete(removal_json);
+                            } else {
+                                ESP_LOGW(TAG, "📂 Failed to parse JSON removal payload for storage");
+                            }
+                            
+                            // Send to http_tool per process map: Main->HTTP: http_send_payload(&payload)
+                            http_tool_handle_t http_tool = NULL;
+                            tool_registry_get_handle("http", (void**)&http_tool);
+                            
+                            if (http_tool) {
+                                esp_err_t http_ret = http_send_payload(http_tool, result.json_string, result.json_length);
+                                if (http_ret == ESP_OK) {
+                                    ESP_LOGI(TAG, "🌐 Tag removal payload sent to webhook server");
+                                    // NOTE: For time tracking, events are kept in append-only log for analysis.
+                                    // Process map fs_delete_payload() would apply to individual payload files.
+                                } else {
+                                    ESP_LOGW(TAG, "🌐 Failed to send removal payload: %s", esp_err_to_name(http_ret));
+                                }
+                            } else {
+                                ESP_LOGW(TAG, "🌐 http_tool not available for removal payload transmission");
+                            }
+                            
+                            payload_tool_free_result(&result);
+                        }
+                    }
+                    break;
+                    
+                default:
+                    ESP_LOGW(TAG, "📡 Unknown queued RFID event: %ld", queued_event.event_id);
+                    break;
+            }
+        }
+    }
+    
+    // Task should never reach here
+    ESP_LOGW(TAG, "🔧 RFID processing task ended unexpectedly");
+    vTaskDelete(NULL);
+}
+
+// =============================================================================
+// Event Coordination - WiFi to Feedback Tool (Preserved from Phase 4.2)
+// =============================================================================
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
-    if (event_base != WIFI_TOOL_EVENTS || !feedback_tool) {
+    if (event_base != NETWORK_TOOL_EVENTS) {
         return;
     }
     
-    wifi_tool_event_t* wifi_event = (wifi_tool_event_t*)event_data;
+    // Get feedback_tool handle from registry
+    feedback_tool_handle_t feedback_tool = NULL;
+    tool_registry_get_handle("feedback", (void**)&feedback_tool);
+    
+    // Get webserver_tool handle from registry
+    webserver_tool_handle_t webserver_tool = NULL;
+    tool_registry_get_handle("webserver", (void**)&webserver_tool);
+    
+    // Get ntp_tool handle from registry
+    ntp_tool_handle_t ntp_tool = NULL;
+    tool_registry_get_handle("ntp", (void**)&ntp_tool);
+    
+    if (!feedback_tool) {
+        ESP_LOGW(TAG, "Feedback tool not available for WiFi event");
+        return;
+    }
+    
+    network_tool_event_t* wifi_event = (network_tool_event_t*)event_data;
     
     switch (event_id) {
-        case WIFI_TOOL_EVENT_STA_CONNECTING:
+        case NETWORK_TOOL_EVENT_STA_CONNECTING:
             ESP_LOGI(TAG, "📶 WiFi connecting - blue blinking");
             feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_WIFI_CONNECTING);
             break;
             
-        case WIFI_TOOL_EVENT_STA_CONNECTED:
+        case NETWORK_TOOL_EVENT_STA_CONNECTED:
             ESP_LOGI(TAG, "📶 WiFi connected to '%s' - solid blue", wifi_event->data.sta_info.ssid);
             feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_WIFI_CONNECTED, FEEDBACK_PRIORITY_MEDIUM, 2000);
             break;
             
-        case WIFI_TOOL_EVENT_IP_ACQUIRED:
+        case NETWORK_TOOL_EVENT_IP_ACQUIRED:
             ESP_LOGI(TAG, "🌐 IP acquired: %s - returning to idle", wifi_event->data.ip_info.ip_address);
-            // Return to idle breathing (no blocking in event handler!)
             feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);
             // Stop webserver since we're now connected to WiFi
             if (webserver_tool) {
@@ -74,18 +366,17 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             }
             break;
             
-        case WIFI_TOOL_EVENT_STA_DISCONNECTED:
+        case NETWORK_TOOL_EVENT_STA_DISCONNECTED:
             ESP_LOGW(TAG, "📶 WiFi disconnected - returning to connecting state");
-            // Only set connecting state if not in AP mode
             feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_WIFI_CONNECTING);
             break;
             
-        case WIFI_TOOL_EVENT_STA_FAILED:
+        case NETWORK_TOOL_EVENT_STA_FAILED:
             ESP_LOGW(TAG, "📶 WiFi connection failed - error state");
             feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_ERROR, FEEDBACK_PRIORITY_HIGH, 3000);
             break;
             
-        case WIFI_TOOL_EVENT_AP_STARTED:
+        case NETWORK_TOOL_EVENT_AP_STARTED:
             ESP_LOGI(TAG, "📶 WiFi AP mode started - AP mode sequence");
             feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_WIFI_AP_MODE);
             // Start webserver for configuration interface
@@ -106,381 +397,432 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 
 static void rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
-    if (event_base != RFID_TOOL_EVENTS || !feedback_tool) {
-        ESP_LOGD(TAG, "📡 RFID event handler: base mismatch or no feedback_tool");
+    if (event_base != RFID_TOOL_EVENTS) {
+        ESP_LOGD(TAG, "📡 RFID event handler: base mismatch");
         return;
     }
     
-    ESP_LOGI(TAG, "📡 RFID event received: event_id=%ld", event_id);
+    // STACK OVERFLOW FIX: Lightweight event handler - just queue the event
+    ESP_LOGI(TAG, "📡 RFID event received: event_id=%ld (queuing for processing)", event_id);
     
-    switch (event_id) {
-        case RFID_TOOL_EVENT_TAG_DETECTED:
-            ESP_LOGI(TAG, "🏷️  RFID tag detected - green solid (active session)");
-            feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_TAG_DETECTED);
-            break;
-            
-        case RFID_TOOL_EVENT_TAG_REMOVED:
-            ESP_LOGI(TAG, "🏷️  RFID tag removed - returning to idle");
-            feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);
-            break;
-            
-        default:
-            ESP_LOGW(TAG, "📡 Unknown RFID event: %ld", event_id);
-            break;
+    // Check if queue is available
+    if (!rfid_event_queue) {
+        ESP_LOGW(TAG, "📡 RFID event queue not initialized, dropping event");
+        return;
+    }
+    
+    // Create queued event (lightweight copy)
+    queued_rfid_event_t queued_event = {
+        .event_id = event_id
+    };
+    
+    // Copy RFID event data if present
+    if (event_data) {
+        memcpy(&queued_event.rfid_event, event_data, sizeof(rfid_tool_event_t));
+    } else {
+        memset(&queued_event.rfid_event, 0, sizeof(rfid_tool_event_t));
+    }
+    
+    // Queue event for processing task (non-blocking)
+    BaseType_t queue_result = xQueueSend(rfid_event_queue, &queued_event, 0);
+    if (queue_result != pdTRUE) {
+        ESP_LOGW(TAG, "📡 RFID event queue full, dropping event_id=%ld", event_id);
+    } else {
+        ESP_LOGD(TAG, "📡 RFID event queued successfully for processing");
     }
 }
 
 /*
- * MCP Tool Initialization Task
+ * Process Map Boot Sequence Task
  * 
- * Heavy lifting happens here with adequate stack space (8192 bytes)
- * Separated from main task to avoid ESP-IDF stack limitations
+ * Implements exact boot sequence per docs/charts/01_boot_sequence.mmd
+ * Tool initialization order: fs_tool → debug_tool → feedback_tool → network_tool → ntp_tool → payload_tool → rfid_tool → http_tool
  */
-static void mcp_init_task(void *arg)
+static void process_map_boot_task(void *arg)
 {
-    ESP_LOGI(TAG, "=== MCP Tool Initialization (8192-byte stack) ===");
-    ESP_LOGI(TAG, "Phase 4.3: Enhanced Visual Feedback + Dashboard");
-    ESP_LOGI(TAG, "Branch: esp-idf_mcpStyle_refactor");
+    ESP_LOGI(TAG, "=== Process Map Boot Sequence Starting ===");
+    ESP_LOGI(TAG, "Constitutional Authority: docs/charts/01_boot_sequence.mmd");
+    ESP_LOGI(TAG, "Phase 5.5: Complete MCP Tool Compliance with payload_tool + debug_tool");
     
-    // =========================================================================
-    // Phase 2: Tool Initialization (MCP Pattern)
-    // =========================================================================
+    // =============================================================================
+    // Step 1: Initialize Tool Registry (Foundation)
+    // =============================================================================
     
-    ESP_LOGI(TAG, "=== Initializing Tools ===");
-    
-    // Initialize feedback tool with MCP configuration pattern
-    feedback_tool_config_t feedback_config = feedback_tool_create_default_config();
-    // GPIO and brightness now configured via Kconfig
-    
-    feedback_tool = feedback_tool_init(&feedback_config);
-    if (!feedback_tool) {
-        ESP_LOGE(TAG, "Failed to initialize feedback tool");
+    ESP_LOGI(TAG, "🔧 Step 1: Initializing Tool Registry System");
+    esp_err_t registry_ret = tool_registry_init();
+    if (registry_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize tool registry: %s", esp_err_to_name(registry_ret));
         return;
     }
+    ESP_LOGI(TAG, "✅ Tool registry initialized");
     
-    // Display tool information (MCP discovery pattern)
-    ESP_LOGI(TAG, "Feedback Tool: %s v%s", 
-             feedback_tool_get_id(), 
-             feedback_tool_get_version());
+    // =============================================================================
+    // Step 2: fs_tool - First per process map (file system foundation)
+    // =============================================================================
     
-    feedback_tool_capabilities_t feedback_caps = feedback_tool_get_capabilities(feedback_tool);
-    ESP_LOGI(TAG, "Feedback Capabilities: 0x%02X", feedback_caps);
-    
-    // Initialize WiFi tool with MCP configuration pattern
-    wifi_tool_config_t wifi_config = wifi_tool_create_default_config();
-    
-    wifi_tool = wifi_tool_init(&wifi_config);
-    if (!wifi_tool) {
-        ESP_LOGE(TAG, "Failed to initialize wifi tool");
-        return;
-    }
-    
-    // Display WiFi tool information (MCP discovery pattern)
-    ESP_LOGI(TAG, "WiFi Tool: %s v%s", 
-             wifi_tool_get_id(), 
-             wifi_tool_get_version());
-    
-    wifi_tool_capabilities_t wifi_caps = wifi_tool_get_capabilities(wifi_tool);
-    ESP_LOGI(TAG, "WiFi Capabilities: 0x%02X", wifi_caps);
-    
-    // Initialize RFID tool with MCP configuration pattern (Phase 3A)
-    rfid_tool_config_t rfid_config = rfid_tool_create_default_config();
-    
-    rfid_tool = rfid_tool_init(&rfid_config);
-    if (!rfid_tool) {
-        ESP_LOGE(TAG, "Failed to initialize rfid tool");
-        return;
-    }
-    
-    // Display RFID tool information (MCP discovery pattern)
-    ESP_LOGI(TAG, "RFID Tool: %s v%s", 
-             rfid_tool_get_id(), 
-             rfid_tool_get_version());
-    
-    rfid_tool_capabilities_t rfid_caps = rfid_tool_get_capabilities(rfid_tool);
-    ESP_LOGI(TAG, "RFID Capabilities: 0x%02X", rfid_caps);
-    
-    // Initialize fs_tool with MCP configuration pattern (Phase 3C)
+    ESP_LOGI(TAG, "💾 Step 2: fs_tool - LittleFS initialization");
     fs_tool_config_t fs_config = fs_tool_create_default_config();
-    
-    fs_tool = fs_tool_init(&fs_config);
+    fs_tool_handle_t fs_tool = fs_tool_init(&fs_config);
     if (!fs_tool) {
-        ESP_LOGE(TAG, "Failed to initialize fs tool");
+        ESP_LOGE(TAG, "Failed to initialize fs_tool");
         return;
     }
     
-    // Display fs_tool information (MCP discovery pattern)
-    ESP_LOGI(TAG, "FS Tool: %s v%s", 
-             fs_tool_get_id(), 
-             fs_tool_get_version());
+    // Register with tool registry
+    esp_err_t fs_reg_ret = tool_registry_register("fs", fs_tool, &fs_tool_interface, true);
+    if (fs_reg_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register fs_tool: %s", esp_err_to_name(fs_reg_ret));
+    }
     
-    fs_tool_capabilities_t fs_caps = fs_tool_get_capabilities(fs_tool);
-    ESP_LOGI(TAG, "FS Capabilities: 0x%02X", fs_caps);
+    ESP_LOGI(TAG, "✅ fs_tool: %s v%s initialized", fs_tool_get_id(), fs_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
     
-    // Initialize webhook_tool with MCP configuration pattern (Phase 3B)
-    webhook_tool_config_t webhook_config = webhook_tool_create_default_config();
+    // =============================================================================
+    // Step 3: debug_tool - Second per process map (ASCII dashboard)
+    // =============================================================================
     
-    webhook_tool = webhook_tool_init(&webhook_config);
-    if (!webhook_tool) {
-        ESP_LOGE(TAG, "Failed to initialize webhook tool");
+    ESP_LOGI(TAG, "🐛 Step 3: debug_tool - ASCII dashboard system");
+    debug_tool_config_t debug_config = debug_tool_create_default_config();
+    debug_tool_handle_t debug_tool = debug_tool_init(&debug_config);
+    if (!debug_tool) {
+        ESP_LOGE(TAG, "Failed to initialize debug_tool");
         return;
     }
     
-    // Display webhook_tool information (MCP discovery pattern)
-    ESP_LOGI(TAG, "Webhook Tool: %s v%s", 
-             webhook_tool_get_id(), 
-             webhook_tool_get_version());
+    // Register with tool registry
+    esp_err_t debug_reg_ret = tool_registry_register("debug", debug_tool, &debug_tool_interface, false);
+    if (debug_reg_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register debug_tool: %s", esp_err_to_name(debug_reg_ret));
+    }
     
-    webhook_tool_capabilities_t webhook_caps = webhook_tool_get_capabilities(webhook_tool);
-    ESP_LOGI(TAG, "Webhook Capabilities: 0x%02X", webhook_caps);
+    ESP_LOGI(TAG, "✅ debug_tool: %s v%s initialized", debug_tool_get_id(), debug_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
     
-    // Initialize webserver_tool with MCP configuration pattern (Phase 5.1)
-    webserver_tool_config_t webserver_config = webserver_tool_create_default_config();
+    // =============================================================================
+    // Step 4: feedback_tool - Third per process map (visual feedback)
+    // =============================================================================
     
-    webserver_tool = webserver_tool_init(&webserver_config);
-    if (!webserver_tool) {
-        ESP_LOGE(TAG, "Failed to initialize webserver tool");
+    ESP_LOGI(TAG, "💡 Step 4: feedback_tool - LED visual feedback");
+    feedback_tool_config_t feedback_config = feedback_tool_create_default_config();
+    feedback_tool_handle_t feedback_tool = feedback_tool_init(&feedback_config);
+    if (!feedback_tool) {
+        ESP_LOGE(TAG, "Failed to initialize feedback_tool");
         return;
     }
     
-    // Display webserver_tool information (MCP discovery pattern)
-    ESP_LOGI(TAG, "Webserver Tool: %s v%s", 
-             webserver_tool_get_id(), 
-             webserver_tool_get_version());
-    
-    webserver_tool_capabilities_t webserver_caps = webserver_tool_get_capabilities(webserver_tool);
-    ESP_LOGI(TAG, "Webserver Capabilities: 0x%02X", webserver_caps);
-    
-    // Initialize ntp_tool with MCP configuration pattern (Phase 5.2)
-    ntp_tool_config_t ntp_config = ntp_tool_create_default_config();
-    
-    ntp_tool = ntp_tool_init(&ntp_config);
-    if (!ntp_tool) {
-        ESP_LOGE(TAG, "Failed to initialize ntp tool");
-        return;
+    // Register with tool registry
+    esp_err_t feedback_reg_ret = tool_registry_register("feedback", feedback_tool, &feedback_tool_interface, true);
+    if (feedback_reg_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register feedback_tool: %s", esp_err_to_name(feedback_reg_ret));
     }
     
-    // Display ntp_tool information (MCP discovery pattern)
-    ESP_LOGI(TAG, "NTP Tool: %s v%s", 
-             ntp_tool_get_id(), 
-             ntp_tool_get_version());
-    
-    ntp_tool_capabilities_t ntp_caps = ntp_tool_get_capabilities(ntp_tool);
-    ESP_LOGI(TAG, "NTP Capabilities: 0x%02X", ntp_caps);
-    
-    // =========================================================================
-    // Phase 3C+3B: Enhanced MCP Self-Test Sequence with Visual Feedback
-    // =========================================================================
-    
-    ESP_LOGI(TAG, "=== MCP Tools Self-Test Sequence ===");
-    
-    // Show booting state
+    // Show initialization pattern per process map
     feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_BOOTING);
-    ESP_LOGI(TAG, "🔄 Starting 8-component system initialization...");
-    vTaskDelay(pdMS_TO_TICKS(1500));
+    ESP_LOGI(TAG, "✅ feedback_tool: %s v%s initialized", feedback_tool_get_id(), feedback_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
     
-    // Test 1: Tool Registry System
-    ESP_LOGI(TAG, "📋 TEST 1/8: Tool Registry System");
-    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_START, FEEDBACK_PRIORITY_MEDIUM, 1000);
-    vTaskDelay(pdMS_TO_TICKS(800));
-    feedback_tool_validate_init_step(feedback_tool, "Tool Registry", true);
-    vTaskDelay(pdMS_TO_TICKS(700));
+    // =============================================================================
+    // Step 5: network_tool (wifi_tool) - Fourth per process map
+    // =============================================================================
     
-    // Test 2: Feedback Tool (Self-Test)
-    ESP_LOGI(TAG, "💡 TEST 2/8: feedback_tool (LED Visual Feedback)");
-    feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_WIFI_CONNECTING); // Show blinking pattern
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    feedback_tool_validate_init_step(feedback_tool, "feedback_tool", feedback_tool != NULL);
-    vTaskDelay(pdMS_TO_TICKS(700));
-    
-    // Test 3: WiFi Tool
-    ESP_LOGI(TAG, "📶 TEST 3/8: wifi_tool (Network Connectivity)");
-    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_WIFI_PREP, FEEDBACK_PRIORITY_MEDIUM, 1000);
-    vTaskDelay(pdMS_TO_TICKS(800));
-    wifi_tool_status_t wifi_status;
-    bool wifi_test_ok = (wifi_tool_get_status(wifi_tool, &wifi_status) == ESP_OK);
-    feedback_tool_validate_init_step(feedback_tool, "wifi_tool", wifi_test_ok);
-    vTaskDelay(pdMS_TO_TICKS(700));
-    
-    // Test 4: RFID Tool
-    ESP_LOGI(TAG, "🏷️  TEST 4/8: rfid_tool (RC522 RFID Scanner)");
-    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_RFID, FEEDBACK_PRIORITY_MEDIUM, 1000);
-    vTaskDelay(pdMS_TO_TICKS(800));
-    rfid_tool_status_t rfid_status;
-    bool rfid_test_ok = (rfid_tool_get_status(rfid_tool, &rfid_status) == ESP_OK && rfid_status.is_scanning);
-    feedback_tool_validate_init_step(feedback_tool, "rfid_tool", rfid_test_ok);
-    vTaskDelay(pdMS_TO_TICKS(700));
-    
-    // Test 5: Filesystem Tool
-    ESP_LOGI(TAG, "💾 TEST 5/8: fs_tool (LittleFS Persistent Storage)");
-    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_FS, FEEDBACK_PRIORITY_MEDIUM, 1000);
-    vTaskDelay(pdMS_TO_TICKS(800));
-    fs_tool_status_t fs_status;
-    bool fs_test_ok = (fs_tool_get_status(fs_tool, &fs_status) == ESP_OK && fs_status.is_mounted);
-    feedback_tool_validate_init_step(feedback_tool, "fs_tool", fs_test_ok);
-    if (fs_test_ok) {
-        ESP_LOGI(TAG, "   ✅ LittleFS mounted: %d%% usage, %lu operations", 
-                 fs_status.usage_percent, fs_status.file_operations_count);
+    ESP_LOGI(TAG, "📶 Step 5: network_tool (wifi_tool) - Network connectivity");
+    network_tool_config_t wifi_config = network_tool_create_default_config();
+    network_tool_handle_t wifi_tool = network_tool_init(&wifi_config);
+    if (!wifi_tool) {
+        ESP_LOGE(TAG, "Failed to initialize wifi_tool");
+        return;
     }
-    vTaskDelay(pdMS_TO_TICKS(700));
     
-    // Test 6: Webhook Tool
-    ESP_LOGI(TAG, "🌐 TEST 6/8: webhook_tool (HTTP Event Transmission)");
-    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_WEBHOOK, FEEDBACK_PRIORITY_MEDIUM, 1000);
-    vTaskDelay(pdMS_TO_TICKS(800));
-    webhook_tool_status_t webhook_status;
-    bool webhook_test_ok = (webhook_tool_get_status(webhook_tool, &webhook_status) == ESP_OK);
-    feedback_tool_validate_init_step(feedback_tool, "webhook_tool", webhook_test_ok);
-    vTaskDelay(pdMS_TO_TICKS(700));
+    // Register with tool registry
+    esp_err_t wifi_reg_ret = tool_registry_register("network", wifi_tool, &network_tool_interface, true);
+    if (wifi_reg_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register network_tool: %s", esp_err_to_name(wifi_reg_ret));
+    }
     
-    // Test 7: Webserver Tool
-    ESP_LOGI(TAG, "🌐 TEST 7/8: webserver_tool (AP Mode Configuration Interface)");
-    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_WEBSERVER_STARTING, FEEDBACK_PRIORITY_MEDIUM, 1000);
-    vTaskDelay(pdMS_TO_TICKS(800));
-    webserver_tool_status_t webserver_status;
-    bool webserver_test_ok = (webserver_tool_get_status(webserver_tool, &webserver_status) == ESP_OK);
-    feedback_tool_validate_init_step(feedback_tool, "webserver_tool", webserver_test_ok);
-    vTaskDelay(pdMS_TO_TICKS(700));
+    // Set up dependency injection (fs_tool -> wifi_tool)
+    esp_err_t dep_ret = network_tool_set_fs_dependency(wifi_tool, fs_tool);
+    if (dep_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ WiFi-FS dependency injection successful");
+    }
     
-    // Test 8: NTP Tool (Phase 5.2)
-    ESP_LOGI(TAG, "🕐 TEST 8/8: ntp_tool (NTP Time Synchronization)");
-    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_START, FEEDBACK_PRIORITY_MEDIUM, 1000);
-    vTaskDelay(pdMS_TO_TICKS(800));
-    ntp_tool_status_t ntp_status;
-    bool ntp_test_ok = (ntp_tool_get_status(ntp_tool, &ntp_status) == ESP_OK && ntp_status.is_initialized);
-    feedback_tool_validate_init_step(feedback_tool, "ntp_tool", ntp_test_ok);
-    vTaskDelay(pdMS_TO_TICKS(700));
+    ESP_LOGI(TAG, "✅ wifi_tool: %s v%s initialized", network_tool_get_id(), network_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
     
-    // All tests complete - celebrate with success pattern
-    ESP_LOGI(TAG, "🎉 All 8 components initialized successfully!");
-    feedback_tool_set_state(feedback_tool, FEEDBACK_STATE_INIT_COMPLETE, FEEDBACK_PRIORITY_HIGH, 2000);
-    vTaskDelay(pdMS_TO_TICKS(2500));
+    // =============================================================================
+    // Step 6: ntp_tool - Fifth per process map (time synchronization)
+    // =============================================================================
     
-    // =========================================================================
-    // Phase 4.2: MCP Dependency Injection - WiFi Tool Configuration Loading
-    // =========================================================================
+    ESP_LOGI(TAG, "🕐 Step 6: ntp_tool - Time synchronization");
+    ntp_tool_config_t ntp_config = ntp_tool_create_default_config();
+    ntp_tool_handle_t ntp_tool = ntp_tool_init(&ntp_config);
+    if (!ntp_tool) {
+        ESP_LOGE(TAG, "Failed to initialize ntp_tool");
+        return;
+    }
     
-    ESP_LOGI(TAG, "🔌 Setting up MCP tool dependencies");
+    // Register with tool registry
+    esp_err_t ntp_reg_ret = tool_registry_register("ntp", ntp_tool, &ntp_tool_interface, false);
+    if (ntp_reg_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register ntp_tool: %s", esp_err_to_name(ntp_reg_ret));
+    }
     
-    // Register WiFi event handler for visual feedback coordination
-    ESP_LOGI(TAG, "🎯 Registering event coordination handlers...");
-    esp_err_t event_ret = esp_event_handler_register(WIFI_TOOL_EVENTS, ESP_EVENT_ANY_ID, wifi_event_handler, NULL);
-    if (event_ret == ESP_OK) {
-        ESP_LOGI(TAG, "✅ WiFi→Feedback event coordination registered");
+    ESP_LOGI(TAG, "✅ ntp_tool: %s v%s initialized", ntp_tool_get_id(), ntp_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
+    
+    // =============================================================================
+    // Step 7: payload_tool - Sixth per process map (event formatting) 
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "📦 Step 7: payload_tool - Event payload formatting");
+    payload_tool_config_t payload_config = payload_tool_create_default_config();
+    payload_tool_handle_t payload_tool = payload_tool_init(&payload_config);
+    if (!payload_tool) {
+        ESP_LOGE(TAG, "Failed to initialize payload_tool");
+        return;
+    }
+    
+    // Register with tool registry
+    esp_err_t payload_reg_ret = tool_registry_register("payload", payload_tool, &payload_tool_interface, true);
+    if (payload_reg_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register payload_tool: %s", esp_err_to_name(payload_reg_ret));
+    }
+    
+    // Increment boot counter
+    payload_tool_increment_boot_counter(payload_tool);
+    
+    ESP_LOGI(TAG, "✅ payload_tool: %s v%s initialized", payload_tool_get_id(), payload_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
+    
+    // =============================================================================
+    // Step 8: rfid_tool - Seventh per process map (RFID scanning)
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "🏷️ Step 8: rfid_tool - RFID scanner (grace period mode)");
+    rfid_tool_config_t rfid_config = rfid_tool_create_default_config();
+    rfid_tool_handle_t rfid_tool = rfid_tool_init(&rfid_config);
+    if (!rfid_tool) {
+        ESP_LOGE(TAG, "Failed to initialize rfid_tool");
+        return;
+    }
+    
+    // Register with tool registry
+    esp_err_t rfid_reg_ret = tool_registry_register("rfid", rfid_tool, &rfid_tool_interface, true);
+    if (rfid_reg_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register rfid_tool: %s", esp_err_to_name(rfid_reg_ret));
+    }
+    
+    ESP_LOGI(TAG, "✅ rfid_tool: %s v%s initialized", rfid_tool_get_id(), rfid_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
+    
+    // =============================================================================
+    // Step 9: http_tool (webhook_tool) - Eighth per process map
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "🌐 Step 9: http_tool (webhook_tool) - HTTP transmission");
+    http_tool_config_t webhook_config = http_tool_create_default_config();
+    http_tool_handle_t webhook_tool = http_tool_init(&webhook_config);
+    if (!webhook_tool) {
+        ESP_LOGE(TAG, "Failed to initialize webhook_tool");
+        return;
+    }
+    
+    // Register with tool registry
+    esp_err_t webhook_reg_ret = tool_registry_register("http", webhook_tool, &http_tool_interface, true);
+    if (webhook_reg_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register http_tool: %s", esp_err_to_name(webhook_reg_ret));
+    }
+    
+    ESP_LOGI(TAG, "✅ webhook_tool: %s v%s initialized", http_tool_get_id(), http_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
+    
+    // =============================================================================
+    // Step 10: webserver_tool (for AP mode configuration)
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "🌐 Step 10: webserver_tool - AP mode configuration interface");
+    webserver_tool_config_t webserver_config = webserver_tool_create_default_config();
+    webserver_tool_handle_t webserver_tool = webserver_tool_init(&webserver_config);
+    if (!webserver_tool) {
+        ESP_LOGE(TAG, "Failed to initialize webserver_tool");
+        return;
+    }
+    
+    // Set up dependency injection (fs_tool -> webserver_tool)
+    esp_err_t webserver_dep_ret = webserver_tool_set_fs_dependency(webserver_tool, fs_tool);
+    if (webserver_dep_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Webserver-FS dependency injection successful");
+    }
+    
+    ESP_LOGI(TAG, "✅ webserver_tool: %s v%s initialized", webserver_tool_get_id(), webserver_tool_get_version());
+    vTaskDelay(pdMS_TO_TICKS(200));
+    
+    // =============================================================================
+    // Boot Sequence Validation per Process Maps
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "🎯 Boot Sequence Validation");
+    boot_sequence_entry_t boot_sequence[] = {
+        {"fs",        TOOL_INIT_ORDER_FS_TOOL,       false, ESP_OK},
+        {"debug",     TOOL_INIT_ORDER_DEBUG_TOOL,    false, ESP_OK},
+        {"feedback",  TOOL_INIT_ORDER_FEEDBACK_TOOL, false, ESP_OK},
+        {"network",   TOOL_INIT_ORDER_NETWORK_TOOL,  false, ESP_OK},
+        {"ntp",       TOOL_INIT_ORDER_NTP_TOOL,      false, ESP_OK},
+        {"payload",   TOOL_INIT_ORDER_PAYLOAD_TOOL,  false, ESP_OK},
+        {"rfid",      TOOL_INIT_ORDER_RFID_TOOL,     false, ESP_OK},
+        {"http",      TOOL_INIT_ORDER_HTTP_TOOL,     false, ESP_OK}
+    };
+    
+    esp_err_t boot_ret = tool_registry_boot_sequence_init(boot_sequence, 8);
+    if (boot_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Boot sequence validation PASSED");
     } else {
-        ESP_LOGW(TAG, "⚠️  Event handler registration failed: %s", esp_err_to_name(event_ret));
+        ESP_LOGW(TAG, "⚠️ Boot sequence validation completed with warnings");
     }
     
-    // Register RFID event handler for visual feedback coordination
+    // =============================================================================
+    // Event Handler Registration (Process Map Communication)
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "🎯 Registering event coordination handlers");
+    esp_err_t wifi_event_ret = esp_event_handler_register(NETWORK_TOOL_EVENTS, ESP_EVENT_ANY_ID, wifi_event_handler, NULL);
+    if (wifi_event_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ WiFi→Feedback event coordination registered");
+    }
+    
     esp_err_t rfid_event_ret = esp_event_handler_register(RFID_TOOL_EVENTS, ESP_EVENT_ANY_ID, rfid_event_handler, NULL);
     if (rfid_event_ret == ESP_OK) {
         ESP_LOGI(TAG, "✅ RFID→Feedback event coordination registered");
-    } else {
-        ESP_LOGW(TAG, "⚠️  RFID event handler registration failed: %s", esp_err_to_name(rfid_event_ret));
     }
     
-    // Inject fs_tool dependency into wifi_tool  
-    ESP_LOGI(TAG, "📁 Setting up WiFi tool dependencies...");
-    esp_err_t dep_ret = wifi_tool_set_fs_dependency(wifi_tool, fs_tool);
-    if (dep_ret == ESP_OK) {
-        ESP_LOGI(TAG, "✅ WiFi tool dependency injection successful");
+    // Event batching/session logic moved to proper tools per process maps
+    
+    // =============================================================================
+    // 5-Second Boot Grace Period per Process Maps
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "⏳ Starting 5-second boot grace period (RFID scanning disabled)");
+    feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_BOOTING);  // CYAN breathing
+    
+    // Check for tag presence during grace period
+    bool initial_tag_present = false;
+    for (int i = 0; i < 50; i++) {  // 50 x 100ms = 5 seconds
+        vTaskDelay(pdMS_TO_TICKS(100));
         
-        // Load WiFi configuration from LittleFS via main.c orchestration
-        ESP_LOGI(TAG, "📁 Loading WiFi configuration from LittleFS...");
-        cJSON *wifi_config = NULL;
-        esp_err_t load_ret = fs_tool_load_json_config(fs_tool, "wifi.json", &wifi_config);
-        
-        if (load_ret == ESP_OK && wifi_config) {
-            ESP_LOGI(TAG, "✅ WiFi configuration loaded from LittleFS");
-            
-            // Pass configuration to wifi_tool (proper MCP separation)
-            esp_err_t json_ret = wifi_tool_load_networks_from_json(wifi_tool, wifi_config);
-            if (json_ret == ESP_OK) {
-                ESP_LOGI(TAG, "✅ WiFi networks loaded into wifi_tool");
-                
-                // Start automatic WiFi connection
-                ESP_LOGI(TAG, "🌐 Starting automatic WiFi connection...");
-                esp_err_t conn_ret = wifi_tool_start_auto_connection(wifi_tool);
-                if (conn_ret == ESP_OK) {
-                    ESP_LOGI(TAG, "✅ WiFi auto-connection started");
-                } else {
-                    ESP_LOGW(TAG, "⚠️  WiFi auto-connection failed: %s", esp_err_to_name(conn_ret));
-                }
-            } else {
-                ESP_LOGW(TAG, "⚠️  Failed to load networks into wifi_tool: %s", esp_err_to_name(json_ret));
+        // Check if tag is present (but don't trigger events)
+        rfid_tool_status_t rfid_status;
+        if (rfid_tool_get_status(rfid_tool, &rfid_status) == ESP_OK) {
+            if (rfid_status.tag_present && !initial_tag_present) {
+                initial_tag_present = true;
+                ESP_LOGI(TAG, "🏷️ Tag detected during grace period (will be processed after grace period)");
             }
-            
-            cJSON_Delete(wifi_config);
-        } else {
-            ESP_LOGW(TAG, "⚠️  Failed to load wifi.json: %s", esp_err_to_name(load_ret));
         }
-    } else {
-        ESP_LOGW(TAG, "⚠️  WiFi tool dependency injection failed: %s", esp_err_to_name(dep_ret));
     }
     
-    // Inject fs_tool dependency into webserver_tool
-    ESP_LOGI(TAG, "📁 Setting up Webserver tool dependencies...");
-    esp_err_t webserver_dep_ret = webserver_tool_set_fs_dependency(webserver_tool, fs_tool);
-    if (webserver_dep_ret == ESP_OK) {
-        ESP_LOGI(TAG, "✅ Webserver tool dependency injection successful");
+    ESP_LOGI(TAG, "✅ Grace period complete");
+    
+    // =============================================================================
+    // WiFi Configuration and Auto-Connection
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "📶 Loading WiFi configuration and starting auto-connection");
+    cJSON *wifi_config_json = NULL;
+    esp_err_t load_ret = fs_tool_load_json_config(fs_tool, "wifi.json", &wifi_config_json);
+    
+    if (load_ret == ESP_OK && wifi_config_json) {
+        ESP_LOGI(TAG, "✅ WiFi configuration loaded from LittleFS");
+        esp_err_t json_ret = network_tool_load_networks_from_json(wifi_tool, wifi_config_json);
+        if (json_ret == ESP_OK) {
+            ESP_LOGI(TAG, "✅ WiFi networks loaded into wifi_tool");
+            esp_err_t conn_ret = network_tool_start_auto_connection(wifi_tool);
+            if (conn_ret == ESP_OK) {
+                ESP_LOGI(TAG, "✅ WiFi auto-connection started");
+            }
+        }
+        cJSON_Delete(wifi_config_json);
     } else {
-        ESP_LOGW(TAG, "⚠️  Webserver tool dependency injection failed: %s", esp_err_to_name(webserver_dep_ret));
+        ESP_LOGW(TAG, "⚠️ No WiFi configuration found - will start AP mode");
     }
     
-    // Clear BOOTING state to allow WiFi feedback during connection attempts
-    feedback_tool_clear_state(feedback_tool, FEEDBACK_STATE_BOOTING);
-    ESP_LOGI(TAG, "✅ Component initialization complete - enabling WiFi feedback");
+    // =============================================================================
+    // Initialize RFID Event Processing (Stack Overflow Fix)
+    // =============================================================================
     
-    // Don't enter IDLE yet - wait for WiFi connection to complete
-    // IDLE state will be triggered by IP_ACQUIRED event in wifi_event_handler
-    ESP_LOGI(TAG, "🔄 System initialization complete - WiFi connection will trigger IDLE state");
+    ESP_LOGI(TAG, "🔧 Initializing RFID event processing queue and task");
     
-    // Allow feedback task to process state change before dashboard generation
-    ESP_LOGI(TAG, "⏳ Waiting for state transition to process...");
-    vTaskDelay(pdMS_TO_TICKS(500));
+    // Create RFID event queue
+    rfid_event_queue = xQueueCreate(RFID_EVENT_QUEUE_SIZE, sizeof(queued_rfid_event_t));
+    if (!rfid_event_queue) {
+        ESP_LOGE(TAG, "Failed to create RFID event queue");
+        return;
+    }
+    ESP_LOGI(TAG, "✅ RFID event queue created (size: %d)", RFID_EVENT_QUEUE_SIZE);
     
-    // =========================================================================
-    // Phase 4.2: Production RFID Time Tracker Operation
-    // =========================================================================
+    // Create RFID processing task
+    BaseType_t task_ret = xTaskCreate(
+        rfid_processing_task,               // Task function
+        "rfid_processing",                  // Task name
+        RFID_PROCESSING_TASK_STACK_SIZE,    // Stack size (8192 bytes for HTTP operations)
+        NULL,                               // Parameters
+        RFID_PROCESSING_TASK_PRIORITY,      // Priority
+        &rfid_processing_task_handle        // Task handle
+    );
     
-    ESP_LOGI(TAG, "🚀 RFID Time Tracker ready for production use!");
-    ESP_LOGI(TAG, "📶 WiFi: Connect attempts will show blue blinking → solid blue when connected");
-    ESP_LOGI(TAG, "🏷️  RFID: Place/remove tags to see green solid (active) → blue breathing (idle)");
-    ESP_LOGI(TAG, "🌐 Webhooks: Events will be transmitted when WiFi connects");
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create RFID processing task");
+        return;
+    }
+    ESP_LOGI(TAG, "✅ RFID processing task created (stack: %d bytes)", RFID_PROCESSING_TASK_STACK_SIZE);
     
-    // Production monitoring loop - show ASCII dashboard every 30 seconds
+    // =============================================================================
+    // Enable RFID Scanning (Post Grace Period)
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "🏷️ Enabling RFID scanning (grace period complete)");
+    tool_registry_set_state("rfid", TOOL_STATE_RUNNING);
+    
+    // Process initial tag if present during grace period
+    if (initial_tag_present) {
+        ESP_LOGI(TAG, "🏷️ Processing initial tag as fresh session start");
+        feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_TAG_DETECTED);
+    } else {
+        feedback_tool_set_state_simple(feedback_tool, FEEDBACK_STATE_IDLE);
+    }
+    
+    // =============================================================================
+    // Production Operation Loop with Debug Dashboard
+    // =============================================================================
+    
+    ESP_LOGI(TAG, "🚀 System ready - entering production operation mode");
+    ESP_LOGI(TAG, "📊 Debug dashboard will update every %d seconds", DASHBOARD_UPDATE_INTERVAL_MS / 1000);
+    
     while (1) {
-        // Generate and display ASCII dashboard (Phase 4.3 enhancement)
-        feedback_dashboard_t dashboard;
-        esp_err_t dash_ret = feedback_tool_generate_dashboard(feedback_tool, &dashboard);
+        // Generate and display debug dashboard
+        debug_dashboard_result_t dashboard;
+        esp_err_t dash_ret = debug_tool_generate_dashboard(debug_tool, &dashboard);
         
         if (dash_ret == ESP_OK) {
-            // Display beautiful ASCII dashboard (proper MCP pattern)
-            printf("\n--- RFID TIME TRACKER STATUS ---\n"); // Simple header instead of ANSI
+            printf("\n");
             printf("%s", dashboard.ascii_dashboard);
-            
-            // Also log JSON status for debugging
-            ESP_LOGD(TAG, "System Status JSON: %s", dashboard.json_status);
+            debug_tool_free_dashboard_result(&dashboard);
         } else {
-            // Fallback to simple status if dashboard fails
-            ESP_LOGW(TAG, "Dashboard generation failed, using fallback status");
-            wifi_tool_status_t wifi_status;
-            rfid_tool_status_t rfid_status;
-            
-            if (wifi_tool_get_status(wifi_tool, &wifi_status) == ESP_OK &&
-                rfid_tool_get_status(rfid_tool, &rfid_status) == ESP_OK) {
-                ESP_LOGI(TAG, "📶 WiFi: %s | 🏷️ RFID: %s | ⏱️ Uptime: %.1f min", 
-                         wifi_status.sta_connected ? "Connected" : "Disconnected",
-                         rfid_status.is_scanning ? "Ready" : "Error",
-                         (xTaskGetTickCount() * portTICK_PERIOD_MS) / 60000.0f);
-            }
+            ESP_LOGW(TAG, "Dashboard generation failed");
         }
         
-        // Wait 30 seconds before next dashboard update
-        vTaskDelay(pdMS_TO_TICKS(30000));
+        // Update tool registry statistics
+        tool_registry_stats_t stats;
+        if (tool_registry_get_stats(&stats) == ESP_OK) {
+            ESP_LOGI(TAG, "📊 Registry stats: %lu/%lu tools running", 
+                     stats.running_tools, stats.total_tools);
+        }
+        
+        // Simple orchestration only - batching logic moved to proper tools
+        
+        // Wait for next dashboard update
+        vTaskDelay(pdMS_TO_TICKS(DASHBOARD_UPDATE_INTERVAL_MS));
     }
     
     // Task should never reach here, but clean exit if it does
+    tool_registry_cleanup();
     vTaskDelete(NULL);
 }
 
@@ -491,8 +833,8 @@ static void mcp_init_task(void *arg)
  */
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== MCP Time Tracker Starting ===");
-    ESP_LOGI(TAG, "Creating MCP initialization task with %d bytes stack", MCP_TASK_STACK_SIZE);
+    ESP_LOGI(TAG, "=== Process Map Compliant Time Tracker Starting ===");
+    ESP_LOGI(TAG, "Creating process map boot task with %d bytes stack", MCP_TASK_STACK_SIZE);
     
     // Initialize NVS (required for WiFi) - minimal work in main task
     esp_err_t ret = nvs_flash_init();
@@ -502,10 +844,10 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     
-    // Create MCP initialization task with adequate stack
+    // Create process map boot task with adequate stack
     BaseType_t task_ret = xTaskCreate(
-        mcp_init_task,           // Task function
-        "mcp_init",              // Task name
+        process_map_boot_task,   // Task function
+        "process_map_boot",      // Task name
         MCP_TASK_STACK_SIZE,     // Stack size (8192 bytes)
         NULL,                    // Parameters
         MCP_TASK_PRIORITY,       // Priority
@@ -520,3 +862,4 @@ void app_main(void)
     ESP_LOGI(TAG, "MCP initialization task created successfully");
     // Main task ends here - MCP task takes over
 }
+

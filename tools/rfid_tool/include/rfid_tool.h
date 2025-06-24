@@ -41,6 +41,9 @@ ESP_EVENT_DECLARE_BASE(RFID_TOOL_EVENTS);
 typedef enum {
     RFID_TOOL_EVENT_TAG_DETECTED = 0,       ///< New tag placed on reader
     RFID_TOOL_EVENT_TAG_REMOVED,            ///< Tag removed from reader
+    RFID_TOOL_EVENT_SESSION_STARTED,        ///< Work session started (time tracking)
+    RFID_TOOL_EVENT_SESSION_ENDED,          ///< Work session ended (time tracking)
+    RFID_TOOL_EVENT_SPAM_DETECTED,          ///< Rapid tag events filtered as spam
     RFID_TOOL_EVENT_SCAN_STARTED,           ///< RFID scanning activated
     RFID_TOOL_EVENT_SCAN_STOPPED,           ///< RFID scanning deactivated
     RFID_TOOL_EVENT_ERROR,                  ///< Hardware or communication error
@@ -105,6 +108,8 @@ typedef enum {
     RFID_CAP_MULTI_TAG        = (1 << 4),   ///< Multiple tag support
     RFID_CAP_HEALTH_MONITOR   = (1 << 5),   ///< Hardware health monitoring
     RFID_CAP_TYPE_DETECTION   = (1 << 6),   ///< Tag type classification
+    RFID_CAP_SESSION_TRACKING = (1 << 7),   ///< Time tracking session detection
+    RFID_CAP_SPAM_FILTERING   = (1 << 8),   ///< Rapid event spam filtering
 } rfid_tool_capabilities_t;
 
 /**
@@ -136,6 +141,12 @@ typedef struct {
     bool publish_events;                    ///< Enable event publishing
     uint32_t event_queue_size;              ///< Event queue size
     uint32_t event_task_stack_size;         ///< Event task stack size
+    
+    // Session Tracking (Time Tracking Optimization)
+    bool enable_session_tracking;           ///< Enable work session detection
+    bool enable_spam_filtering;             ///< Enable rapid event filtering
+    uint32_t min_session_duration_ms;       ///< Minimum valid session duration (5s)
+    uint32_t max_consecutive_events;        ///< Max rapid events before spam detection (3)
 } rfid_tool_config_t;
 
 // =============================================================================

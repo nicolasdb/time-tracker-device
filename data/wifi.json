@@ -1,7 +1,7 @@
 {
   "networks": [
     {
-      "ssid": "TestNetwork",
+      "ssid": "safeToDeleteThis",
       "password": "password123"
     }
   ]

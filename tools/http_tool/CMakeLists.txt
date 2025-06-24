@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "webhook_tool.c"
+    SRCS "http_tool.c"
     INCLUDE_DIRS "include"
     REQUIRES 
         freertos 
@@ -10,6 +10,6 @@ idf_component_register(
         esp_event
         esp_wifi
     PRIV_REQUIRES
-        wifi_tool
+        network_tool
         rfid_tool
 )

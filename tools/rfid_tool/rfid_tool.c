@@ -83,6 +83,18 @@ struct rfid_tool_context {
     
     // State Change Detection (Clean approach)
     char previous_tag_id[21];               ///< Last recorded tag state (empty = no tag)
+    
+    // 5-Second Debounce Logic (Process Map Authority)
+    char last_debounced_tag_id[21];         ///< Last tag that passed debounce check
+    uint64_t last_detection_time_us;        ///< Last detection timestamp (microseconds)
+    uint32_t debounce_period_ms;            ///< Debounce period (5000ms per process maps)
+    
+    // Circular Buffer for Stress Test Compliance (Process Map Authority)
+    rfid_tool_event_t event_buffer[50];     ///< Circular buffer for events (50 capacity per process maps)
+    uint8_t buffer_write_index;             ///< Write index for circular buffer
+    uint8_t buffer_read_index;              ///< Read index for circular buffer  
+    uint8_t buffer_count;                   ///< Current number of events in buffer
+    bool buffer_overflow_flag;              ///< Set when buffer overflows (oldest events lost)
 };
 
 // =============================================================================
@@ -96,6 +108,12 @@ static void update_tag_type(rfid_tag_info_t *tag_info, uint8_t sak);
 #endif
 static esp_err_t publish_rfid_event(struct rfid_tool_context *ctx, rfid_tool_event_type_t type, void* data);
 static esp_err_t log_hardware_event(struct rfid_tool_context *ctx, const char* tag_id, bool tag_present, uint64_t boot_timestamp_us);
+
+// Circular Buffer Management (Process Map Authority)
+static esp_err_t circular_buffer_push(struct rfid_tool_context *ctx, const rfid_tool_event_t *event);
+static esp_err_t circular_buffer_pop(struct rfid_tool_context *ctx, rfid_tool_event_t *event);
+static bool circular_buffer_is_full(struct rfid_tool_context *ctx);
+static bool circular_buffer_is_empty(struct rfid_tool_context *ctx);
 
 // =============================================================================
 // MCP Tool Interface Implementation
@@ -157,6 +175,18 @@ rfid_tool_handle_t rfid_tool_init(const rfid_tool_config_t *config)
     ctx->config = *config;
     ctx->uptime_start = xTaskGetTickCount() * portTICK_PERIOD_MS;
     ctx->publish_events = config->publish_events;
+    
+    // Initialize 5-second debounce logic per process map authority
+    ctx->debounce_period_ms = 5000;  // 5 seconds per process maps
+    ctx->last_detection_time_us = 0;
+    ctx->last_debounced_tag_id[0] = '\0';  // Empty string
+    ctx->previous_tag_id[0] = '\0';        // Empty string
+    
+    // Initialize circular buffer per process map authority (stress test compliance)
+    ctx->buffer_write_index = 0;
+    ctx->buffer_read_index = 0;
+    ctx->buffer_count = 0;
+    ctx->buffer_overflow_flag = false;
     
     // Set capabilities
     ctx->capabilities = RFID_CAP_TAG_DETECTION | 
@@ -664,19 +694,62 @@ static void rfid_picc_state_changed_handler(void *arg, esp_event_base_t base, in
         
         if (strlen(current_tag_id) > 0) {
             // Tag insertion: current_tag_id has value
-            ctx->tag_detection_count++;
             
-            // Publish legacy event for compatibility
-            rfid_tool_event_t rfid_event = {
-                .type = RFID_TOOL_EVENT_TAG_DETECTED,
-                .data.tag_info.tag = ctx->current_tag
-            };
-            strncpy(rfid_event.data.tag_info.uid_string, current_tag_id, sizeof(rfid_event.data.tag_info.uid_string));
-            ESP_LOGI(TAG, "🏷️ Tag detected, publishing TAG_DETECTED event");
-            publish_rfid_event(ctx, RFID_TOOL_EVENT_TAG_DETECTED, &rfid_event);
+            // PROCESS MAP AUTHORITY: 5-Second Debounce Logic
+            bool should_process_event = false;
             
-            // Log hardware state change
-            log_hardware_event(ctx, current_tag_id, true, timestamp_us);
+            // Check if this is a different tag OR if enough time has passed
+            if (strcmp(ctx->last_debounced_tag_id, current_tag_id) != 0) {
+                // Different tag - always process
+                should_process_event = true;
+                ESP_LOGI(TAG, "🏷️ Different tag detected: %s", current_tag_id);
+            } else {
+                // Same tag - check timing
+                uint64_t time_since_last_us = timestamp_us - ctx->last_detection_time_us;
+                uint64_t debounce_threshold_us = (uint64_t)ctx->debounce_period_ms * 1000;
+                
+                if (time_since_last_us >= debounce_threshold_us) {
+                    should_process_event = true;
+                    ESP_LOGI(TAG, "🏷️ Same tag after debounce period: %s (%.1fs elapsed)", 
+                             current_tag_id, time_since_last_us / 1000000.0);
+                } else {
+                    ESP_LOGD(TAG, "🏷️ Duplicate tag within debounce period: %s (%.1fs < 5.0s)", 
+                             current_tag_id, time_since_last_us / 1000000.0);
+                }
+            }
+            
+            if (should_process_event) {
+                ctx->tag_detection_count++;
+                
+                // Update debounce state
+                strncpy(ctx->last_debounced_tag_id, current_tag_id, sizeof(ctx->last_debounced_tag_id) - 1);
+                ctx->last_debounced_tag_id[sizeof(ctx->last_debounced_tag_id) - 1] = '\0';
+                ctx->last_detection_time_us = timestamp_us;
+                
+                // Create event for process map integration
+                rfid_tool_event_t rfid_event = {
+                    .type = RFID_TOOL_EVENT_TAG_DETECTED,
+                    .data.tag_info.tag = ctx->current_tag
+                };
+                strncpy(rfid_event.data.tag_info.uid_string, current_tag_id, sizeof(rfid_event.data.tag_info.uid_string));
+                
+                // PROCESS MAP AUTHORITY: Circular buffer for stress test compliance
+                esp_err_t buffer_ret = circular_buffer_push(ctx, &rfid_event);
+                if (buffer_ret == ESP_OK) {
+                    ESP_LOGI(TAG, "🏷️ Event buffered (count: %d/50)", ctx->buffer_count);
+                } else {
+                    ESP_LOGW(TAG, "🏷️ Failed to buffer event: %s", esp_err_to_name(buffer_ret));
+                }
+                
+                // Immediate publish for real-time feedback (normal operation)
+                ESP_LOGI(TAG, "🏷️ Tag passed debounce check, publishing TAG_DETECTED event");
+                publish_rfid_event(ctx, RFID_TOOL_EVENT_TAG_DETECTED, &rfid_event);
+                
+                // Log hardware state change
+                log_hardware_event(ctx, current_tag_id, true, timestamp_us);
+            } else {
+                ESP_LOGD(TAG, "🏷️ Tag event suppressed by debounce logic");
+            }
             
         } else {
             // Tag removal: use previous_tag_id (current is empty)
@@ -836,4 +909,79 @@ const rfid_tool_registry_t* rfid_tool_get_registry_entry(void)
     };
     
     return &registry_entry;
+}
+
+// =============================================================================
+// Circular Buffer Implementation (Process Map Authority)
+// =============================================================================
+
+/**
+ * @brief Push event to circular buffer (stress test compliance)
+ * @param ctx Tool context
+ * @param event Event to push
+ * @return ESP_OK on success, ESP_ERR_NO_MEM if buffer full
+ */
+static esp_err_t circular_buffer_push(struct rfid_tool_context *ctx, const rfid_tool_event_t *event)
+{
+    if (!ctx || !event) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (circular_buffer_is_full(ctx)) {
+        // Buffer overflow - remove oldest event (per process map stress test)
+        ctx->buffer_read_index = (ctx->buffer_read_index + 1) % 50;
+        ctx->buffer_count--;
+        ctx->buffer_overflow_flag = true;
+        ESP_LOGW(TAG, "📊 Circular buffer overflow - oldest event evicted");
+    }
+    
+    // Add new event at write position
+    ctx->event_buffer[ctx->buffer_write_index] = *event;
+    ctx->buffer_write_index = (ctx->buffer_write_index + 1) % 50;
+    ctx->buffer_count++;
+    
+    ESP_LOGD(TAG, "📊 Event buffered: count=%d/50", ctx->buffer_count);
+    return ESP_OK;
+}
+
+/**
+ * @brief Pop event from circular buffer
+ * @param ctx Tool context  
+ * @param event Output event
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if buffer empty
+ */
+__attribute__((unused))
+static esp_err_t circular_buffer_pop(struct rfid_tool_context *ctx, rfid_tool_event_t *event)
+{
+    if (!ctx || !event) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (circular_buffer_is_empty(ctx)) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    // Get event from read position
+    *event = ctx->event_buffer[ctx->buffer_read_index];
+    ctx->buffer_read_index = (ctx->buffer_read_index + 1) % 50;
+    ctx->buffer_count--;
+    
+    ESP_LOGD(TAG, "📊 Event dequeued: count=%d/50", ctx->buffer_count);
+    return ESP_OK;
+}
+
+/**
+ * @brief Check if circular buffer is full
+ */
+static bool circular_buffer_is_full(struct rfid_tool_context *ctx)
+{
+    return ctx ? (ctx->buffer_count >= 50) : false;
+}
+
+/**
+ * @brief Check if circular buffer is empty
+ */
+static bool circular_buffer_is_empty(struct rfid_tool_context *ctx)
+{
+    return ctx ? (ctx->buffer_count == 0) : true;
 }

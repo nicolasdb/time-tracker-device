@@ -1,17 +1,19 @@
 idf_component_register(
-    SRCS "main.c"
-    INCLUDE_DIRS "."
+    SRCS "main.c" "tool_registry.c"
+    INCLUDE_DIRS "." "include"
     REQUIRES 
         freertos
         log
         nvs_flash
         feedback_tool
-        wifi_tool
+        network_tool
         rfid_tool
         fs_tool
-        webhook_tool
+        http_tool
         webserver_tool
         ntp_tool
+        debug_tool
+        payload_tool
 )
 
 # Create LittleFS partition image from data directory  
