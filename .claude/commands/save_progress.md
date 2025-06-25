@@ -22,7 +22,7 @@
 - Critical architecture principles [SPR references]
 - Hardware validation status [SPR summary]
 
-### docs/architecture/ - Technical Knowledge Base [SPR Compressed]
+### docs/implementation/architecture/ - Technical Knowledge Base [SPR Compressed]
 
 - **mcp_patterns_spr.md**: Universal tool patterns (handle-based, event-driven)
 - **esp32_solutions_spr.md**: Platform-specific fixes (string handling, events, memory)

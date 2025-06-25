@@ -20,6 +20,10 @@
 #include <string.h>
 #include <sys/stat.h>
 
+// Forward declaration for fs_tool functions (MCP dependency injection pattern)
+esp_err_t fs_tool_save_json_config(void* fs_handle, const char* filename, const cJSON* json_data);
+esp_err_t fs_tool_load_json_config(void* fs_handle, const char* filename, cJSON** json_data);
+
 static const char *TAG = "NETWORK_TOOL";
 
 // =============================================================================
@@ -806,6 +810,290 @@ static esp_err_t start_ap_mode(struct network_tool_context *ctx)
     }
     
     return esp_wifi_start();
+}
+
+// =============================================================================
+// Missing Network Management Functions Implementation
+// =============================================================================
+
+esp_err_t network_tool_connect(network_tool_handle_t handle, const char* ssid, const char* password)
+{
+    if (!handle || !ssid) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct network_tool_context *ctx = (struct network_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Connecting to network: %s", ssid);
+    
+    wifi_config_t wifi_config = {0};
+    strncpy((char*)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
+    if (password) {
+        strncpy((char*)wifi_config.sta.password, password, sizeof(wifi_config.sta.password) - 1);
+    }
+    
+    esp_err_t ret = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    ret = esp_wifi_start();
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    return esp_wifi_connect();
+}
+
+esp_err_t network_tool_disconnect(network_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct network_tool_context *ctx = (struct network_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Disconnecting from network");
+    
+    return esp_wifi_disconnect();
+}
+
+esp_err_t network_tool_add_network(network_tool_handle_t handle, const wifi_network_config_t *network)
+{
+    if (!handle || !network) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct network_tool_context *ctx = (struct network_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    xSemaphoreTake(ctx->config_mutex, portMAX_DELAY);
+    
+    if (ctx->config.network_count >= NETWORK_TOOL_MAX_NETWORKS) {
+        ESP_LOGW(TAG, "Maximum number of networks reached (%d)", NETWORK_TOOL_MAX_NETWORKS);
+        xSemaphoreGive(ctx->config_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Check if network already exists
+    for (int i = 0; i < ctx->config.network_count; i++) {
+        if (strcmp(ctx->config.networks[i].ssid, network->ssid) == 0) {
+            ESP_LOGW(TAG, "Network '%s' already exists, updating", network->ssid);
+            memcpy(&ctx->config.networks[i], network, sizeof(wifi_network_config_t));
+            xSemaphoreGive(ctx->config_mutex);
+            
+            // Publish config changed event
+            publish_wifi_event(ctx, NETWORK_TOOL_EVENT_CONFIG_CHANGED, NULL);
+            return ESP_OK;
+        }
+    }
+    
+    // Add new network
+    memcpy(&ctx->config.networks[ctx->config.network_count], network, sizeof(wifi_network_config_t));
+    ctx->config.network_count++;
+    
+    ESP_LOGI(TAG, "Added network '%s' (%d/%d)", network->ssid, ctx->config.network_count, NETWORK_TOOL_MAX_NETWORKS);
+    
+    xSemaphoreGive(ctx->config_mutex);
+    
+    // Publish config changed event
+    publish_wifi_event(ctx, NETWORK_TOOL_EVENT_CONFIG_CHANGED, NULL);
+    
+    return ESP_OK;
+}
+
+esp_err_t network_tool_remove_network(network_tool_handle_t handle, const char* ssid)
+{
+    if (!handle || !ssid) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct network_tool_context *ctx = (struct network_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    xSemaphoreTake(ctx->config_mutex, portMAX_DELAY);
+    
+    // Find network by SSID
+    int found_index = -1;
+    for (int i = 0; i < ctx->config.network_count; i++) {
+        if (strcmp(ctx->config.networks[i].ssid, ssid) == 0) {
+            found_index = i;
+            break;
+        }
+    }
+    
+    if (found_index == -1) {
+        ESP_LOGW(TAG, "Network '%s' not found in configuration", ssid);
+        xSemaphoreGive(ctx->config_mutex);
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    ESP_LOGI(TAG, "Removing network '%s' at index %d", ssid, found_index);
+    
+    // Shift remaining networks down
+    for (int i = found_index; i < ctx->config.network_count - 1; i++) {
+        memcpy(&ctx->config.networks[i], &ctx->config.networks[i + 1], sizeof(wifi_network_config_t));
+    }
+    
+    // Clear the last entry
+    memset(&ctx->config.networks[ctx->config.network_count - 1], 0, sizeof(wifi_network_config_t));
+    ctx->config.network_count--;
+    
+    // Reset current network index if needed
+    if (ctx->current_network_index >= ctx->config.network_count) {
+        ctx->current_network_index = 0;
+    }
+    
+    ESP_LOGI(TAG, "Network removed successfully. Remaining networks: %d", ctx->config.network_count);
+    
+    xSemaphoreGive(ctx->config_mutex);
+    
+    // Publish config changed event
+    publish_wifi_event(ctx, NETWORK_TOOL_EVENT_CONFIG_CHANGED, NULL);
+    
+    return ESP_OK;
+}
+
+esp_err_t network_tool_save_config(network_tool_handle_t handle, const char* file_path)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct network_tool_context *ctx = (struct network_tool_context*)handle;
+    
+    if (!ctx->is_initialized || !ctx->fs_tool) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    const char* config_file = file_path ? file_path : ctx->config.config_file_path;
+    
+    xSemaphoreTake(ctx->config_mutex, portMAX_DELAY);
+    
+    // Create JSON configuration
+    cJSON *wifi_config = cJSON_CreateObject();
+    if (!wifi_config) {
+        xSemaphoreGive(ctx->config_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    
+    cJSON *networks_array = cJSON_CreateArray();
+    if (!networks_array) {
+        cJSON_Delete(wifi_config);
+        xSemaphoreGive(ctx->config_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Add all networks to JSON array
+    for (int i = 0; i < ctx->config.network_count; i++) {
+        cJSON *network_obj = cJSON_CreateObject();
+        if (!network_obj) {
+            cJSON_Delete(wifi_config);
+            xSemaphoreGive(ctx->config_mutex);
+            return ESP_ERR_NO_MEM;
+        }
+        
+        cJSON_AddStringToObject(network_obj, "ssid", ctx->config.networks[i].ssid);
+        cJSON_AddStringToObject(network_obj, "password", ctx->config.networks[i].password);
+        
+        cJSON_AddItemToArray(networks_array, network_obj);
+    }
+    
+    cJSON_AddItemToObject(wifi_config, "networks", networks_array);
+    
+    // Save to filesystem
+    esp_err_t ret = fs_tool_save_json_config(ctx->fs_tool, config_file, wifi_config);
+    
+    cJSON_Delete(wifi_config);
+    xSemaphoreGive(ctx->config_mutex);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Configuration saved successfully to %s", config_file);
+    } else {
+        ESP_LOGE(TAG, "Failed to save configuration: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
+}
+
+esp_err_t network_tool_load_config(network_tool_handle_t handle, const char* file_path)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct network_tool_context *ctx = (struct network_tool_context*)handle;
+    
+    if (!ctx->is_initialized || !ctx->fs_tool) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    const char* config_file = file_path ? file_path : ctx->config.config_file_path;
+    
+    cJSON *wifi_config = NULL;
+    esp_err_t ret = fs_tool_load_json_config(ctx->fs_tool, config_file, &wifi_config);
+    
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to load configuration from %s: %s", config_file, esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ret = load_networks_from_json(ctx, wifi_config);
+    cJSON_Delete(wifi_config);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Configuration reloaded from %s", config_file);
+        // Publish config changed event
+        publish_wifi_event(ctx, NETWORK_TOOL_EVENT_CONFIG_CHANGED, NULL);
+    }
+    
+    return ret;
+}
+
+esp_err_t network_tool_update_config(network_tool_handle_t handle, const network_tool_config_t *config)
+{
+    if (!handle || !config) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct network_tool_context *ctx = (struct network_tool_context*)handle;
+    
+    if (!ctx->is_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    xSemaphoreTake(ctx->config_mutex, portMAX_DELAY);
+    
+    // Update configuration
+    memcpy(&ctx->config, config, sizeof(network_tool_config_t));
+    
+    xSemaphoreGive(ctx->config_mutex);
+    
+    ESP_LOGI(TAG, "Configuration updated");
+    
+    // Publish config changed event
+    publish_wifi_event(ctx, NETWORK_TOOL_EVENT_CONFIG_CHANGED, NULL);
+    
+    return ESP_OK;
 }
 
 // =============================================================================

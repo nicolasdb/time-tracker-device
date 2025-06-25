@@ -1,5 +1,5 @@
 /**
- * @file debug_tool.h
+ * @file system_monitor_tool.h
  * @brief MCP-Inspired Debug Tool - ASCII Dashboard and System Monitoring
  * 
  * Centralized debug and monitoring tool extracted from feedback_tool.
@@ -23,22 +23,22 @@ extern "C" {
 /**
  * @brief Tool identification and capabilities
  */
-#define DEBUG_TOOL_ID "debug"
-#define DEBUG_TOOL_VERSION "1.0.0"
-#define DEBUG_TOOL_DESCRIPTION "ASCII dashboard and system monitoring hub"
+#define SYSTEM_MONITOR_TOOL_ID "system_monitor"
+#define SYSTEM_MONITOR_TOOL_VERSION "1.0.0"
+#define SYSTEM_MONITOR_TOOL_DESCRIPTION "ASCII dashboard and system monitoring hub"
 
 /**
  * @brief Tool capabilities bitmask
  */
 typedef enum {
-    DEBUG_CAP_ASCII_DASHBOARD   = (1 << 0),  // ASCII art dashboard generation
-    DEBUG_CAP_JSON_STATUS       = (1 << 1),  // JSON status generation
-    DEBUG_CAP_TOOL_MONITORING   = (1 << 2),  // Multi-tool status aggregation
-    DEBUG_CAP_ROBOT_EXPRESSIONS = (1 << 3),  // Emotional status indicators
-    DEBUG_CAP_BUFFER_VISUAL     = (1 << 4),  // Buffer visualization
-    DEBUG_CAP_REAL_TIME_UPDATE  = (1 << 5),  // Live dashboard updates
-    DEBUG_CAP_THREAD_SAFE       = (1 << 6)   // Thread-safe operations
-} debug_tool_capabilities_t;
+    SYSTEM_MONITOR_CAP_ASCII_DASHBOARD   = (1 << 0),  // ASCII art dashboard generation
+    SYSTEM_MONITOR_CAP_JSON_STATUS       = (1 << 1),  // JSON status generation
+    SYSTEM_MONITOR_CAP_TOOL_MONITORING   = (1 << 2),  // Multi-tool status aggregation
+    SYSTEM_MONITOR_CAP_ROBOT_EXPRESSIONS = (1 << 3),  // Emotional status indicators
+    SYSTEM_MONITOR_CAP_BUFFER_VISUAL     = (1 << 4),  // Buffer visualization
+    SYSTEM_MONITOR_CAP_REAL_TIME_UPDATE  = (1 << 5),  // Live dashboard updates
+    SYSTEM_MONITOR_CAP_THREAD_SAFE       = (1 << 6)   // Thread-safe operations
+} system_monitor_tool_capabilities_t;
 
 // =============================================================================
 // Universal Tool Interface (MCP Pattern)
@@ -47,7 +47,7 @@ typedef enum {
 /**
  * @brief Opaque tool handle
  */
-typedef struct debug_tool* debug_tool_handle_t;
+typedef struct system_monitor_tool* system_monitor_tool_handle_t;
 
 /**
  * @brief Dashboard configuration structure
@@ -59,7 +59,7 @@ typedef struct {
     bool enable_robot_expressions;       // Enable emotional indicators
     bool enable_buffer_visualization;    // Enable buffer visual status
     bool enable_real_time_updates;       // Enable continuous updates
-} debug_tool_config_t;
+} system_monitor_tool_config_t;
 
 // =============================================================================
 // System Status and Robot Expressions (Process Map Authority)
@@ -69,32 +69,32 @@ typedef struct {
  * @brief Robot expression states for emotional indicators
  */
 typedef enum {
-    DEBUG_ROBOT_HAPPY       = 0x01,  // (◕‿◕)っ  - System healthy
-    DEBUG_ROBOT_FOCUSED     = 0x02,  // (•ᴗ•)っ  - System working
-    DEBUG_ROBOT_CONCERNED   = 0x03,  // (ಠ_ಠ)っ  - System warning
-    DEBUG_ROBOT_ANGRY       = 0x04,  // (╯°□°)╯ - System error
-    DEBUG_ROBOT_NEUTRAL     = 0x05   // (•_•)っ  - System idle
-} debug_robot_expression_t;
+    SYSTEM_MONITOR_ROBOT_HAPPY       = 0x01,  // (◕‿◕)っ  - System healthy
+    SYSTEM_MONITOR_ROBOT_FOCUSED     = 0x02,  // (•ᴗ•)っ  - System working
+    SYSTEM_MONITOR_ROBOT_CONCERNED   = 0x03,  // (ಠ_ಠ)っ  - System warning
+    SYSTEM_MONITOR_ROBOT_ANGRY       = 0x04,  // (╯°□°)╯ - System error
+    SYSTEM_MONITOR_ROBOT_NEUTRAL     = 0x05   // (•_•)っ  - System idle
+} system_monitor_robot_expression_t;
 
 /**
  * @brief Buffer visualization modes
  */
 typedef enum {
-    DEBUG_BUFFER_DOTS       = 0x01,  // ●●●○○...○  - Dot visualization
-    DEBUG_BUFFER_BARS       = 0x02,  // [███░░░░░░] - Bar visualization
-    DEBUG_BUFFER_NUMERIC    = 0x03   // 15/50       - Numeric display
-} debug_buffer_visual_mode_t;
+    SYSTEM_MONITOR_BUFFER_DOTS       = 0x01,  // ●●●○○...○  - Dot visualization
+    SYSTEM_MONITOR_BUFFER_BARS       = 0x02,  // [███░░░░░░] - Bar visualization
+    SYSTEM_MONITOR_BUFFER_NUMERIC    = 0x03   // 15/50       - Numeric display
+} system_monitor_buffer_visual_mode_t;
 
 /**
  * @brief System health status
  */
 typedef enum {
-    DEBUG_HEALTH_EXCELLENT  = 0x01,  // All systems green
-    DEBUG_HEALTH_GOOD       = 0x02,  // Minor warnings
-    DEBUG_HEALTH_WARNING    = 0x03,  // Some issues detected
-    DEBUG_HEALTH_CRITICAL   = 0x04,  // Major problems
-    DEBUG_HEALTH_UNKNOWN    = 0x05   // Status unavailable
-} debug_system_health_t;
+    SYSTEM_MONITOR_HEALTH_EXCELLENT  = 0x01,  // All systems green
+    SYSTEM_MONITOR_HEALTH_GOOD       = 0x02,  // Minor warnings
+    SYSTEM_MONITOR_HEALTH_WARNING    = 0x03,  // Some issues detected
+    SYSTEM_MONITOR_HEALTH_CRITICAL   = 0x04,  // Major problems
+    SYSTEM_MONITOR_HEALTH_UNKNOWN    = 0x05   // Status unavailable
+} system_monitor_system_health_t;
 
 // =============================================================================
 // Dashboard and Status Structures
@@ -106,11 +106,11 @@ typedef enum {
 typedef struct {
     char* ascii_dashboard;               // ASCII art dashboard string
     size_t dashboard_length;             // Dashboard string length
-    debug_robot_expression_t robot_expr; // Current robot expression
-    debug_system_health_t system_health; // Overall system health
+    system_monitor_robot_expression_t robot_expr; // Current robot expression
+    system_monitor_system_health_t system_health; // Overall system health
     uint32_t update_count;               // Dashboard update counter
     bool generation_success;             // Dashboard generation status
-} debug_dashboard_result_t;
+} system_monitor_dashboard_result_t;
 
 /**
  * @brief JSON status result
@@ -120,7 +120,7 @@ typedef struct {
     size_t json_length;                  // JSON string length
     uint32_t tools_monitored;            // Number of tools monitored
     bool generation_success;             // JSON generation status
-} debug_json_status_result_t;
+} system_monitor_json_status_result_t;
 
 /**
  * @brief Tool status structure
@@ -130,9 +130,9 @@ typedef struct {
     uint32_t dashboards_generated;       // Total dashboards generated
     uint32_t json_reports_generated;     // Total JSON reports generated
     uint32_t tools_registered;           // Number of registered tools
-    debug_system_health_t system_health; // Current system health
+    system_monitor_system_health_t system_health; // Current system health
     uint32_t last_error_code;            // Last error encountered
-} debug_tool_status_t;
+} system_monitor_tool_status_t;
 
 // =============================================================================
 // Tool Handle Registration (For Status Collection)
@@ -147,7 +147,7 @@ typedef struct {
     const char* tool_version;            // Tool version
     esp_err_t (*get_status_func)(void* handle, void* status);  // Status function
     size_t status_struct_size;           // Size of status structure
-} debug_tool_registration_t;
+} system_monitor_tool_registration_t;
 
 // =============================================================================
 // MCP Tool Interface Functions
@@ -157,40 +157,40 @@ typedef struct {
  * @brief Create default configuration
  * @return Default configuration structure
  */
-debug_tool_config_t debug_tool_create_default_config(void);
+system_monitor_tool_config_t system_monitor_tool_create_default_config(void);
 
 /**
  * @brief Initialize debug tool
  * @param config Tool configuration
  * @return Tool handle or NULL on failure
  */
-debug_tool_handle_t debug_tool_init(const debug_tool_config_t* config);
+system_monitor_tool_handle_t system_monitor_tool_init(const system_monitor_tool_config_t* config);
 
 /**
  * @brief Cleanup debug tool
  * @param handle Tool handle
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_cleanup(debug_tool_handle_t handle);
+esp_err_t system_monitor_tool_cleanup(system_monitor_tool_handle_t handle);
 
 /**
  * @brief Get tool identification
  * @return Tool ID string
  */
-const char* debug_tool_get_id(void);
+const char* system_monitor_tool_get_id(void);
 
 /**
  * @brief Get tool version
  * @return Tool version string
  */
-const char* debug_tool_get_version(void);
+const char* system_monitor_tool_get_version(void);
 
 /**
  * @brief Get tool capabilities
  * @param handle Tool handle
  * @return Capabilities bitmask
  */
-debug_tool_capabilities_t debug_tool_get_capabilities(debug_tool_handle_t handle);
+system_monitor_tool_capabilities_t system_monitor_tool_get_capabilities(system_monitor_tool_handle_t handle);
 
 /**
  * @brief Get tool status
@@ -198,7 +198,7 @@ debug_tool_capabilities_t debug_tool_get_capabilities(debug_tool_handle_t handle
  * @param status Status structure to fill
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_get_status(debug_tool_handle_t handle, debug_tool_status_t* status);
+esp_err_t system_monitor_tool_get_status(system_monitor_tool_handle_t handle, system_monitor_tool_status_t* status);
 
 // =============================================================================
 // Tool Registration Functions (For Status Collection)
@@ -210,8 +210,8 @@ esp_err_t debug_tool_get_status(debug_tool_handle_t handle, debug_tool_status_t*
  * @param registration Tool registration information
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_register_tool(debug_tool_handle_t handle,
-                                 const debug_tool_registration_t* registration);
+esp_err_t system_monitor_tool_register_tool(system_monitor_tool_handle_t handle,
+                                 const system_monitor_tool_registration_t* registration);
 
 /**
  * @brief Unregister tool from monitoring
@@ -219,7 +219,7 @@ esp_err_t debug_tool_register_tool(debug_tool_handle_t handle,
  * @param tool_id Tool identifier to unregister
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_unregister_tool(debug_tool_handle_t handle, const char* tool_id);
+esp_err_t system_monitor_tool_unregister_tool(system_monitor_tool_handle_t handle, const char* tool_id);
 
 // =============================================================================
 // ASCII Dashboard Functions (Process Map Authority)
@@ -231,21 +231,21 @@ esp_err_t debug_tool_unregister_tool(debug_tool_handle_t handle, const char* too
  * @param result Dashboard result structure
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_generate_dashboard(debug_tool_handle_t handle,
-                                      debug_dashboard_result_t* result);
+esp_err_t system_monitor_tool_generate_dashboard(system_monitor_tool_handle_t handle,
+                                      system_monitor_dashboard_result_t* result);
 
 /**
  * @brief Update dashboard with real-time information
  * @param handle Debug tool handle
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_update_dashboard(debug_tool_handle_t handle);
+esp_err_t system_monitor_tool_update_dashboard(system_monitor_tool_handle_t handle);
 
 /**
  * @brief Free dashboard result
  * @param result Result structure to free
  */
-void debug_tool_free_dashboard_result(debug_dashboard_result_t* result);
+void system_monitor_tool_free_dashboard_result(system_monitor_dashboard_result_t* result);
 
 // =============================================================================
 // JSON Status Functions
@@ -257,14 +257,14 @@ void debug_tool_free_dashboard_result(debug_dashboard_result_t* result);
  * @param result JSON status result structure
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_generate_json_status(debug_tool_handle_t handle,
-                                        debug_json_status_result_t* result);
+esp_err_t system_monitor_tool_generate_json_status(system_monitor_tool_handle_t handle,
+                                        system_monitor_json_status_result_t* result);
 
 /**
  * @brief Free JSON status result
  * @param result Result structure to free
  */
-void debug_tool_free_json_result(debug_json_status_result_t* result);
+void system_monitor_tool_free_json_result(system_monitor_json_status_result_t* result);
 
 // =============================================================================
 // System Health and Expression Functions (Process Map Requirements)
@@ -276,8 +276,8 @@ void debug_tool_free_json_result(debug_json_status_result_t* result);
  * @param expression Robot expression to set
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_set_robot_expression(debug_tool_handle_t handle,
-                                        debug_robot_expression_t expression);
+esp_err_t system_monitor_tool_set_robot_expression(system_monitor_tool_handle_t handle,
+                                        system_monitor_robot_expression_t expression);
 
 /**
  * @brief Update buffer visualization
@@ -287,10 +287,10 @@ esp_err_t debug_tool_set_robot_expression(debug_tool_handle_t handle,
  * @param mode Visualization mode
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_update_buffer_visualization(debug_tool_handle_t handle,
+esp_err_t system_monitor_tool_update_buffer_visualization(system_monitor_tool_handle_t handle,
                                                uint32_t used_slots,
                                                uint32_t total_slots,
-                                               debug_buffer_visual_mode_t mode);
+                                               system_monitor_buffer_visual_mode_t mode);
 
 /**
  * @brief Increment retry counter visualization
@@ -299,7 +299,7 @@ esp_err_t debug_tool_update_buffer_visualization(debug_tool_handle_t handle,
  * @param max_retries Maximum retry attempts
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_increment_retry_counter(debug_tool_handle_t handle,
+esp_err_t system_monitor_tool_increment_retry_counter(system_monitor_tool_handle_t handle,
                                            uint32_t current_retry,
                                            uint32_t max_retries);
 
@@ -309,7 +309,7 @@ esp_err_t debug_tool_increment_retry_counter(debug_tool_handle_t handle,
  * @param is_offline Offline mode status
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_set_offline_mode(debug_tool_handle_t handle, bool is_offline);
+esp_err_t system_monitor_tool_set_offline_mode(system_monitor_tool_handle_t handle, bool is_offline);
 
 /**
  * @brief Calculate overall system health from registered tools
@@ -317,8 +317,54 @@ esp_err_t debug_tool_set_offline_mode(debug_tool_handle_t handle, bool is_offlin
  * @param health System health output
  * @return ESP_OK on success
  */
-esp_err_t debug_tool_calculate_system_health(debug_tool_handle_t handle,
-                                            debug_system_health_t* health);
+esp_err_t system_monitor_tool_calculate_system_health(system_monitor_tool_handle_t handle,
+                                            system_monitor_system_health_t* health);
+
+// =============================================================================
+// Event-Driven Session Timing (Process Map Authority: Constitutional Requirement)
+// =============================================================================
+
+/**
+ * @brief Session timing context structure
+ */
+typedef struct {
+    uint64_t session_start_time_ms;    // Session start timestamp
+    bool session_active;               // Current session state
+    uint32_t session_duration_min;     // Current session duration in minutes
+    bool flow_awareness_triggered;     // 60-minute notification sent
+    bool flow_urgency_triggered;       // 90-minute notification sent
+    char current_tag_uid[32];          // Active tag UID
+} session_timing_context_t;
+
+/**
+ * @brief Initialize system monitor with event-driven architecture
+ * @param handle Tool handle
+ * @return ESP_OK on success
+ */
+esp_err_t system_monitor_tool_start_event_subscription(system_monitor_tool_handle_t handle);
+
+/**
+ * @brief Stop event subscription and cleanup
+ * @param handle Tool handle
+ * @return ESP_OK on success
+ */
+esp_err_t system_monitor_tool_stop_event_subscription(system_monitor_tool_handle_t handle);
+
+/**
+ * @brief Update session timing and check for flow awareness triggers
+ * @param handle Tool handle
+ * @return ESP_OK on success
+ */
+esp_err_t system_monitor_tool_update_session_timing(system_monitor_tool_handle_t handle);
+
+/**
+ * @brief Get current session timing context
+ * @param handle Tool handle
+ * @param context Output session context
+ * @return ESP_OK on success
+ */
+esp_err_t system_monitor_tool_get_session_context(system_monitor_tool_handle_t handle,
+                                                  session_timing_context_t* context);
 
 #ifdef __cplusplus
 }

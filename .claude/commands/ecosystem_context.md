@@ -100,10 +100,9 @@ Use with other commands for complete context:
 ```
 
 ## Key Files for Ecosystem Understanding
-- `docs/ecosystem/overview.md` - Complete system architecture
-- `docs/ecosystem/device_role.md` - Device responsibilities  
-- `docs/ecosystem/integration_points.md` - Interface specifications
-- `docs/charts/` - Process maps showing device behavior
+- `docs/constitution/ecosystem_contract.md` - Complete system architecture & integration specs
+- `docs/constitution/tool_charter.md` - Device responsibilities and tool boundaries  
+- `docs/constitution/process_maps/` - Constitutional process flows and device behavior
 
 ---
 *Use this context to ensure all development decisions consider the device's role in the broader cognitive wealth ecosystem*

@@ -2,7 +2,7 @@ menu "HTTP Tool Configuration"
 
     config HTTP_TOOL_DEFAULT_URL
         string "Default webhook URL"
-        default "https://api.example.com/webhook"
+        default "http://localhost/webhook"
         help
             Default webhook URL for sending events. Can be overridden at runtime.
 

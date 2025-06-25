@@ -7,6 +7,7 @@
  */
 
 #include "rfid_tool.h"
+#include "event_system.h"   // Universal event system for async communication
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
@@ -106,7 +107,7 @@ static void rfid_picc_state_changed_handler(void *arg, esp_event_base_t base, in
 static spi_host_device_t get_spi_host(int config_host);
 static void update_tag_type(rfid_tag_info_t *tag_info, uint8_t sak);
 #endif
-static esp_err_t publish_rfid_event(struct rfid_tool_context *ctx, rfid_tool_event_type_t type, void* data);
+static esp_err_t rfid_tool_publish_universal_event(struct rfid_tool_context *ctx, rfid_tool_event_type_t type, void* data);
 static esp_err_t log_hardware_event(struct rfid_tool_context *ctx, const char* tag_id, bool tag_present, uint64_t boot_timestamp_us);
 
 // Circular Buffer Management (Process Map Authority)
@@ -319,7 +320,7 @@ rfid_tool_handle_t rfid_tool_init(const rfid_tool_config_t *config)
     ESP_LOGI(TAG, "  Capabilities: 0x%02X", ctx->capabilities);
     
     // Publish tool ready event
-    publish_rfid_event(ctx, RFID_TOOL_EVENT_READY, NULL);
+    rfid_tool_publish_universal_event(ctx, RFID_TOOL_EVENT_READY, NULL);
     
     return ctx;
 }
@@ -476,7 +477,7 @@ esp_err_t rfid_tool_start_scanning(rfid_tool_handle_t handle)
         ESP_LOGI(TAG, "Started scanning for tags");
         
         // Publish scanning started event
-        publish_rfid_event(ctx, RFID_TOOL_EVENT_SCAN_STARTED, NULL);
+        rfid_tool_publish_universal_event(ctx, RFID_TOOL_EVENT_SCAN_STARTED, NULL);
         
         return ESP_OK;
     }
@@ -520,7 +521,7 @@ esp_err_t rfid_tool_stop_scanning(rfid_tool_handle_t handle)
         ESP_LOGI(TAG, "Stopped scanning for tags");
         
         // Publish scanning stopped event
-        publish_rfid_event(ctx, RFID_TOOL_EVENT_SCAN_STOPPED, NULL);
+        rfid_tool_publish_universal_event(ctx, RFID_TOOL_EVENT_SCAN_STOPPED, NULL);
         
         return ESP_OK;
     }
@@ -715,6 +716,14 @@ static void rfid_picc_state_changed_handler(void *arg, esp_event_base_t base, in
                 } else {
                     ESP_LOGD(TAG, "🏷️ Duplicate tag within debounce period: %s (%.1fs < 5.0s)", 
                              current_tag_id, time_since_last_us / 1000000.0);
+                    
+                    // PROCESS MAP AUTHORITY: Emit ignored event for visual feedback
+                    rfid_tool_event_t ignored_event = {
+                        .type = RFID_TOOL_EVENT_TAG_IGNORED
+                    };
+                    strncpy(ignored_event.data.tag_info.uid_string, current_tag_id, sizeof(ignored_event.data.tag_info.uid_string));
+                    ESP_LOGI(TAG, "🏷️ Publishing TAG_IGNORED event for debounce suppression");
+                    rfid_tool_publish_universal_event(ctx, RFID_TOOL_EVENT_TAG_IGNORED, &ignored_event);
                 }
             }
             
@@ -743,7 +752,7 @@ static void rfid_picc_state_changed_handler(void *arg, esp_event_base_t base, in
                 
                 // Immediate publish for real-time feedback (normal operation)
                 ESP_LOGI(TAG, "🏷️ Tag passed debounce check, publishing TAG_DETECTED event");
-                publish_rfid_event(ctx, RFID_TOOL_EVENT_TAG_DETECTED, &rfid_event);
+                rfid_tool_publish_universal_event(ctx, RFID_TOOL_EVENT_TAG_DETECTED, &rfid_event);
                 
                 // Log hardware state change
                 log_hardware_event(ctx, current_tag_id, true, timestamp_us);
@@ -754,12 +763,17 @@ static void rfid_picc_state_changed_handler(void *arg, esp_event_base_t base, in
         } else {
             // Tag removal: use previous_tag_id (current is empty)
             
-            // Publish legacy event for compatibility
+            // Publish tag removal event with previous tag UID for session matching
             rfid_tool_event_t rfid_event = {
                 .type = RFID_TOOL_EVENT_TAG_REMOVED
             };
+            // Include the previous tag UID so system_monitor can match the session
+            snprintf(rfid_event.data.tag_info.uid_string, 
+                    sizeof(rfid_event.data.tag_info.uid_string), 
+                    "%s", ctx->previous_tag_id);
+            
             ESP_LOGI(TAG, "🏷️ Tag removed, publishing TAG_REMOVED event");
-            publish_rfid_event(ctx, RFID_TOOL_EVENT_TAG_REMOVED, &rfid_event);
+            rfid_tool_publish_universal_event(ctx, RFID_TOOL_EVENT_TAG_REMOVED, &rfid_event);
             
             // Log hardware state change (with previous tag_id)
             log_hardware_event(ctx, ctx->previous_tag_id, false, timestamp_us);
@@ -777,22 +791,48 @@ static void rfid_picc_state_changed_handler(void *arg, esp_event_base_t base, in
 #endif
 
 /**
- * @brief Publish RFID event to other tools (MCP pattern)
+ * @brief Publish RFID event using universal event system (EVENT-DRIVEN REFACTOR)
  */
-static esp_err_t publish_rfid_event(struct rfid_tool_context *ctx, rfid_tool_event_type_t type, void* data)
+static esp_err_t rfid_tool_publish_universal_event(struct rfid_tool_context *ctx, rfid_tool_event_type_t type, void* data)
 {
     if (!ctx->publish_events) {
         return ESP_OK;
     }
     
-    rfid_tool_event_t event = {.type = type};
-    if (data) {
-        memcpy(&event, data, sizeof(rfid_tool_event_t));
-    }
-    
     ESP_LOGI(TAG, "📡 Publishing RFID event: %s", rfid_tool_event_to_string(type));
     
-    return esp_event_post(RFID_TOOL_EVENTS, type, &event, sizeof(event), 0);
+    // Convert old rfid_tool_event_t to new universal rfid_event_data_t format
+    rfid_event_data_t rfid_data = {
+        .detection_time_us = esp_timer_get_time(),
+        .internal_millis = esp_timer_get_time() / 1000,
+        .is_new_session = true,
+        .during_grace_period = false
+    };
+    
+    // Extract tag UID from old format if available
+    if (data) {
+        rfid_tool_event_t* old_event = (rfid_tool_event_t*)data;
+        if (old_event && old_event->data.tag_info.uid_string[0] != '\0') {
+            strncpy(rfid_data.tag_uid, old_event->data.tag_info.uid_string, sizeof(rfid_data.tag_uid) - 1);
+            rfid_data.tag_uid[sizeof(rfid_data.tag_uid) - 1] = '\0';
+        }
+    }
+    
+    // Use universal event system based on event type
+    switch (type) {
+        case RFID_TOOL_EVENT_TAG_DETECTED:
+            return publish_rfid_event(RFID_EVENT_TAG_DETECTED, &rfid_data);
+            
+        case RFID_TOOL_EVENT_TAG_REMOVED:
+            return publish_rfid_event(RFID_EVENT_TAG_REMOVED, &rfid_data);
+            
+        case RFID_TOOL_EVENT_TAG_IGNORED:
+            return publish_rfid_event(RFID_EVENT_TAG_IGNORED, &rfid_data);
+            
+        default:
+            ESP_LOGW(TAG, "❌ Unknown RFID event type: %d", type);
+            return ESP_ERR_INVALID_ARG;
+    }
 }
 
 /**
@@ -854,6 +894,7 @@ const char* rfid_tool_event_to_string(rfid_tool_event_type_t event_type)
     switch (event_type) {
         case RFID_TOOL_EVENT_TAG_DETECTED: return "TAG_DETECTED";
         case RFID_TOOL_EVENT_TAG_REMOVED: return "TAG_REMOVED";
+        case RFID_TOOL_EVENT_TAG_IGNORED: return "TAG_IGNORED";
         case RFID_TOOL_EVENT_SCAN_STARTED: return "SCAN_STARTED";
         case RFID_TOOL_EVENT_SCAN_STOPPED: return "SCAN_STOPPED";
         case RFID_TOOL_EVENT_ERROR: return "ERROR";
@@ -886,6 +927,60 @@ esp_err_t rfid_tool_tag_uid_to_string(const rfid_tag_info_t* tag_info, char* uid
     uid_string[tag_info->uid_length * 2] = '\0';
     
     return ESP_OK;
+}
+
+// =============================================================================
+// Circular Buffer Public Interface (Process Map Authority)
+// =============================================================================
+
+esp_err_t rfid_tool_get_buffered_event(rfid_tool_handle_t handle, rfid_tool_event_t *event)
+{
+    if (!handle || !event) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct rfid_tool_context *ctx = (struct rfid_tool_context*)handle;
+    
+    if (xSemaphoreTake(ctx->state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        esp_err_t result = circular_buffer_pop(ctx, event);
+        xSemaphoreGive(ctx->state_mutex);
+        
+        if (result == ESP_OK) {
+            ESP_LOGD(TAG, "📊 Event retrieved from buffer: count=%d/50", ctx->buffer_count);
+        }
+        
+        return result;
+    }
+    
+    return ESP_ERR_TIMEOUT;
+}
+
+bool rfid_tool_has_buffered_events(rfid_tool_handle_t handle)
+{
+    if (!handle) {
+        return false;
+    }
+    
+    struct rfid_tool_context *ctx = (struct rfid_tool_context*)handle;
+    return !circular_buffer_is_empty(ctx);
+}
+
+esp_err_t rfid_tool_get_buffer_status(rfid_tool_handle_t handle, uint8_t *buffer_count, bool *buffer_overflow)
+{
+    if (!handle || !buffer_count || !buffer_overflow) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct rfid_tool_context *ctx = (struct rfid_tool_context*)handle;
+    
+    if (xSemaphoreTake(ctx->state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        *buffer_count = ctx->buffer_count;
+        *buffer_overflow = ctx->buffer_overflow_flag;
+        xSemaphoreGive(ctx->state_mutex);
+        return ESP_OK;
+    }
+    
+    return ESP_ERR_TIMEOUT;
 }
 
 // =============================================================================
@@ -950,7 +1045,6 @@ static esp_err_t circular_buffer_push(struct rfid_tool_context *ctx, const rfid_
  * @param event Output event
  * @return ESP_OK on success, ESP_ERR_NOT_FOUND if buffer empty
  */
-__attribute__((unused))
 static esp_err_t circular_buffer_pop(struct rfid_tool_context *ctx, rfid_tool_event_t *event)
 {
     if (!ctx || !event) {

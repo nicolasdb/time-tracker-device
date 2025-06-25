@@ -12,8 +12,8 @@
 
 ### 🔄 Rapid Context Building
 1. **Current State**: Load project status from `docs/project/current_state_spr.md`
-2. **Architecture**: Load MCP patterns from `docs/architecture/mcp_patterns_spr.md`  
-3. **ESP32 Knowledge**: Load critical fixes from `docs/architecture/esp32_solutions_spr.md`
+2. **Architecture**: Load MCP patterns from `docs/implementation/architecture/mcp_patterns_spr.md`  
+3. **ESP32 Knowledge**: Load critical fixes from `docs/implementation/architecture/esp32_solutions_spr.md`
 4. **Next Phase**: Identify immediate next steps and dependencies
 
 ### 📋 Quick Status Check

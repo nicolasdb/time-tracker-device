@@ -196,13 +196,14 @@ esp_err_t tool_registry_get_entry(const char* tool_id, tool_registration_entry_t
  */
 typedef enum {
     TOOL_INIT_ORDER_FS_TOOL       = 1,  // First: File system
-    TOOL_INIT_ORDER_DEBUG_TOOL    = 2,  // Second: Debug/ASCII dashboard
+    TOOL_INIT_ORDER_SYSTEM_MONITOR_TOOL = 2,  // Second: System Monitor/ASCII dashboard
     TOOL_INIT_ORDER_FEEDBACK_TOOL = 3,  // Third: Visual feedback
     TOOL_INIT_ORDER_NETWORK_TOOL  = 4,  // Fourth: WiFi/network
     TOOL_INIT_ORDER_NTP_TOOL      = 5,  // Fifth: Time synchronization
     TOOL_INIT_ORDER_PAYLOAD_TOOL  = 6,  // Sixth: Payload formatting
     TOOL_INIT_ORDER_RFID_TOOL     = 7,  // Seventh: RFID scanning
-    TOOL_INIT_ORDER_HTTP_TOOL     = 8   // Eighth: HTTP transmission
+    TOOL_INIT_ORDER_HTTP_TOOL     = 8,  // Eighth: HTTP transmission
+    TOOL_INIT_ORDER_WEBSERVER_TOOL = 9  // Ninth: AP mode webserver
 } tool_init_order_t;
 
 /**

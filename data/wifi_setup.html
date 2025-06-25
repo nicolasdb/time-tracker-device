@@ -97,7 +97,12 @@
             });
         }
         function deleteNetwork(index) {
-            fetch(`/api/networks/${index}`, {method: 'DELETE'})
+            console.log('Deleting network at index:', index);
+            fetch('/api/networks', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: 'delete', index: index})
+            })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {

@@ -41,6 +41,7 @@ ESP_EVENT_DECLARE_BASE(RFID_TOOL_EVENTS);
 typedef enum {
     RFID_TOOL_EVENT_TAG_DETECTED = 0,       ///< New tag placed on reader
     RFID_TOOL_EVENT_TAG_REMOVED,            ///< Tag removed from reader
+    RFID_TOOL_EVENT_TAG_IGNORED,            ///< Tag ignored due to debounce (process map authority)
     RFID_TOOL_EVENT_SESSION_STARTED,        ///< Work session started (time tracking)
     RFID_TOOL_EVENT_SESSION_ENDED,          ///< Work session ended (time tracking)
     RFID_TOOL_EVENT_SPAM_DETECTED,          ///< Rapid tag events filtered as spam
@@ -330,6 +331,34 @@ esp_err_t rfid_tool_unregister_event_handler(
     rfid_tool_handle_t handle,
     rfid_tool_event_type_t event_type,
     esp_event_handler_t event_handler);
+
+// =============================================================================
+// Circular Buffer Interface (Process Map Authority)
+// =============================================================================
+
+/**
+ * @brief Get next event from circular buffer (stress test compliance)
+ * @param handle Tool handle
+ * @param event Output event structure
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if buffer empty
+ */
+esp_err_t rfid_tool_get_buffered_event(rfid_tool_handle_t handle, rfid_tool_event_t *event);
+
+/**
+ * @brief Check if circular buffer has pending events
+ * @param handle Tool handle
+ * @return true if events available, false if empty
+ */
+bool rfid_tool_has_buffered_events(rfid_tool_handle_t handle);
+
+/**
+ * @brief Get circular buffer status for dashboard
+ * @param handle Tool handle
+ * @param buffer_count Output: current event count
+ * @param buffer_overflow Output: overflow flag status
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t rfid_tool_get_buffer_status(rfid_tool_handle_t handle, uint8_t *buffer_count, bool *buffer_overflow);
 
 // =============================================================================
 // Utility Functions

@@ -1,0 +1,70 @@
+sequenceDiagram
+    participant User
+    participant RFID_Task as RFID Task
+    participant Event_Bus as ESP Event System
+    participant System_Task as System Monitor Task
+    participant Payload_Task as Payload Format Task
+    participant FS_Task as FS Task
+    participant HTTP_Task as HTTP Task
+    participant LED_Task as LED Task
+    
+    Note over User: Places NFC tag on device
+    
+    User->>RFID_Task: Tag detected by RC522 (ISR)
+    RFID_Task->>RFID_Task: Read tag UID: "3A:FD:90:2E"
+    
+    alt Tag different from last scan OR > 5 seconds since last
+        RFID_Task->>RFID_Task: Create rfid_event_t
+        Note over RFID_Task: {<br/>  tag_uid: "3A:FD:90:2E",<br/>  internal_millis: 123456,<br/>  type: TAG_PLACED<br/>}
+        
+        RFID_Task->>Event_Bus: esp_event_post(RFID_EVENT_TAG_DETECTED)
+        
+        par Async Event Subscribers
+            Event_Bus->>System_Task: TAG_DETECTED event
+            System_Task->>System_Task: Start session timer
+            System_Task->>Event_Bus: esp_event_post(SESSION_EVENT_STARTED)
+        and
+            Event_Bus->>Payload_Task: TAG_DETECTED event
+            Payload_Task->>Payload_Task: Format event with NTP timestamp
+            Note over Payload_Task: {<br/>  device_id: "ESP32_F0F5BD",<br/>  tag_uid: "3A:FD:90:2E",<br/>  event_type: "tag_placed",<br/>  timestamp: "2025-01-15T10:30:45Z"<br/>}
+            Payload_Task->>Event_Bus: esp_event_post(PAYLOAD_EVENT_FORMATTED)
+        and
+            Event_Bus->>LED_Task: SESSION_EVENT_STARTED
+            LED_Task->>LED_Task: Show green flash → green solid
+        end
+        
+        Event_Bus->>FS_Task: PAYLOAD_EVENT_FORMATTED
+        FS_Task->>FS_Task: Save to LittleFS
+        FS_Task->>Event_Bus: esp_event_post(FS_EVENT_SAVED)
+        
+        alt WiFi Connected
+            Event_Bus->>HTTP_Task: FS_EVENT_SAVED
+            HTTP_Task->>HTTP_Task: POST to webhook URL
+            
+            alt HTTP Success
+                HTTP_Task->>Event_Bus: esp_event_post(HTTP_EVENT_SUCCESS)
+                Event_Bus->>LED_Task: HTTP_EVENT_SUCCESS
+                LED_Task->>LED_Task: Blue pulse confirmation
+                Event_Bus->>FS_Task: HTTP_EVENT_SUCCESS
+                FS_Task->>FS_Task: Delete local payload
+            else HTTP Failed
+                HTTP_Task->>Event_Bus: esp_event_post(HTTP_EVENT_FAILED)
+                HTTP_Task->>HTTP_Task: Schedule retry with backoff
+                Event_Bus->>LED_Task: HTTP_EVENT_FAILED
+                LED_Task->>LED_Task: Orange pulse (offline mode)
+            end
+        else No WiFi
+            Note over HTTP_Task: Event queued for later retry
+            Event_Bus->>LED_Task: NETWORK_EVENT_OFFLINE
+            LED_Task->>LED_Task: Blue breathing with green tints
+        end
+        
+    else Duplicate tag within 5 seconds
+        RFID_Task->>RFID_Task: Ignore duplicate scan
+        RFID_Task->>Event_Bus: esp_event_post(RFID_EVENT_IGNORED)
+        Event_Bus->>LED_Task: RFID_EVENT_IGNORED
+        LED_Task->>LED_Task: Quick yellow flash
+    end
+    
+    Note over User: Tag placement complete
+    Note over RFID_Task: Continue scanning for next event

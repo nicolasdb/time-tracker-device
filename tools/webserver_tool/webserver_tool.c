@@ -72,6 +72,7 @@ static esp_err_t api_networks_post_handler(httpd_req_t *req);
 static esp_err_t api_networks_delete_handler(httpd_req_t *req);
 static esp_err_t api_apply_handler(httpd_req_t *req);
 static esp_err_t wifi_setup_html_handler(httpd_req_t *req);
+static esp_err_t cors_options_handler(httpd_req_t *req);
 
 // =============================================================================
 // MCP Tool Interface Implementation
@@ -104,7 +105,7 @@ webserver_tool_config_t webserver_tool_create_default_config(void)
     config.send_wait_timeout = 5;
     
     // Default behavior
-    config.auto_start = true;
+    config.auto_start = false;  // Only start when needed (AP mode)
     config.publish_events = true;
     config.enable_cors = true;
     
@@ -140,6 +141,9 @@ webserver_tool_handle_t webserver_tool_init(const webserver_tool_config_t *confi
     ctx->publish_events = config->publish_events;
     
     ESP_LOGI(TAG, "✅ webserver_tool initialized (port=%d)", config->port);
+    
+    // Note: Webserver starts only when needed (AP mode events)
+    // Event-driven architecture: NETWORK_TOOL_EVENT_AP_STARTED triggers start
     
     return (webserver_tool_handle_t)ctx;
 }
@@ -308,7 +312,7 @@ static esp_err_t start_http_server(struct webserver_tool_context *ctx)
     httpd_register_uri_handler(ctx->server, &api_networks_post_uri);
     
     httpd_uri_t api_networks_delete_uri = {
-        .uri = "/api/networks/*",
+        .uri = "/api/networks",  // Same endpoint as POST
         .method = HTTP_DELETE,
         .handler = api_networks_delete_handler,
         .user_ctx = ctx
@@ -322,6 +326,15 @@ static esp_err_t start_http_server(struct webserver_tool_context *ctx)
         .user_ctx = ctx
     };
     httpd_register_uri_handler(ctx->server, &api_apply_uri);
+    
+    // Add CORS preflight handler for DELETE requests
+    httpd_uri_t cors_options_uri = {
+        .uri = "/api/*",
+        .method = HTTP_OPTIONS,
+        .handler = cors_options_handler,
+        .user_ctx = ctx
+    };
+    httpd_register_uri_handler(ctx->server, &cors_options_uri);
     
     ctx->server_running = true;
     ctx->port = ctx->config.port;
@@ -464,6 +477,68 @@ static esp_err_t api_networks_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
     
+    // Check if this is a delete action
+    cJSON *action_item = cJSON_GetObjectItem(request_json, "action");
+    if (action_item && cJSON_IsString(action_item) && strcmp(cJSON_GetStringValue(action_item), "delete") == 0) {
+        // Handle delete action
+        cJSON *index_item = cJSON_GetObjectItem(request_json, "index");
+        if (!index_item || !cJSON_IsNumber(index_item)) {
+            cJSON_Delete(request_json);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Index required for delete");
+            return ESP_FAIL;
+        }
+        
+        int index = cJSON_GetNumberValue(index_item);
+        cJSON_Delete(request_json);
+        
+        // Load existing configuration
+        cJSON *wifi_config = NULL;
+        esp_err_t ret = fs_tool_load_json_config(ctx->fs_tool, "wifi.json", &wifi_config);
+        if (ret != ESP_OK || !wifi_config) {
+            httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Configuration not found");
+            return ESP_FAIL;
+        }
+        
+        cJSON *networks_array = cJSON_GetObjectItem(wifi_config, "networks");
+        if (!networks_array || !cJSON_IsArray(networks_array)) {
+            cJSON_Delete(wifi_config);
+            httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Networks array not found");
+            return ESP_FAIL;
+        }
+        
+        // Delete network at index
+        cJSON *deleted_item = cJSON_DetachItemFromArray(networks_array, index);
+        if (!deleted_item) {
+            cJSON_Delete(wifi_config);
+            httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Network index not found");
+            return ESP_FAIL;
+        }
+        cJSON_Delete(deleted_item);
+        
+        // Save updated configuration
+        ret = fs_tool_save_json_config(ctx->fs_tool, "wifi.json", wifi_config);
+        cJSON_Delete(wifi_config);
+        
+        // Send response
+        cJSON *response = cJSON_CreateObject();
+        if (ret == ESP_OK) {
+            cJSON_AddBoolToObject(response, "success", true);
+            cJSON_AddStringToObject(response, "message", "Network deleted successfully");
+        } else {
+            cJSON_AddBoolToObject(response, "success", false);
+            cJSON_AddStringToObject(response, "message", "Failed to save configuration");
+        }
+        
+        const char *response_str = cJSON_Print(response);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, response_str);
+        
+        free((void*)response_str);
+        cJSON_Delete(response);
+        return ESP_OK;
+    }
+    
+    // Handle add network action (original logic)
     cJSON *ssid_item = cJSON_GetObjectItem(request_json, "ssid");
     cJSON *password_item = cJSON_GetObjectItem(request_json, "password");
     
@@ -541,16 +616,31 @@ static esp_err_t api_networks_delete_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
     
-    // Extract index from URI
-    const char *uri = req->uri;
-    const char *index_str = strrchr(uri, '/');
-    if (!index_str) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid index");
+    // Read request body (same pattern as POST handler)
+    char content[128];
+    int content_len = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (content_len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Request body required");
         return ESP_FAIL;
     }
-    index_str++;  // Skip '/'
+    content[content_len] = '\0';
     
-    int index = atoi(index_str);
+    // Parse JSON body
+    cJSON *request_json = cJSON_Parse(content);
+    if (!request_json) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON *index_json = cJSON_GetObjectItem(request_json, "index");
+    if (!index_json || !cJSON_IsNumber(index_json)) {
+        cJSON_Delete(request_json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing or invalid index");
+        return ESP_FAIL;
+    }
+    
+    int index = cJSON_GetNumberValue(index_json);
+    cJSON_Delete(request_json);
     
     // Load existing WiFi configuration  
     cJSON *wifi_config = NULL;
@@ -632,7 +722,25 @@ static esp_err_t api_apply_handler(httpd_req_t *req)
     // Publish restart event
     publish_webserver_event(ctx, WEBSERVER_TOOL_EVENT_RESTART_REQUESTED, NULL);
     
-    ESP_LOGI(TAG, "Restart requested via API");
+    ESP_LOGI(TAG, "Restart requested via API - restarting in 2 seconds");
+    
+    // Give HTTP response time to send, then restart
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();
+    
+    return ESP_OK;
+}
+
+static esp_err_t cors_options_handler(httpd_req_t *req)
+{
+    // Set CORS headers for preflight requests
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type, Authorization");
+    httpd_resp_set_hdr(req, "Access-Control-Max-Age", "86400");
+    
+    // Send empty response with 200 OK
+    httpd_resp_send(req, NULL, 0);
     
     return ESP_OK;
 }

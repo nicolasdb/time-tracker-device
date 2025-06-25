@@ -90,6 +90,7 @@ typedef enum {
     FEEDBACK_STATE_RFID_ERROR        = 0x0302,
     FEEDBACK_STATE_TAG_DETECTED      = 0x0303,
     FEEDBACK_STATE_TAG_READ_ERROR    = 0x0304,
+    FEEDBACK_STATE_TAG_IGNORED       = 0x0305,  // Process Map Authority: yellow flash for ignored duplicates
     
     // Webhook Tool States
     FEEDBACK_STATE_WEBHOOK_SENDING   = 0x0400,
@@ -110,6 +111,10 @@ typedef enum {
     FEEDBACK_STATE_INIT_WEBHOOK      = 0x1004,
     FEEDBACK_STATE_INIT_RFID         = 0x1005,
     FEEDBACK_STATE_INIT_COMPLETE     = 0x1006,
+    
+    // Flow Awareness States (Process Map Authority: Constitutional Requirement)
+    FEEDBACK_STATE_FLOW_AWARENESS    = 0x2100,  // Orange breathing at 60min sessions
+    FEEDBACK_STATE_FLOW_URGENCY      = 0x2101,  // Orange pulsing at 90min sessions
     
     // Tool Communication States
     FEEDBACK_STATE_TOOL_REGISTERED   = 0x2000,
@@ -348,6 +353,39 @@ esp_err_t feedback_tool_subscribe_to_all_events(feedback_tool_handle_t handle);
  * @return ESP_OK on success
  */
 esp_err_t feedback_tool_get_status_json(feedback_tool_handle_t handle, char* json_buffer, size_t buffer_size);
+
+// =============================================================================
+// Flow Awareness Context (Process Map Authority: Constitutional Requirement)
+// =============================================================================
+
+/**
+ * @brief Set flow awareness context for visual state modification
+ * @param handle Tool handle
+ * @param flow_active Whether flow awareness should modify visuals
+ * @param flow_urgent Whether flow urgency should modify visuals
+ * @return ESP_OK on success
+ */
+esp_err_t feedback_tool_set_flow_context(feedback_tool_handle_t handle, 
+                                        bool flow_active, 
+                                        bool flow_urgent);
+
+// =============================================================================
+// Event-Driven Architecture Functions (Phase 6.0)
+// =============================================================================
+
+/**
+ * @brief Start event subscription for async visual feedback
+ * @param handle Tool handle
+ * @return ESP_OK on success
+ */
+esp_err_t feedback_tool_start_event_subscription(feedback_tool_handle_t handle);
+
+/**
+ * @brief Stop event subscription and cleanup
+ * @param handle Tool handle
+ * @return ESP_OK on success
+ */
+esp_err_t feedback_tool_stop_event_subscription(feedback_tool_handle_t handle);
 
 #ifdef __cplusplus
 }

@@ -19,7 +19,7 @@ Validate proposed changes against process maps to prevent architectural drift an
 ## Validation Process
 
 ### **Step 1: Process Map References**
-Check against relevant process maps in `docs/charts/`:
+Check against relevant process maps in `docs/constitution/process_maps/`:
 
 #### **Boot & Initialization Changes**
 - **Reference:** `01_boot_sequence.mmd`
@@ -49,16 +49,14 @@ Check against relevant process maps in `docs/charts/`:
 ### **Step 2: Architectural Boundary Check**
 
 #### **Tool Responsibility Validation**
-```
-rfid_tool:    ONLY tag detection, debouncing, event creation
-fs_tool:      ONLY file system CRUD operations
-payload_tool: ONLY event formatting and timestamp calculation
-http_tool:    ONLY HTTP communication and retry logic
-network_tool: ONLY WiFi management and AP mode
-ntp_tool:     ONLY time synchronization
-feedback_tool: ONLY LED visual feedback
-main.c:       ONLY orchestration and coordination
-```
+**Reference:** `docs/constitution/tool_charter.md` for complete tool boundaries and responsibilities.
+
+**Key Boundaries:**
+- `rfid_tool`: Hardware interface + 5s grace period ONLY
+- `system_monitor_tool`: Flow awareness timing (60/90min) + system health
+- `led_control_tool`: Visual patterns ONLY (no decision logic)
+- `event_formatter_tool`: JSON formatting + timestamps ONLY
+- All other tools: Single domain responsibility per charter
 
 #### **Communication Protocol Validation**
 - **Events only** - no direct tool-to-tool calls
@@ -168,10 +166,11 @@ If legitimate changes require process map updates:
 5. **Version Control** - Clear change tracking
 
 ## Reference Files
-- `docs/charts/README.md` - How to read process maps
-- `docs/charts/*.mmd` - All process map diagrams
+- `docs/constitution/tool_charter.md` - Master tool boundaries and responsibilities
+- `docs/constitution/process_maps/*.mmd` - All constitutional process diagrams
+- `docs/constitution/process_maps/README.md` - How to read process maps
+- `docs/implementation/architecture/` - Implementation guidance
 - `docs/ecosystem/integration_points.md` - Interface specifications
-- `docs/architecture/mcp_patterns_spr.md` - Architectural patterns
 
 ---
 *Process maps are constitutional documents - they define the system's fundamental behavior and should not be modified during implementation phases*

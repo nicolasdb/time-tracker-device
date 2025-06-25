@@ -12,8 +12,9 @@ idf_component_register(
         http_tool
         webserver_tool
         ntp_tool
-        debug_tool
+        system_monitor_tool
         payload_tool
+        event_system
 )
 
 # Create LittleFS partition image from data directory  

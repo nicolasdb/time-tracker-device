@@ -7,6 +7,7 @@
  */
 
 #include "feedback_tool.h"
+#include "event_system.h"   // Event-driven architecture
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -103,6 +104,10 @@ struct feedback_tool {
     uint32_t last_dashboard_time;  // Last dashboard generation time
     uint32_t dashboard_update_interval; // Dashboard update interval (ms)
     bool system_operational;       // Overall system health
+    
+    // Flow Awareness Context (Process Map Authority: Constitutional Requirement)
+    bool flow_awareness_active;    // 60-minute flow awareness triggered
+    bool flow_urgency_active;      // 90-minute flow urgency triggered
 };
 
 // =============================================================================
@@ -384,6 +389,38 @@ esp_err_t feedback_tool_set_state_simple(feedback_tool_handle_t handle, feedback
     }
     
     return feedback_tool_set_state(handle, state, priority, duration);
+}
+
+esp_err_t feedback_tool_flash_event(feedback_tool_handle_t handle, 
+                                    feedback_state_t state, 
+                                    int count,
+                                    uint32_t flash_duration_ms)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (count <= 0) {
+        ESP_LOGW(TAG, "Invalid flash count: %d", count);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    if (!tool->is_initialized) {
+        ESP_LOGW(TAG, "Tool not initialized, ignoring flash event");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGD(TAG, "Flash event: %s (count: %d, duration: %" PRIu32 "ms)", 
+             feedback_tool_state_to_string(state), count, flash_duration_ms);
+    
+    // For now, implement as a single temporary state with total duration
+    // This could be enhanced to support multiple flashes in the future
+    uint32_t total_duration = count * flash_duration_ms;
+    feedback_priority_t priority = get_state_default_priority(state);
+    
+    return queue_state_change(tool, state, priority, total_duration);
 }
 
 feedback_state_t feedback_tool_get_current_state(feedback_tool_handle_t handle)
@@ -668,6 +705,8 @@ static feedback_priority_t get_state_default_priority(feedback_state_t state)
             switch (state) {
                 case FEEDBACK_STATE_TAG_DETECTED:
                     return FEEDBACK_PRIORITY_HIGH;
+                case FEEDBACK_STATE_TAG_IGNORED:
+                    return FEEDBACK_PRIORITY_MEDIUM;  // Quick flash, medium priority
                 case FEEDBACK_STATE_RFID_ERROR:
                 case FEEDBACK_STATE_TAG_READ_ERROR:
                     return FEEDBACK_PRIORITY_CRITICAL;
@@ -688,6 +727,16 @@ static feedback_priority_t get_state_default_priority(feedback_state_t state)
             
         case 0x2000: // Tool communication states
             return FEEDBACK_PRIORITY_HIGH;
+            
+        case 0x2100: // Flow awareness states
+            switch (state) {
+                case FEEDBACK_STATE_FLOW_AWARENESS:
+                    return FEEDBACK_PRIORITY_MEDIUM;  // Flow awareness - medium priority
+                case FEEDBACK_STATE_FLOW_URGENCY:
+                    return FEEDBACK_PRIORITY_HIGH;    // Flow urgency - high priority
+                default:
+                    return FEEDBACK_PRIORITY_MEDIUM;
+            }
             
         default:
             return FEEDBACK_PRIORITY_LOW;
@@ -732,6 +781,14 @@ static rgb_color_t get_state_color(feedback_state_t state)
         // RFID States
         case FEEDBACK_STATE_TAG_DETECTED:
             return COLOR_GREEN; // Solid green
+            
+        case FEEDBACK_STATE_TAG_IGNORED:
+            return COLOR_YELLOW; // Quick yellow flash per process map authority
+            
+        // Flow Awareness States (Process Map Authority: Constitutional Requirement)
+        case FEEDBACK_STATE_FLOW_AWARENESS:
+        case FEEDBACK_STATE_FLOW_URGENCY:
+            return COLOR_ORANGE; // Orange breathing/pulsing for flow states
             
         case FEEDBACK_STATE_RFID_INITIALIZING:
         case FEEDBACK_STATE_RFID_ACTIVE:
@@ -810,10 +867,71 @@ static void update_led_display(struct feedback_tool *tool)
         }
         
         case FEEDBACK_STATE_TAG_DETECTED: {
-            // Solid color
-            display_color.r = color.r * tool->config.max_brightness / 255;
-            display_color.g = color.g * tool->config.max_brightness / 255;
-            display_color.b = color.b * tool->config.max_brightness / 255;
+            // Process Map Authority: Modify visuals based on flow awareness context
+            if (tool->flow_urgency_active) {
+                // 90-minute urgency: Orange pulsing (transition invitation)
+                uint32_t pulse_period = 2000 / tool->config.cleanup_interval_ms; // 2-second cycle
+                float cycle_position = fmod(tool->cycle_counter, pulse_period) / pulse_period;
+                float intensity;
+                
+                if (cycle_position < 0.2) { // Quick rise (20% of cycle)
+                    intensity = cycle_position / 0.2; // 0 to 1 quickly
+                } else { // Slow fade (80% of cycle)
+                    intensity = 1.0 - ((cycle_position - 0.2) / 0.8); // 1 to 0 slowly
+                }
+                
+                intensity = 0.3 + (intensity * 0.7); // 0.3 to 1.0 range for visibility
+                
+                // Orange color (255, 165, 0) with pulsing intensity
+                display_color.r = (uint8_t)(255 * intensity * tool->config.max_brightness / 255);
+                display_color.g = (uint8_t)(165 * intensity * tool->config.max_brightness / 255);
+                display_color.b = 0;
+                
+            } else if (tool->flow_awareness_active) {
+                // 60-minute awareness: Orange breathing (4:7:8 ratio)
+                uint32_t breathing_period = 5000 / tool->config.cleanup_interval_ms; // 5-second cycle
+                float cycle_position = fmod(tool->cycle_counter, breathing_period) / breathing_period;
+                float intensity;
+                
+                if (cycle_position < 0.21) { // 4/19 = inhale phase
+                    intensity = cycle_position / 0.21; // 0 to 1
+                } else if (cycle_position < 0.58) { // 7/19 = hold phase  
+                    intensity = 1.0; // sustained
+                } else { // 8/19 = exhale phase
+                    intensity = 1.0 - ((cycle_position - 0.58) / 0.42); // 1 to 0
+                }
+                
+                // Orange color (255, 165, 0) with breathing intensity
+                display_color.r = (uint8_t)(255 * intensity * tool->config.max_brightness / 255);
+                display_color.g = (uint8_t)(165 * intensity * tool->config.max_brightness / 255);
+                display_color.b = 0;
+                
+            } else {
+                // Normal: Solid green color
+                display_color.r = color.r * tool->config.max_brightness / 255;
+                display_color.g = color.g * tool->config.max_brightness / 255;
+                display_color.b = color.b * tool->config.max_brightness / 255;
+            }
+            break;
+        }
+        
+        case FEEDBACK_STATE_TAG_IGNORED: {
+            // Quick yellow flash (process map authority: "Quick yellow flash")
+            uint32_t flash_period = 500 / tool->config.cleanup_interval_ms; // 500ms total flash
+            uint32_t phase = tool->cycle_counter % flash_period;
+            uint32_t on_phase = 250 / tool->config.cleanup_interval_ms;     // 250ms on
+            
+            if (phase < on_phase) {
+                // Flash on - yellow
+                display_color.r = color.r * tool->config.max_brightness / 255;
+                display_color.g = color.g * tool->config.max_brightness / 255;
+                display_color.b = color.b * tool->config.max_brightness / 255;
+            } else {
+                // Flash off - dim
+                display_color.r = 0;
+                display_color.g = 0;
+                display_color.b = 0;
+            }
             break;
         }
         
@@ -835,6 +953,67 @@ static void update_led_display(struct feedback_tool *tool)
             display_color.r = display_color.r * tool->config.max_brightness / 255;
             display_color.g = display_color.g * tool->config.max_brightness / 255;
             display_color.b = display_color.b * tool->config.max_brightness / 255;
+            break;
+        }
+        
+        case FEEDBACK_STATE_FLOW_AWARENESS: {
+            // Orange breathing (5-second cycle, 4:7:8 ratio per Process Map Authority)
+            // Constitutional requirement: Visual flow awareness at 60-minute sessions
+            uint32_t breathing_period = 5000 / tool->config.cleanup_interval_ms; // 5-second cycle
+            
+            // 4:7:8 breathing ratio (inhale:hold:exhale = 4:7:8)
+            float cycle_position = fmod(tool->cycle_counter, breathing_period) / breathing_period;
+            float intensity;
+            
+            if (cycle_position < 0.21) { // 4/19 = inhale phase
+                intensity = cycle_position / 0.21; // 0 to 1
+            } else if (cycle_position < 0.58) { // 7/19 = hold phase  
+                intensity = 1.0; // sustained
+            } else { // 8/19 = exhale phase
+                intensity = 1.0 - ((cycle_position - 0.58) / 0.42); // 1 to 0
+            }
+            
+            // Orange color (255, 165, 0) with breathing intensity
+            display_color.r = (uint8_t)(255 * intensity * tool->config.max_brightness / 255);
+            display_color.g = (uint8_t)(165 * intensity * tool->config.max_brightness / 255);
+            display_color.b = 0;
+            
+            // Debug breathing every 2.5 seconds
+            if (tool->cycle_counter % (breathing_period / 2) == 0) {
+                ESP_LOGI(TAG, "🟠 Flow Awareness Breathing: intensity=%.2f, RGB=(%d,%d,%d), cycle=%lu", 
+                         intensity, display_color.r, display_color.g, display_color.b, tool->cycle_counter);
+            }
+            break;
+        }
+        
+        case FEEDBACK_STATE_FLOW_URGENCY: {
+            // Orange pulsing (2-second cycle, transition invitation per Process Map Authority)
+            // Constitutional requirement: Visual flow urgency at 90-minute sessions
+            uint32_t pulse_period = 2000 / tool->config.cleanup_interval_ms; // 2-second cycle
+            
+            // Sharp pulse: quick rise, slow fade (urgency pattern)
+            float cycle_position = fmod(tool->cycle_counter, pulse_period) / pulse_period;
+            float intensity;
+            
+            if (cycle_position < 0.2) { // Quick rise (20% of cycle)
+                intensity = cycle_position / 0.2; // 0 to 1 quickly
+            } else { // Slow fade (80% of cycle)
+                intensity = 1.0 - ((cycle_position - 0.2) / 0.8); // 1 to 0 slowly
+            }
+            
+            // Ensure minimum visibility for urgency
+            intensity = 0.3 + (intensity * 0.7); // 0.3 to 1.0 range
+            
+            // Orange color (255, 165, 0) with pulsing intensity
+            display_color.r = (uint8_t)(255 * intensity * tool->config.max_brightness / 255);
+            display_color.g = (uint8_t)(165 * intensity * tool->config.max_brightness / 255);
+            display_color.b = 0;
+            
+            // Debug pulsing every second
+            if (tool->cycle_counter % (pulse_period / 2) == 0) {
+                ESP_LOGI(TAG, "🟠 Flow Urgency Pulsing: intensity=%.2f, RGB=(%d,%d,%d), cycle=%lu", 
+                         intensity, display_color.r, display_color.g, display_color.b, tool->cycle_counter);
+            }
             break;
         }
         
@@ -904,7 +1083,12 @@ const char* feedback_tool_state_to_string(feedback_state_t state)
         case FEEDBACK_STATE_RFID_ACTIVE: return "RFID_ACTIVE";
         case FEEDBACK_STATE_RFID_ERROR: return "RFID_ERROR";
         case FEEDBACK_STATE_TAG_DETECTED: return "TAG_DETECTED";
+        case FEEDBACK_STATE_TAG_IGNORED: return "TAG_IGNORED";
         case FEEDBACK_STATE_TAG_READ_ERROR: return "TAG_READ_ERROR";
+        
+        // Flow Awareness States (Orange family - Process Map Authority)
+        case FEEDBACK_STATE_FLOW_AWARENESS: return "FLOW_AWARENESS";
+        case FEEDBACK_STATE_FLOW_URGENCY: return "FLOW_URGENCY";
         
         // Webhook Tool States (Yellow/Green family)
         case FEEDBACK_STATE_WEBHOOK_SENDING: return "WEBHOOK_SENDING";
@@ -1107,5 +1291,177 @@ esp_err_t feedback_tool_subscribe_to_all_events(feedback_tool_handle_t handle)
     // Event subscription for status aggregation can be added in Phase 4.4
     ESP_LOGI(TAG, "Dashboard functionality enabled - event subscription ready for Phase 4.4");
     
+    return ESP_OK;
+}
+
+// =============================================================================
+// Flow Awareness Context (Process Map Authority: Constitutional Requirement)
+// =============================================================================
+
+esp_err_t feedback_tool_set_flow_context(feedback_tool_handle_t handle, 
+                                        bool flow_active, 
+                                        bool flow_urgent)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    if (!tool->is_initialized) {
+        ESP_LOGW(TAG, "Tool not initialized, ignoring flow context update");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    tool->flow_awareness_active = flow_active;
+    tool->flow_urgency_active = flow_urgent;
+    
+    ESP_LOGI(TAG, "🟠 Flow context updated: awareness=%s, urgency=%s", 
+             flow_active ? "active" : "inactive",
+             flow_urgent ? "active" : "inactive");
+    
+    return ESP_OK;
+}
+
+// =============================================================================
+// Event-Driven Architecture Implementation (Phase 6.0)
+// =============================================================================
+
+/**
+ * @brief Event handler for session events (flow awareness)
+ */
+static void feedback_session_event_handler(void* handler_args, esp_event_base_t base,
+                                                int32_t id, void* event_data)
+{
+    struct feedback_tool *tool = (struct feedback_tool*)handler_args;
+    
+    if (base == SESSION_EVENTS) {
+        session_event_data_t* session_data = (session_event_data_t*)event_data;
+        
+        switch (id) {
+            case SESSION_EVENT_STARTED:
+                ESP_LOGI(TAG, "📡 Session started event received: tag=%s", session_data->tag_uid);
+                
+                // Clear flow context for fresh session and show tag detected state
+                tool->flow_awareness_active = session_data->flow_awareness_active;  // Should be false
+                tool->flow_urgency_active = session_data->flow_urgency_active;      // Should be false
+                
+                // Set tag detected visual state (will use cleared flow context)
+                feedback_tool_set_state_simple((feedback_tool_handle_t)tool, FEEDBACK_STATE_TAG_DETECTED);
+                
+                ESP_LOGI(TAG, "✅ Fresh session visual feedback set (green, no flow context)");
+                break;
+                
+            case SESSION_EVENT_ENDED:
+                ESP_LOGI(TAG, "📡 Session ended event received: tag=%s, duration=%llu ms", 
+                         session_data->tag_uid, (unsigned long long)session_data->session_duration_ms);
+                
+                // Clear flow context and return to idle
+                tool->flow_awareness_active = false;
+                tool->flow_urgency_active = false;
+                
+                feedback_tool_set_state_simple((feedback_tool_handle_t)tool, FEEDBACK_STATE_IDLE);
+                
+                ESP_LOGI(TAG, "✅ Session ended visual feedback set (idle, flow context cleared)");
+                break;
+                
+            case SESSION_EVENT_FLOW_AWARENESS:
+                ESP_LOGI(TAG, "📡 Flow awareness event received: %lu minutes", (unsigned long)session_data->session_duration_min);
+                
+                // Update flow context for orange breathing
+                tool->flow_awareness_active = session_data->flow_awareness_active;
+                tool->flow_urgency_active = session_data->flow_urgency_active;
+                
+                ESP_LOGI(TAG, "✅ Flow awareness context updated (orange breathing active)");
+                break;
+                
+            case SESSION_EVENT_FLOW_URGENCY:
+                ESP_LOGI(TAG, "📡 Flow urgency event received: %lu minutes", (unsigned long)session_data->session_duration_min);
+                
+                // Update flow context for orange pulsing
+                tool->flow_awareness_active = session_data->flow_awareness_active;
+                tool->flow_urgency_active = session_data->flow_urgency_active;
+                
+                ESP_LOGI(TAG, "✅ Flow urgency context updated (orange pulsing active)");
+                break;
+                
+            default:
+                break;
+        }
+    }
+}
+
+/**
+ * @brief Event handler for RFID events (visual state changes)
+ */
+static void feedback_rfid_event_handler(void* handler_args, esp_event_base_t base,
+                                             int32_t id, void* event_data)
+{
+    struct feedback_tool *tool = (struct feedback_tool*)handler_args;
+    
+    if (base == RFID_EVENTS) {
+        switch (id) {
+            case RFID_EVENT_TAG_IGNORED:
+                ESP_LOGI(TAG, "📡 RFID ignored event received");
+                
+                // Flash yellow for ignored tags
+                feedback_tool_flash_event((feedback_tool_handle_t)tool, FEEDBACK_STATE_TAG_IGNORED, 1, 500);
+                
+                ESP_LOGI(TAG, "✅ Tag ignored visual feedback set (yellow flash)");
+                break;
+                
+            default:
+                // Other RFID events are handled by session events
+                break;
+        }
+    }
+}
+
+esp_err_t feedback_tool_start_event_subscription(feedback_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
+    
+    // Subscribe to session events for flow awareness
+    esp_err_t ret = subscribe_to_session_events(feedback_session_event_handler, tool);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Failed to subscribe to session events: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Subscribe to RFID events for ignored tags
+    ret = subscribe_to_rfid_events(feedback_rfid_event_handler, tool);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Failed to subscribe to RFID events: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "✅ Feedback tool subscribed to session and RFID events");
+    return ESP_OK;
+}
+
+esp_err_t feedback_tool_stop_event_subscription(feedback_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Unregister event handlers
+    esp_err_t ret1 = esp_event_handler_unregister(SESSION_EVENTS, ESP_EVENT_ANY_ID, 
+                                                   feedback_session_event_handler);
+    esp_err_t ret2 = esp_event_handler_unregister(RFID_EVENTS, ESP_EVENT_ANY_ID, 
+                                                   feedback_rfid_event_handler);
+    
+    if (ret1 != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to unregister session event handler: %s", esp_err_to_name(ret1));
+    }
+    if (ret2 != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to unregister RFID event handler: %s", esp_err_to_name(ret2));
+    }
+    
+    ESP_LOGI(TAG, "✅ Feedback tool event subscription stopped");
     return ESP_OK;
 }

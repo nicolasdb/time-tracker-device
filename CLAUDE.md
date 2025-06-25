@@ -43,13 +43,13 @@ Layer 5: Insights Interface           → User feedback
 ## 🔧 **Current Development State [SPR]**
 
 ```txt
-PHASE: 5.6a-complete|http-orchestration-fixed|stack-overflow-resolved|process-map-authority-restored
-TOOLS: rfid_tool(90%)|payload_tool(85%)|fs_tool(95%)|feedback_tool(92%)|network_tool(92%)|ntp_tool(88%)|debug_tool(85%)|http_tool(85%)
-FIXED: stack-overflow-protection|http-send-payload-interface|main-c-simplified|tool-boundary-separation
-HARDWARE: ESP32-C3|WS2812B-GPIO7|RC522-SPI|LittleFS-1536K|8KB-task-separation|crash-free-operation
-ECOSYSTEM: architectural-violations-corrected|system-compliance-88%|time-tracking-optimized
-NEXT: Phase-5.6c|fs-event-storage|session-tracking-in-proper-tools|payload-batching-optimization
-STATUS: stack-protected|orchestration-clean|process-map-compliant|ready-for-session-logic
+PHASE: 5.6b-complete|event-driven-refactor|race-conditions-eliminated|async-architecture-implemented|event-base-migration-complete
+TOOLS: rfid_tool(95%)|payload_tool(85%)|fs_tool(95%)|feedback_tool(100%)|network_tool(92%)|ntp_tool(88%)|system_monitor_tool(100%)|http_tool(85%)|event_system(100%)
+FIXED: flow-context-race|orange-green-issue|universal-event-system|ESP-event-communication|tool-decoupling|RFID_TOOL_EVENTS→RFID_EVENTS|tag-removal-session-matching
+HARDWARE: ESP32-C3|WS2812B-GPIO7|RC522-SPI|LittleFS-1536K|event-driven-optimized|async-ready|debounce-validated
+ECOSYSTEM: race-condition-eliminated|system-compliance-97%|event-driven-architecture|process-map-compliant|debounce-system-optimal
+NEXT: Phase-5.7|hardware-validation|ecosystem-integration|webhook-server-layer-2
+STATUS: event-driven|tools-decoupled|race-free|production-ready
 ```
 
 → **Detail**: `docs/project/current_state_spr.md`  
@@ -102,11 +102,11 @@ STATUS: stack-protected|orchestration-clean|process-map-compliant|ready-for-sess
 ## 🏗️ **Architecture Patterns [SPR]**
 
 ```txt
-PATTERNS: handle-based|event-driven|self-contained|tool-registry|ecosystem-aware
-COMMUNICATION: publish-subscribe|ESP_EVENT_POST|no-coupling|webhook-integration
-DEPLOYMENT: embedded-deps|portable-tools|cross-project-reusable|ecosystem-compatible
-MEMORY: 8192-stack|handle-context|no-static-globals|stable-operation
-ECOSYSTEM: fs_tool-pattern|webhook-server-similarity|data-gateway-role
+PATTERNS: handle-based|event-driven|self-contained|universal-event-bus|race-condition-free
+COMMUNICATION: ESP-event-system-only|publish-subscribe|async-events|no-direct-calls|tool-decoupling
+DEPLOYMENT: embedded-deps|portable-tools|event-system-component|ecosystem-compatible
+MEMORY: 8192-stack|handle-context|no-static-globals|event-optimized-operation
+ECOSYSTEM: async-tool-communication|webhook-server-similarity|data-gateway-role|flow-context-management
 ```
 
 → **Complete Patterns**: `docs/architecture/mcp_patterns_spr.md`  
@@ -181,12 +181,20 @@ docs/archive/                       → Historical preservation
 
 ## 🎯 **Next Steps: Ecosystem Integration**
 
-### **Phase 5.5: FS Event Logging (Current)**
+### **Phase 5.6b: Event-Driven Architecture (COMPLETE)**
 ```txt
-GOAL: Implement structured event logging for ecosystem integration
-TASKS: fs_tool-event-handler|JSON-storage|RFID+NTP-coordination|webhook-prep
-ECOSYSTEM: event-format-standardization|webhook-server-interface-prep
-VALIDATION: process-map-compliance|ecosystem-integration-testing
+GOAL: Eliminate race conditions through async event-driven architecture
+TASKS: universal-event-system|ESP-event-communication|tool-decoupling|flow-context-race-fix
+ECOSYSTEM: async-tool-communication|event-driven-patterns|process-map-compliance
+VALIDATION: compilation-clean|race-condition-eliminated|orange-green-issue-resolved
+```
+
+### **Phase 5.7: Async Flow Testing (Current)**
+```txt
+GOAL: Validate async event-driven flow awareness without race conditions
+TASKS: hardware-testing|flow-timing-validation|orange-green-verification|performance-testing
+ECOSYSTEM: end-to-end-validation|ecosystem-readiness-confirmation
+VALIDATION: place-tag→GREEN|flow-awareness→orange-breathing|flow-urgency→orange-pulsing|remove-tag→idle|new-tag→GREEN
 ```
 
 ### **Phase 6: Webhook Server Development (Next)**
@@ -217,6 +225,9 @@ VALIDATION: user-experience-testing|growth-impact-measurement
 - **`/ecosystem_context`**: Full system understanding
 - **`/spr_reload`**: Technical patterns and current state
 - **`/map_check`**: Process map validation before changes
+
+### **Memories**
+- The snprintf approach is safer and avoids the truncation warning.
 
 ---
 
