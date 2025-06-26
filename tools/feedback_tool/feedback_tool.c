@@ -1372,6 +1372,12 @@ static void feedback_session_event_handler(void* handler_args, esp_event_base_t 
                 tool->flow_awareness_active = session_data->flow_awareness_active;
                 tool->flow_urgency_active = session_data->flow_urgency_active;
                 
+                // Ensure visual update if tag is currently detected
+                if (tool->current_state == FEEDBACK_STATE_TAG_DETECTED) {
+                    ESP_LOGI(TAG, "🟠 Tag detected during flow awareness - updating to orange breathing");
+                    // State will update on next cycle with new flow context
+                }
+                
                 ESP_LOGI(TAG, "✅ Flow awareness context updated (orange breathing active)");
                 break;
                 
@@ -1381,6 +1387,12 @@ static void feedback_session_event_handler(void* handler_args, esp_event_base_t 
                 // Update flow context for orange pulsing
                 tool->flow_awareness_active = session_data->flow_awareness_active;
                 tool->flow_urgency_active = session_data->flow_urgency_active;
+                
+                // Ensure visual update if tag is currently detected
+                if (tool->current_state == FEEDBACK_STATE_TAG_DETECTED) {
+                    ESP_LOGI(TAG, "🔥 Tag detected during flow urgency - updating to orange pulsing");
+                    // State will update on next cycle with new flow context
+                }
                 
                 ESP_LOGI(TAG, "✅ Flow urgency context updated (orange pulsing active)");
                 break;

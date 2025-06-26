@@ -381,16 +381,23 @@ static esp_err_t generate_ascii_dashboard(system_monitor_tool_t* tool, char* buf
             // Get FS tool status for storage info
             if (reg_tool->get_status_func && reg_tool->last_status) {
                 reg_tool->get_status_func(reg_tool->tool_handle, reg_tool->last_status);
-                // Cast to fs_tool_status_t and extract real data
+                // Fixed struct layout to match fs_tool.h exactly (ARCHITECTURAL FIX)
                 typedef struct {
-                    bool is_initialized, is_active, is_mounted;
-                    char mount_point[64], partition_label[32];
-                    uint32_t total_bytes, used_bytes, available_bytes;
-                    uint8_t usage_percent;
-                    uint32_t uptime_ms, file_operations_count, error_count;
-                    uint32_t capabilities;
-                } fs_status_t;
-                fs_status_t* fs = (fs_status_t*)reg_tool->last_status;
+                    bool is_initialized;                     ///< Tool initialization status
+                    bool is_active;                          ///< Tool active status
+                    bool is_mounted;                         ///< Filesystem mount status
+                    char mount_point[32];                    ///< Current mount point (FS_TOOL_MAX_MOUNT_LEN)
+                    char partition_label[16];                ///< Partition label (FS_TOOL_MAX_LABEL_LEN)
+                    uint32_t total_bytes;                    ///< Total filesystem size
+                    uint32_t used_bytes;                     ///< Used filesystem space
+                    uint32_t available_bytes;                ///< Available filesystem space
+                    uint8_t usage_percent;                   ///< Usage percentage
+                    uint32_t uptime_ms;                      ///< Tool uptime
+                    uint32_t file_operations_count;          ///< Total file operations
+                    uint32_t error_count;                    ///< Error count
+                    uint32_t capabilities;                   ///< Tool capabilities (fs_tool_capabilities_t)
+                } fs_status_corrected_t;
+                fs_status_corrected_t* fs = (fs_status_corrected_t*)reg_tool->last_status;
                 if (fs->is_mounted) {
                     snprintf(fs_status, sizeof(fs_status), "%u%% (%luK free)", 
                              fs->usage_percent, fs->available_bytes / 1024);
@@ -427,15 +434,21 @@ static esp_err_t generate_ascii_dashboard(system_monitor_tool_t* tool, char* buf
             // Get HTTP tool status for webhook delivery
             if (reg_tool->get_status_func && reg_tool->last_status) {
                 reg_tool->get_status_func(reg_tool->tool_handle, reg_tool->last_status);
-                // Cast to http_tool_status_t and extract real data
+                // Fixed struct layout to match http_tool.h exactly (ARCHITECTURAL FIX)
                 typedef struct {
-                    bool is_initialized, is_active, wifi_connected, webhook_reachable;
-                    char current_url[128];
-                    uint32_t pending_count, success_count, failed_count;
-                    uint32_t uptime_ms, last_transmission_ms;
-                    uint32_t capabilities;
-                } http_status_t;
-                http_status_t* http = (http_status_t*)reg_tool->last_status;
+                    bool is_initialized;                          ///< Tool initialization status
+                    bool is_active;                               ///< Tool active status
+                    bool wifi_connected;                          ///< WiFi connectivity status
+                    bool webhook_reachable;                       ///< Webhook server reachable
+                    char current_url[256];                        ///< Current webhook URL (HTTP_TOOL_MAX_URL_LEN)
+                    uint32_t pending_count;                       ///< Pending events count
+                    uint32_t success_count;                       ///< Successful transmissions
+                    uint32_t failed_count;                        ///< Failed transmissions
+                    uint32_t uptime_ms;                           ///< Tool uptime
+                    uint32_t last_transmission_ms;                ///< Last successful transmission
+                    uint32_t capabilities;                        ///< Tool capabilities (http_tool_capabilities_t)
+                } http_status_corrected_t;
+                http_status_corrected_t* http = (http_status_corrected_t*)reg_tool->last_status;
                 if (http->pending_count > 0) {
                     snprintf(http_status, sizeof(http_status), "%lu pending | %lu sent", 
                              http->pending_count, http->success_count);

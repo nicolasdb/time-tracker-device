@@ -968,7 +968,17 @@ static esp_err_t fs_tool_update_space_info(fs_tool_handle_t handle) {
         handle->total_bytes = total_bytes;
         handle->used_bytes = used_bytes;
         handle->available_bytes = total_bytes - used_bytes;
-        handle->usage_percent = (used_bytes * 100) / total_bytes;
+        
+        // Safe percentage calculation with overflow protection
+        if (total_bytes == 0) {
+            handle->usage_percent = 0;
+        } else if (used_bytes >= total_bytes) {
+            handle->usage_percent = 100;  // Cap at 100% for filesystem inconsistencies
+        } else {
+            // Use 64-bit arithmetic to prevent overflow, then cap result
+            uint64_t percentage = ((uint64_t)used_bytes * 100) / total_bytes;
+            handle->usage_percent = (percentage > 100) ? 100 : (uint8_t)percentage;
+        }
         
         // Check for low space warning
         if (handle->config.publish_events && 

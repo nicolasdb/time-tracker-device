@@ -534,16 +534,34 @@ esp_err_t http_send_payload(http_tool_handle_t handle,
         int status_code = esp_http_client_get_status_code(client);
         if (status_code >= 200 && status_code < 300) {
             ESP_LOGI(TAG, "✅ Payload sent successfully - HTTP %d", status_code);
-            handle->success_count++;
+            // Prevent overflow - reset counters at max value
+            if (handle->success_count < UINT32_MAX) {
+                handle->success_count++;
+            } else {
+                ESP_LOGW(TAG, "Success counter overflow - resetting to 1");
+                handle->success_count = 1;
+            }
             handle->last_transmission_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
         } else {
             ESP_LOGW(TAG, "❌ HTTP request failed - HTTP %d", status_code);
-            handle->failed_count++;
+            // Prevent overflow - reset counters at max value
+            if (handle->failed_count < UINT32_MAX) {
+                handle->failed_count++;
+            } else {
+                ESP_LOGW(TAG, "Failed counter overflow - resetting to 1");
+                handle->failed_count = 1;
+            }
             err = ESP_FAIL;
         }
     } else {
         ESP_LOGE(TAG, "❌ HTTP request failed: %s", esp_err_to_name(err));
-        handle->failed_count++;
+        // Prevent overflow - reset counters at max value
+        if (handle->failed_count < UINT32_MAX) {
+            handle->failed_count++;
+        } else {
+            ESP_LOGW(TAG, "Failed counter overflow - resetting to 1");
+            handle->failed_count = 1;
+        }
     }
     
     esp_http_client_cleanup(client);
@@ -592,16 +610,35 @@ esp_err_t http_tool_send_event(http_tool_handle_t handle,
     evt->sent = false;
     evt->attempts = 0;
     
-    handle->event_count++;
-    handle->pending_count++;
+    // Prevent overflow - reset counters at max value
+    if (handle->event_count < UINT16_MAX) {
+        handle->event_count++;
+    } else {
+        ESP_LOGW(TAG, "Event counter overflow - resetting to 1");
+        handle->event_count = 1;
+    }
+    if (handle->pending_count < UINT32_MAX) {
+        handle->pending_count++;
+    } else {
+        ESP_LOGW(TAG, "Pending counter overflow - resetting to 1");
+        handle->pending_count = 1;
+    }
     
     // Try to send immediately if WiFi is connected (REPLACES COUPLING VIOLATION)
     if (handle->wifi_connected) {
         ESP_LOGI(TAG, "WiFi connected, sending event immediately");
         if (http_tool_send_http_request(handle, evt) == ESP_OK) {
             evt->sent = true;
-            handle->success_count++;
-            handle->pending_count--;
+            // Prevent overflow - reset counters at max value
+            if (handle->success_count < UINT32_MAX) {
+                handle->success_count++;
+            } else {
+                ESP_LOGW(TAG, "Success counter overflow - resetting to 1");
+                handle->success_count = 1;
+            }
+            if (handle->pending_count > 0) {
+                handle->pending_count--;
+            }
             handle->last_transmission_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
             ESP_LOGI(TAG, "Event sent successfully");
         } else {
@@ -657,8 +694,16 @@ esp_err_t http_tool_process_pending(http_tool_handle_t handle) {
             if (http_tool_send_http_request(handle, evt) == ESP_OK) {
                 evt->sent = true;
                 sent_count++;
-                handle->success_count++;
-                handle->pending_count--;
+                // Prevent overflow - reset counters at max value
+                if (handle->success_count < UINT32_MAX) {
+                    handle->success_count++;
+                } else {
+                    ESP_LOGW(TAG, "Success counter overflow - resetting to 1");
+                    handle->success_count = 1;
+                }
+                if (handle->pending_count > 0) {
+                    handle->pending_count--;
+                }
                 handle->last_transmission_ms = now;
                 ESP_LOGI(TAG, "Successfully sent pending event (%s)", 
                         evt->event_type == WEBHOOK_EVENT_TAG_PLACED ? "tag_insert" : "tag_removed");
@@ -667,8 +712,16 @@ esp_err_t http_tool_process_pending(http_tool_handle_t handle) {
                 ESP_LOGW(TAG, "Failed to send pending event, attempts: %d/%d", 
                         evt->attempts, handle->config.max_retries);
                 if (evt->attempts >= handle->config.max_retries) {
-                    handle->failed_count++;
-                    handle->pending_count--;
+                    // Prevent overflow - reset counters at max value
+                    if (handle->failed_count < UINT32_MAX) {
+                        handle->failed_count++;
+                    } else {
+                        ESP_LOGW(TAG, "Failed counter overflow - resetting to 1");
+                        handle->failed_count = 1;
+                    }
+                    if (handle->pending_count > 0) {
+                        handle->pending_count--;
+                    }
                 }
             }
         }
