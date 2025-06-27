@@ -18,6 +18,7 @@
 // New tools per process map authority
 #include "fs_tool.h"
 #include "system_monitor_tool.h"
+#include "event_system.h"
 #include "feedback_tool.h"
 #include "network_tool.h"       // Network connectivity per process maps
 #include "ntp_tool.h"
@@ -1050,6 +1051,8 @@ static void process_map_boot_task(void *arg)
     
     ESP_LOGI(TAG, "🚀 System ready - entering production operation mode");
     ESP_LOGI(TAG, "📊 Debug dashboard will update every %d seconds", DASHBOARD_UPDATE_INTERVAL_MS / 1000);
+    
+    // Event system fully operational - no manual injection needed
     
     while (1) {
         // Generate and display debug dashboard

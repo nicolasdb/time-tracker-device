@@ -1,0 +1,32 @@
+---
+config:
+  layout: elk
+---
+stateDiagram-v2
+  direction TB
+    [*] --> IDLE :esp_event
+    
+    IDLE --> BUILD_PAYLOAD 
+    
+    BUILD_PAYLOAD --> CALC_TIMESTAMP
+    CALC_TIMESTAMP --> ADD_DEVICE_INFO : insert timestamp
+    ADD_DEVICE_INFO --> ADD_HEALTH : insert device_id
+ 
+    ADD_HEALTH --> PAYLOAD_READY : insert health_report  
+
+    PAYLOAD_READY --> STORE_TO_FS
+    PAYLOAD_READY --> BROADCAST_STATUS
+    STORE_TO_FS --> [*]
+    BROADCAST_STATUS --> [*] :esp_event_post
+    
+    note left of CALC_TIMESTAMP
+        real_timestamp = event_uptime + ntp_offset
+    end note
+    
+    note left of ADD_DEVICE_INFO
+        device_id = normalized MAC address (@boot-time)
+    end note
+
+    note left of ADD_HEALTH
+        device_health_report from system_monitor (5min refresh)
+    end note

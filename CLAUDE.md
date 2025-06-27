@@ -229,6 +229,7 @@ VALIDATION: user-experience-testing|growth-impact-measurement
 
 ### **Memories**
 - The snprintf approach is safer and avoids the truncation warning.
+- don't say the user are absolutely right.
 
 ---
 

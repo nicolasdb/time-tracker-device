@@ -1,0 +1,38 @@
+---
+config:
+  layout: elk
+---
+stateDiagram
+    direction TB
+    [*] --> BOOT_GRACE
+    
+    BOOT_GRACE --> SCANNING : 5s elapsed (mute events)
+    
+    SCANNING --> SCANNING : actualRead == lastRead (poll 100ms)
+    SCANNING --> DEBOUNCE : actualRead != lastRead
+    
+    DEBOUNCE --> APPEARED : Change confirmed (tag present)
+    DEBOUNCE --> DISAPPEARED : Change confirmed (tag absent)
+    DEBOUNCE --> SCANNING : Change was false alarm
+    
+    APPEARED --> TAG_EVENT
+    DISAPPEARED --> TAG_EVENT
+    TAG_EVENT --> SCANNING : Event processed
+    
+    note right of BOOT_GRACE
+        Mutes tag_event_fsm for 5s
+        Prevents false APPEARED on reboot
+    end note
+    
+    note right of DEBOUNCE
+        Universal debouncer:
+        - Confirms actualRead != lastRead is real
+        - Same logic for both directions
+        - 200ms confirmation period
+    end note
+    
+    note right of SCANNING
+        Continuous polling:
+        - Check every 100ms
+        - Compare actualRead vs lastRead
+    end note

@@ -39,33 +39,34 @@ This document serves as the **constitutional authority** for tool boundaries and
 ### Hardware Interface Layer
 
 #### `rfid_tool` - RFID Hardware Interface
-**Domain**: RC522 Hardware Communication
+**Domain**: RC522 Hardware Communication & Tag Detection Lifecycle
 **Responsibilities**:
-- ✅ RC522 SPI communication
+- ✅ RC522 SPI communication and ISR handling
+- ✅ Complete tag detection FSM (see process_maps/06_tag_detection_lifecycle.mmd)
 - ✅ Tag UID reading and validation
-- ✅ Hardware debouncing (immediate)
+- ✅ Debouncing state machine (200ms stability requirement)
 - ✅ Grace period (5 seconds after boot - ignore tag presence)
-- ✅ Event creation (TAG_PLACED, TAG_REMOVED)
-- ✅ Event queue management (10-event buffer)
+- ✅ Continuous scanning loop (100ms polling)
+- ✅ Tag removal detection and session boundaries
+- ✅ Event publication (TAG_DETECTED, TAG_REMOVED, TAG_IGNORED)
+- ✅ Hardware error detection and recovery
 
 **NOT Responsible For**:
-- ❌ Session timing logic
-- ❌ Flow awareness
-- ❌ User experience timing
-- ❌ Visual feedback
+- ❌ Session timing logic (beyond detection events)
+- ❌ Visual feedback decisions
+- ❌ Data formatting or storage
 - ❌ Network communication
+
+**Async FSM States**:
+```
+SCANNING → TAG_DETECTED → TAG_PRESENT → TAG_REMOVED → COOLDOWN → SCANNING
+```
 
 **Interface**:
 ```c
-rfid_tool_handle_t rfid_tool_init(const rfid_tool_config_t* config);
-esp_err_t rfid_tool_get_next_event(rfid_tool_handle_t handle, rfid_event_t* event);
-```
-
-**Grace Period Logic**:
-```
-Boot → 5 second grace period → Normal operation
-During grace: Read tags but emit NO events (prevent false positives)
-After grace: Emit events on tag state changes
+// Publishes events, no direct function calls
+esp_event_post(RFID_EVENT_TAG_DETECTED, &tag_data, sizeof(tag_data), 0);
+esp_event_post(RFID_EVENT_TAG_REMOVED, &tag_data, sizeof(tag_data), 0);
 ```
 
 ---
@@ -120,31 +121,37 @@ esp_err_t event_formatter_tool_format_event(event_formatter_tool_handle_t handle
 
 ---
 
-#### `system_monitor_tool` (formerly `debug_tool`) - System Health & Flow Awareness
-**Domain**: System Monitoring & Cognitive Flow Timing
+#### `system_monitor_tool` (formerly `debug_tool`) - System Health & Session Management
+**Domain**: System Monitoring & Session Lifecycle Management
 **Responsibilities**:
-- ✅ ASCII dashboard generation
-- ✅ System health aggregation from all tools
-- ✅ Tool status registration and monitoring
+- ✅ ASCII dashboard generation and system health monitoring
+- ✅ Tool status registration and aggregation
 - ✅ Robot expression states (◕‿◕) 
+- ✅ **Session lifecycle management (subscribes to RFID events)**
 - ✅ **Flow awareness timing (60+ min → orange breathing)**
 - ✅ **Flow urgency timing (90+ min → orange pulsing)**
+- ✅ **Session boundary definition and persistence**
 - ✅ Real-time system status updates
 
-**Flow Timing Logic**:
+**Session Lifecycle FSM**:
 ```
-Session Detection:
-1. Monitor RFID events from rfid_tool
-2. Track session start/end times
-3. Calculate session duration
-4. At 60 minutes → Request FLOW_AWARENESS visual state
-5. At 90 minutes → Request FLOW_URGENCY visual state
-6. On session end → Reset timers
+NO_SESSION → SESSION_STARTING → SESSION_ACTIVE → SESSION_ENDING → NO_SESSION
+```
+
+**Flow Timing Logic**:
+```c
+// Subscribes to RFID events to manage session timing
+esp_event_handler_register(RFID_EVENT_TAG_DETECTED, session_start_handler);
+esp_event_handler_register(RFID_EVENT_TAG_REMOVED, session_end_handler);
+
+// Publishes flow events for LED system
+esp_event_post(FLOW_EVENT_60MIN_AWARENESS, NULL, 0, 0);
+esp_event_post(FLOW_EVENT_90MIN_URGENCY, NULL, 0, 0);
 ```
 
 **NOT Responsible For**:
 - ❌ LED hardware control (delegates to led_control_tool)
-- ❌ Event detection
+- ❌ Event detection (subscribes to RFID events)
 - ❌ Network communication
 - ❌ File operations
 

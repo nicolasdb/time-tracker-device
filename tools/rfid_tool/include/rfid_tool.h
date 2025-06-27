@@ -33,7 +33,7 @@ extern "C" {
 // MCP Tool Events System
 // =============================================================================
 
-ESP_EVENT_DECLARE_BASE(RFID_TOOL_EVENTS);
+// ESP_EVENT_DECLARE_BASE(RFID_TOOL_EVENTS); // REMOVED: Using universal RFID_EVENTS from event_system.h
 
 /**
  * @brief RFID Tool Event Types (Published for other tools)
@@ -306,31 +306,8 @@ esp_err_t rfid_tool_get_device_uid(char* device_uid, size_t buffer_size);
 // Event Handler Interface (Compatible with legacy code)
 // =============================================================================
 
-/**
- * @brief Register event handler for RFID events
- * @param handle Tool handle
- * @param event_type Event type to handle
- * @param event_handler Event handler function
- * @param event_handler_arg Event handler argument
- * @return ESP_OK on success, error code on failure
- */
-esp_err_t rfid_tool_register_event_handler(
-    rfid_tool_handle_t handle,
-    rfid_tool_event_type_t event_type,
-    esp_event_handler_t event_handler,
-    void* event_handler_arg);
-
-/**
- * @brief Unregister event handler for RFID events
- * @param handle Tool handle
- * @param event_type Event type
- * @param event_handler Event handler function
- * @return ESP_OK on success, error code on failure
- */
-esp_err_t rfid_tool_unregister_event_handler(
-    rfid_tool_handle_t handle,
-    rfid_tool_event_type_t event_type,
-    esp_event_handler_t event_handler);
+// Legacy event handler registration removed
+// Use universal event system: subscribe_to_rfid_events() from event_system.h
 
 // =============================================================================
 // Circular Buffer Interface (Process Map Authority)

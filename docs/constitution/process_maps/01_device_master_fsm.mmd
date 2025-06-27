@@ -1,0 +1,45 @@
+---
+config:
+  layout: elk
+---
+stateDiagram
+  direction TB
+  classDef Aqua stroke-width:1px,stroke-dasharray:none,stroke:#46EDC8,fill:#DEFFF8,color:#378E7A;
+  state BOOT {
+    direction TB
+    [*] --> START:Power supply ON
+    START --> HEALTH_CHECK
+  }
+  HEALTH_CHECK --> SYSTEM_MONITOR:All tools reporting
+  state SYSTEM_MONITOR {
+    direction TB
+    esp_event --> DATA
+    esp_event --> FEEDBACK
+    esp_event --> FS
+    esp_event --> RFID
+    state s1 <<choice>>
+    NETWORK --> s1:connection attempt
+    s1 --> NTP:connect
+    s1 --> WEBSERVER:no known SSID > APMODE
+    NTP --> esp_event
+    state RFID {
+      direction TB
+      state S2 <<choice>>
+      TAG_DETECTION --> S2
+      S2 --> TAG_EVENT:tag detected
+      S2 --> TAG_EVENT:tag lost
+    }
+    FEEDBACK
+    FS
+    state DATA {
+      direction TB
+      PAYLOAD --> HTTP
+    }
+    state APmode {
+      direction TB
+      WEBSERVER --> REBOOT:save
+      REBOOT --> [*]
+    }
+  }
+  FS:littleFS
+  class RFID,TAG_DETECTION,TAG_EVENT,FEEDBACK, DATA, PAYLOAD, HTTP Aqua

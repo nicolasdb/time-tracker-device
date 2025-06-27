@@ -1,0 +1,74 @@
+---
+config:
+  layout: elk
+---
+stateDiagram
+  direction TB
+  [*] --> LISTENING: esp_event
+  state IDLE {
+    direction TB
+    LISTENING --> LOOKUP:state received
+    LOOKUP --> EXECUTE:Match to recipe
+    EXECUTE --> LISTENING:Recipe complete
+  }
+  state MAP_STATE {
+    direction TB
+    state TAG_PRESENT {
+      %% After tag_appeared event, the FSM is in this state = continuous tag presence
+      direction TB
+      green_steady
+    }
+    state SYSTEM_IDLE {
+      direction LR
+      blue.fadeIn --> blue.fadeOut
+    }
+    state WIFI_CONNECTING {
+      direction TB
+      cyan_blink
+    }
+    state WIFI_CONNECTED {
+      direction TB
+      cyan_steady
+    }
+    state AP_MODE {
+      direction TB
+      yellow_flash0.2 --> blue_flash0.3
+      blue_flash0.3 --> purple_steady2.0
+      yellow_flash0.2
+      blue_flash0.3
+      purple_steady2.0
+    }
+    state NTP_CALL {
+      direction TB
+      blue_blink
+    }
+    state NTP_SYNC {
+      direction TB
+      blue_steady
+    }
+    state HTTP_SENDING {
+      direction TB
+      green_pulse
+    }
+    state ERROR_DETECTED {
+      direction TB
+      red_blink
+    }
+    state FLOW60 {
+      direction LR
+      orange.fadeIn --> orange.fadeOut
+    }
+    state FLOW90 {
+      direction TB
+      orange_pulse
+    }
+    state BOOT {
+      direction TB
+      white_pulse
+    }
+  }
+  note right of EXECUTE 
+  Direct LED control via led_strip
+        No queues, no priorities
+        Just execute the recipe
+  end note

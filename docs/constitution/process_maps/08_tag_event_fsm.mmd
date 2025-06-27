@@ -1,0 +1,21 @@
+---
+config:
+  layout: elk
+---
+stateDiagram
+  direction TB
+  [*] --> IDLE: esp_event
+  IDLE --> FORMATTING : Event detected
+  FORMATTING --> SENDING:Payload ready
+  SENDING --> IDLE:esp_event_post
+  SENDING --> SENDING:Retry on failure
+  note right of FORMATTING 
+  **Payload:** {event_type, tag_id, uptime_stamp}
+  **Logic:**
+    if APPEARED: tag_id = actual_tag
+    if DISAPPEARED: tag_id = last_tag
+    int64_t uptime_stamp = esp_timer_get_time();
+  end note
+  note right of SENDING 
+  Publishes to esp_event system
+  end note

@@ -76,6 +76,7 @@ typedef struct {
     uint32_t timestamp;
     bool sent;
     uint8_t attempts;
+    uint32_t next_retry_time_ms;  ///< Next retry time (ms) for exponential backoff
 } webhook_event_t;
 
 /**

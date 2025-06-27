@@ -103,7 +103,7 @@ static const char* get_health_status_string(system_monitor_system_health_t healt
 system_monitor_tool_config_t system_monitor_tool_create_default_config(void)
 {
     system_monitor_tool_config_t config = {
-        .dashboard_buffer_size = 512,
+        .dashboard_buffer_size = 1024,
         .json_buffer_size = 256,
         .update_interval_ms = 1000,
         .enable_robot_expressions = true,
@@ -369,7 +369,7 @@ static esp_err_t generate_ascii_dashboard(system_monitor_tool_t* tool, char* buf
     // Collect operational data from tools
     char fs_status[64] = "Unknown";
     char network_status[64] = "Unknown";
-    char http_status[96] = "Unknown";
+    char http_status[320] = "Unknown";
     char rfid_status[64] = "Unknown";
     
     // Query actual tool statuses for operational data
@@ -421,6 +421,8 @@ static esp_err_t generate_ascii_dashboard(system_monitor_tool_t* tool, char* buf
                 } network_status_t;
                 network_status_t* net = (network_status_t*)reg_tool->last_status;
                 if (net->sta_connected) {
+                    // Debug RSSI value (remove after fixing)
+                    ESP_LOGD(TAG, "📶 Network RSSI debug: %d dBm", net->rssi);
                     snprintf(network_status, sizeof(network_status), "%s (%ddBm)", 
                              net->current_ssid, net->rssi);
                 } else if (net->ap_active) {
@@ -449,12 +451,24 @@ static esp_err_t generate_ascii_dashboard(system_monitor_tool_t* tool, char* buf
                     uint32_t capabilities;                        ///< Tool capabilities (http_tool_capabilities_t)
                 } http_status_corrected_t;
                 http_status_corrected_t* http = (http_status_corrected_t*)reg_tool->last_status;
-                if (http->pending_count > 0) {
-                    snprintf(http_status, sizeof(http_status), "%lu pending | %lu sent", 
-                             http->pending_count, http->success_count);
+                // Show connection status with URL for debugging/validation + transmission stats
+                const char* conn_status = http->webhook_reachable ? "✅" : "❌";
+                // Truncate domain for space efficiency but keep it readable
+                char short_url[48];
+                const char* url_start = strstr(http->current_url, "://");
+                if (url_start) {
+                    url_start += 3; // Skip "://"
+                    snprintf(short_url, sizeof(short_url), "%.44s", url_start);
                 } else {
-                    snprintf(http_status, sizeof(http_status), "Ready | %lu sent", 
-                             http->success_count);
+                    snprintf(short_url, sizeof(short_url), "%.44s", http->current_url);
+                }
+                
+                if (http->pending_count > 0) {
+                    snprintf(http_status, sizeof(http_status), "%s %s | %lu pending, %lu sent", 
+                             conn_status, short_url, http->pending_count, http->success_count);
+                } else {
+                    snprintf(http_status, sizeof(http_status), "%s %s | %lu sent", 
+                             conn_status, short_url, http->success_count);
                 }
             }
         } else if (strcmp(reg_tool->tool_id, "rfid") == 0) {
@@ -473,11 +487,11 @@ static esp_err_t generate_ascii_dashboard(system_monitor_tool_t* tool, char* buf
         "║     RFID TIME TRACKER        ║\n"
         "╚══════════════════════════════╝\n"
         " %s Up: %lu min | %s mode\n"
-        " 📂 Storage: %s | Buffer: %s\n"
+        " 📂 Storage: %s | Buffer: %s (RFID queue)\n"
         " 🌐 Network: %s\n"
         " 📡 Webhook: %s\n"
         " 🏷️  RFID: %s | Events: %s\n"
-        " 🎯 Health: %s\n",
+        " 🎯 Health: %s (system status)\n",
         robot_expr,
         uptime_minutes,
         tool->is_offline_mode ? "OFFLINE" : "ONLINE",

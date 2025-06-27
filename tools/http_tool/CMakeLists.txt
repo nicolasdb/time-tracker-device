@@ -12,4 +12,5 @@ idf_component_register(
     PRIV_REQUIRES
         network_tool
         rfid_tool
+        fs_tool
 )

@@ -1409,10 +1409,34 @@ static void feedback_session_event_handler(void* handler_args, esp_event_base_t 
 static void feedback_rfid_event_handler(void* handler_args, esp_event_base_t base,
                                              int32_t id, void* event_data)
 {
+    // RAW EVENT DEBUGGING - Log EVERY event that reaches this handler
+    ESP_LOGI(TAG, "🔥 FEEDBACK HANDLER ENTRY: base=%s, id=%ld, data=%p", 
+             base ? (const char*)base : "NULL", id, event_data);
+    
     struct feedback_tool *tool = (struct feedback_tool*)handler_args;
     
     if (base == RFID_EVENTS) {
         switch (id) {
+            case RFID_EVENT_TAG_DETECTED:
+                ESP_LOGI(TAG, "🏷️ RFID tag detected - setting green state");
+                
+                // Set solid green for tag detection (highest priority)
+                feedback_tool_set_state((feedback_tool_handle_t)tool, FEEDBACK_STATE_TAG_DETECTED, 
+                                       FEEDBACK_PRIORITY_HIGH, 0);
+                
+                ESP_LOGI(TAG, "✅ Tag detected visual feedback set (green solid)");
+                break;
+                
+            case RFID_EVENT_TAG_REMOVED:
+                ESP_LOGI(TAG, "📤 RFID tag removed - returning to idle");
+                
+                // Clear tag detected state and return to idle
+                feedback_tool_clear_state((feedback_tool_handle_t)tool, FEEDBACK_STATE_TAG_DETECTED);
+                feedback_tool_set_state_simple((feedback_tool_handle_t)tool, FEEDBACK_STATE_IDLE);
+                
+                ESP_LOGI(TAG, "✅ Tag removed visual feedback set (blue breathing)");
+                break;
+                
             case RFID_EVENT_TAG_IGNORED:
                 ESP_LOGI(TAG, "📡 RFID ignored event received");
                 
@@ -1423,7 +1447,7 @@ static void feedback_rfid_event_handler(void* handler_args, esp_event_base_t bas
                 break;
                 
             default:
-                // Other RFID events are handled by session events
+                ESP_LOGW(TAG, "❓ Unhandled RFID event in feedback tool: event_id=%ld", id);
                 break;
         }
     }

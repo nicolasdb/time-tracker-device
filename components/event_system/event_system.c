@@ -107,13 +107,29 @@ esp_err_t publish_system_event(system_event_id_t event_id, system_event_data_t* 
 
 esp_err_t publish_rfid_event(rfid_event_id_t event_id, rfid_event_data_t* data)
 {
+    // 🔥 NUCLEAR DEBUG: Log every call to publish_rfid_event
+    ESP_LOGI(TAG, "🔥 PUBLISH_RFID_EVENT CALLED: event_id=%d, data=%p", (int)event_id, data);
+    if (data) {
+        ESP_LOGI(TAG, "🔥 PUBLISH_RFID_EVENT DATA: tag_uid=%s, timestamp=%" PRIu64, 
+                 data->tag_uid, data->detection_time_us);
+    }
+    
     size_t data_size = data ? sizeof(rfid_event_data_t) : 0;
+    
+    // 🔥 NUCLEAR FIX: Add tiny delay + force flush to ensure event delivery
+    vTaskDelay(pdMS_TO_TICKS(1));  // 1ms delay to let event system catch up
     esp_err_t ret = esp_event_post(RFID_EVENTS, event_id, data, data_size, portMAX_DELAY);
+    if (ret == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(1));  // Another 1ms to ensure delivery
+    }
     
     if (ret == ESP_OK) {
         ESP_LOGD(TAG, "📡 Published RFID_EVENT: %d", event_id);
         if (data && event_id == RFID_EVENT_TAG_DETECTED) {
             ESP_LOGI(TAG, "🏷️  RFID event published: tag=%s", data->tag_uid);
+        }
+        if (data && event_id == RFID_EVENT_TAG_REMOVED) {
+            ESP_LOGI(TAG, "📤 RFID TAG_REMOVED event published: tag=%s", data->tag_uid);
         }
     } else {
         ESP_LOGW(TAG, "❌ Failed to publish RFID_EVENT %d: %s", event_id, esp_err_to_name(ret));

@@ -1,0 +1,33 @@
+---
+config:
+  layout: elk
+---
+stateDiagram-v2
+  direction TB
+  [*] --> IDLE : esp_event
+
+  IDLE --> RETRIEVE_FROM_FS 
+
+  RETRIEVE_FROM_FS --> CHECK_WIFI
+
+  state S1 <<choice>>
+  CHECK_WIFI --> S1
+  S1 --> SEND_HTTP : Online
+  S1 --> QUEUE_LOCAL : Offline
+
+  state S2 <<choice>>
+  SEND_HTTP --> S2
+  S2 --> CONFIRMED : HTTP 200
+  S2 --> RETRY_LOGIC : HTTP fail
+
+  RETRY_LOGIC --> SEND_HTTP : Retry (backoff)
+  RETRY_LOGIC --> QUEUE_LOCAL : Max retries
+
+  QUEUE_LOCAL --> BROADCAST_STATUS : Stored for later
+  CONFIRMED --> BROADCAST_STATUS
+  BROADCAST_STATUS --> [*]:esp_event_post
+
+  note right of RETRY_LOGIC
+    Exponential backoff: 1s, 2s, 4s, 8s, 16s
+    Flag: tryAgain_on_connection
+  end note

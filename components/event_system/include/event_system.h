@@ -61,10 +61,10 @@ typedef struct {
 
 typedef enum {
     RFID_EVENT_READY = 0,
-    RFID_EVENT_TAG_DETECTED,
-    RFID_EVENT_TAG_REMOVED,
-    RFID_EVENT_TAG_IGNORED,
-    RFID_EVENT_ERROR
+    RFID_EVENT_TAG_DETECTED = 1,
+    RFID_EVENT_TAG_REMOVED = 2,    // 🔥 CRITICAL TEST: Use sequential ID=2
+    RFID_EVENT_TAG_IGNORED = 3,    // Move to ID=3
+    RFID_EVENT_ERROR = 4
 } rfid_event_id_t;
 
 typedef struct {
