@@ -1,45 +1,104 @@
 ---
 config:
   layout: elk
+  look: classic
 ---
 stateDiagram
   direction TB
   classDef Aqua stroke-width:1px,stroke-dasharray:none,stroke:#46EDC8,fill:#DEFFF8,color:#378E7A;
   state BOOT {
     direction TB
-    [*] --> START:Power supply ON
-    START --> HEALTH_CHECK
+    START --> HEALTH_CHECK:boot sequence
+    START
+    HEALTH_CHECK
   }
-  HEALTH_CHECK --> SYSTEM_MONITOR:All tools reporting
+  state ESP_EVENT {
+    direction TB
+    esp_event
+  }
+  state DATA {
+    direction TB
+    PAYLOAD --> HTTP
+    PAYLOAD
+    HTTP
+  }
+  state FEEDBACK {
+    direction TB
+    MAP_STATE --> WS2812B:execute recipe
+    MAP_STATE
+    WS2812B
+  }
+  state FS {
+    direction TB
+    FS_OPERATION --> Ledgers:json
+    FS_OPERATION
+    Ledgers
+  }
   state SYSTEM_MONITOR {
     direction TB
-    esp_event --> DATA
-    esp_event --> FEEDBACK
-    esp_event --> FS
-    esp_event --> RFID
+    state F1 <<fork>>
+    HEALTH_REPORT --> F1
+    F1 --> DASHBOARD
+    F1 --> SYSTEM_STATE
+    F1
+    HEALTH_REPORT
+    DASHBOARD
+    SYSTEM_STATE
+  }
+  state RFID {
+    direction TB
+    RC522 --> TAG_DETECTION:read (100ms loop)
+    state S2 <<choice>>
+    TAG_DETECTION --> S2
+    S2 --> TAG_EVENT:tag detected
+    S2 --> TAG_EVENT:tag lost
+    RC522
+    TAG_DETECTION
+    S2
+    TAG_EVENT
+  }
+  state NETWORK {
+    direction TB
     state s1 <<choice>>
-    NETWORK --> s1:connection attempt
+    WIFI --> s1:connection attempt
     s1 --> NTP:connect
-    s1 --> WEBSERVER:no known SSID > APMODE
-    NTP --> esp_event
-    state RFID {
-      direction TB
-      state S2 <<choice>>
-      TAG_DETECTION --> S2
-      S2 --> TAG_EVENT:tag detected
-      S2 --> TAG_EVENT:tag lost
-    }
-    FEEDBACK
-    FS
-    state DATA {
-      direction TB
-      PAYLOAD --> HTTP
-    }
-    state APmode {
+    s1 --> AP_MODE:no known SSID
+    state AP_MODE {
       direction TB
       WEBSERVER --> REBOOT:save
-      REBOOT --> [*]
+      WEBSERVER
+      REBOOT
     }
   }
-  FS:littleFS
-  class RFID,TAG_DETECTION,TAG_EVENT,FEEDBACK, DATA, PAYLOAD, HTTP Aqua
+  [*] --> BOOT:Power supply ON
+  ESP_EVENT --> DATA
+  ESP_EVENT --> SYSTEM_MONITOR
+  SYSTEM_MONITOR --> ESP_EVENT
+  ESP_EVENT --> FEEDBACK
+  ESP_EVENT --> RFID
+  RFID --> ESP_EVENT
+  DATA --> ESP_EVENT
+  ESP_EVENT --> NETWORK
+  NETWORK --> ESP_EVENT
+  ESP_EVENT --> FS
+  FS --> ESP_EVENT
+  REBOOT --> [*]
+  BOOT --> SYSTEM_MONITOR
+  esp_event:communication hub
+  FS_OPERATION:littleFS
+  note left of HEALTH_CHECK 
+  launch all tools 
+    Request status and report on ESP_EVENT
+    Time-out 5 seconds
+  end note
+  class DATA,PAYLOAD,HTTP,FEEDBACK,RFID,TAG_DETECTION,TAG_EVENT Aqua
+  note right of F1
+    Report health status
+    declare CRITICAL_ERROR on time_out tools
+  end note
+  note left of Ledgers
+    10 records max for Ledgers:
+    - store tag_events_ledger
+    - store health_reports_ledger
+    - store payloads_ledger
+  end note

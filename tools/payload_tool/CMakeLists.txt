@@ -7,6 +7,12 @@ idf_component_register(
     REQUIRES 
         esp_common
         esp_timer
+        esp_event
         nvs_flash
         json
+        log
+    PRIV_REQUIRES
+        ntp_tool
+        fs_tool
+        http_tool
 )

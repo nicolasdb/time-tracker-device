@@ -218,6 +218,41 @@ esp_err_t payload_tool_increment_boot_counter(payload_tool_handle_t handle);
  */
 esp_err_t payload_tool_generate_device_id(char* device_id);
 
+// =============================================================================
+// Event System Integration (Process Map 13 Compliance) 
+// =============================================================================
+
+/**
+ * @brief Start RFID event subscription per process map 13
+ * @param handle Tool handle
+ * @return ESP_OK on success
+ */
+esp_err_t payload_tool_start_event_subscription(payload_tool_handle_t handle);
+
+/**
+ * @brief Set tool dependencies for process map compliance
+ * @param handle Tool handle
+ * @param fs_tool_handle FS tool handle for storage
+ * @param ntp_tool_handle NTP tool handle for time sync
+ * @param http_tool_handle HTTP tool handle for transmission
+ * @return ESP_OK on success
+ */
+esp_err_t payload_tool_set_dependencies(payload_tool_handle_t handle,
+                                       void* fs_tool_handle,
+                                       void* ntp_tool_handle,
+                                       void* http_tool_handle);
+
+/**
+ * @brief Build and transmit payload per process map 13
+ * @param handle Tool handle  
+ * @param event_id RFID event ID
+ * @param event_data RFID event data
+ * @return ESP_OK on success
+ */
+esp_err_t payload_tool_build_and_transmit_payload(payload_tool_handle_t handle, 
+                                                 int event_id, 
+                                                 void* event_data);
+
 #ifdef __cplusplus
 }
 #endif

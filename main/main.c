@@ -139,236 +139,12 @@ static const tool_interface_t webserver_tool_interface = {
 // =============================================================================
 
 // =============================================================================
-// DISABLED: RFID Event Processing Task (Replaced by ESP Event System)
+// REMOVED: Legacy RFID Event Processing (Replaced by Event-Driven Architecture)
 // =============================================================================
 
-// DISABLED: Old RFID processing task - now using ESP event system
-/*
-static void rfid_processing_task(void *arg)
-{
-    ESP_LOGI(TAG, "🔧 RFID processing task started (stack: %d bytes)", RFID_PROCESSING_TASK_STACK_SIZE);
-    
-    queued_rfid_event_t queued_event;
-    
-    while (1) {
-        // Wait for RFID events from the queue
-        if (xQueueReceive(rfid_event_queue, &queued_event, portMAX_DELAY) == pdTRUE) {
-            ESP_LOGI(TAG, "📡 Processing queued RFID event: event_id=%ld", queued_event.event_id);
-            
-            // Get tool handles from registry per process map authority
-            payload_tool_handle_t payload_tool = NULL;
-            tool_registry_get_handle("payload", (void**)&payload_tool);
-            
-            fs_tool_handle_t fs_tool = NULL;
-            tool_registry_get_handle("fs", (void**)&fs_tool);
-            
-            // Get tool handles for event processing
-            feedback_tool_handle_t feedback_tool = NULL;
-            tool_registry_get_handle("feedback", (void**)&feedback_tool);
-            
-            system_monitor_tool_handle_t system_monitor_tool = NULL;
-            tool_registry_get_handle("system_monitor", (void**)&system_monitor_tool);
-            
-            switch (queued_event.event_id) {
-                case RFID_TOOL_EVENT_TAG_DETECTED:
-                    ESP_LOGI(TAG, "🏷️  Processing tag detected event - EVENT-DRIVEN REFACTOR");
-                    
-                    // EVENT-DRIVEN ARCHITECTURE: Publish RFID event instead of direct calls
-                    {
-                        const char* tag_uid = queued_event.rfid_event.data.tag_info.uid_string;
-                        if (tag_uid && strlen(tag_uid) > 0) {
-                            rfid_event_data_t rfid_data = {
-                                .detection_time_us = esp_timer_get_time(),
-                                .internal_millis = esp_timer_get_time() / 1000,
-                                .is_new_session = true,
-                                .during_grace_period = false
-                            };
-                            strncpy(rfid_data.tag_uid, tag_uid, sizeof(rfid_data.tag_uid) - 1);
-                            rfid_data.tag_uid[sizeof(rfid_data.tag_uid) - 1] = '\0';
-                            
-                            // Publish RFID event - subscribers will handle session timing and visual feedback
-                            esp_err_t publish_ret = publish_rfid_event(RFID_EVENT_TAG_DETECTED, &rfid_data);
-                            if (publish_ret != ESP_OK) {
-                                ESP_LOGW(TAG, "❌ Failed to publish RFID tag detected event");
-                            }
-                        }
-                    }
-                    
-                    // PROCESS MAP INTEGRATION: Format event payload
-                    if (payload_tool && fs_tool) {
-                        // Create payload event data
-                        payload_event_data_t event_payload = {
-                            .event_type = PAYLOAD_EVENT_TAG_PLACED,
-                            .internal_timestamp_us = esp_timer_get_time(),
-                            .ntp_synced = false, // TODO: Check with ntp_tool
-                            .boot_counter = 0    // TODO: Get from payload_tool
-                        };
-                        
-                        // Copy tag UID if available
-                        if (queued_event.rfid_event.data.tag_info.uid_string[0] != '\0') {
-                            strncpy(event_payload.tag_uid, queued_event.rfid_event.data.tag_info.uid_string, sizeof(event_payload.tag_uid) - 1);
-                            event_payload.tag_uid[sizeof(event_payload.tag_uid) - 1] = '\0';
-                        }
-                        
-                        // Format payload per process map: Main->Payload: payload_format_event(&event)
-                        payload_formatted_result_t result;
-                        esp_err_t format_ret = payload_tool_format_event(payload_tool, &event_payload, &result);
-                        
-                        if (format_ret == ESP_OK && result.formatting_success) {
-                            ESP_LOGI(TAG, "📦 Payload formatted successfully");
-                            
-                            // Store formatted payload per process map: Main->FS: fs_write_payload(&payload)
-                            cJSON *event_json = cJSON_Parse(result.json_string);
-                            if (event_json) {
-                                esp_err_t fs_ret = fs_tool_append_json_log(fs_tool, "rfid_events.json", event_json);
-                                if (fs_ret == ESP_OK) {
-                                    ESP_LOGI(TAG, "📂 Tag detected event stored to filesystem");
-                                } else {
-                                    ESP_LOGW(TAG, "📂 Failed to store event to filesystem: %s", esp_err_to_name(fs_ret));
-                                }
-                                cJSON_Delete(event_json);
-                            } else {
-                                ESP_LOGW(TAG, "📂 Failed to parse JSON payload for storage");
-                            }
-                            
-                            // Send to http_tool per process map: Main->HTTP: http_send_payload(&payload)
-                            http_tool_handle_t http_tool = NULL;
-                            tool_registry_get_handle("http", (void**)&http_tool);
-                            
-                            if (http_tool) {
-                                esp_err_t http_ret = http_send_payload(http_tool, result.json_string, result.json_length);
-                                if (http_ret == ESP_OK) {
-                                    ESP_LOGI(TAG, "🌐 Payload sent to webhook server");
-                                    // NOTE: For time tracking, events are kept in append-only log for analysis.
-                                    // Process map fs_delete_payload() would apply to individual payload files.
-                                } else {
-                                    ESP_LOGW(TAG, "🌐 Failed to send payload: %s", esp_err_to_name(http_ret));
-                                }
-                            } else {
-                                ESP_LOGW(TAG, "🌐 http_tool not available for payload transmission");
-                            }
-                            
-                            payload_tool_free_result(&result);
-                        } else {
-                            ESP_LOGW(TAG, "📦 Failed to format payload: %s", esp_err_to_name(format_ret));
-                        }
-                    } else {
-                        ESP_LOGW(TAG, "📦 payload_tool or fs_tool not available for event processing");
-                    }
-                    break;
-                    
-                case RFID_TOOL_EVENT_TAG_IGNORED:
-                    ESP_LOGI(TAG, "🏷️  Processing tag ignored event - EVENT-DRIVEN REFACTOR");
-                    
-                    // EVENT-DRIVEN ARCHITECTURE: Publish RFID ignored event
-                    {
-                        rfid_event_data_t rfid_data = {
-                            .detection_time_us = esp_timer_get_time(),
-                            .is_new_session = false,
-                            .during_grace_period = false
-                        };
-                        strncpy(rfid_data.tag_uid, "ignored", sizeof(rfid_data.tag_uid) - 1);
-                        
-                        esp_err_t publish_ret = publish_rfid_event(RFID_EVENT_TAG_IGNORED, &rfid_data);
-                        if (publish_ret != ESP_OK) {
-                            ESP_LOGW(TAG, "❌ Failed to publish RFID tag ignored event");
-                        }
-                    }
-                    // Note: Ignored events are not stored or transmitted per process maps
-                    break;
-                    
-                case RFID_TOOL_EVENT_TAG_REMOVED:
-                    ESP_LOGI(TAG, "🏷️  Processing tag removed event - EVENT-DRIVEN REFACTOR");
-                    
-                    // EVENT-DRIVEN ARCHITECTURE: Publish RFID removal event
-                    {
-                        const char* tag_uid = queued_event.rfid_event.data.tag_info.uid_string;
-                        if (tag_uid && strlen(tag_uid) > 0) {
-                            rfid_event_data_t rfid_data = {
-                                .detection_time_us = esp_timer_get_time(),
-                                .internal_millis = esp_timer_get_time() / 1000,
-                                .is_new_session = false,
-                                .during_grace_period = false
-                            };
-                            strncpy(rfid_data.tag_uid, tag_uid, sizeof(rfid_data.tag_uid) - 1);
-                            rfid_data.tag_uid[sizeof(rfid_data.tag_uid) - 1] = '\0';
-                            
-                            // Publish RFID removal - subscribers will handle session end and visual feedback
-                            esp_err_t publish_ret = publish_rfid_event(RFID_EVENT_TAG_REMOVED, &rfid_data);
-                            if (publish_ret != ESP_OK) {
-                                ESP_LOGW(TAG, "❌ Failed to publish RFID tag removed event");
-                            }
-                        }
-                    }
-                    
-                    // PROCESS MAP INTEGRATION: Format removal event
-                    if (payload_tool && fs_tool) {
-                        payload_event_data_t event_payload = {
-                            .event_type = PAYLOAD_EVENT_TAG_REMOVED,
-                            .internal_timestamp_us = esp_timer_get_time(),
-                            .ntp_synced = false,
-                            .boot_counter = 0
-                        };
-                        
-                        if (queued_event.rfid_event.data.tag_info.uid_string[0] != '\0') {
-                            strncpy(event_payload.tag_uid, queued_event.rfid_event.data.tag_info.uid_string, sizeof(event_payload.tag_uid) - 1);
-                            event_payload.tag_uid[sizeof(event_payload.tag_uid) - 1] = '\0';
-                        }
-                        
-                        payload_formatted_result_t result;
-                        esp_err_t format_ret = payload_tool_format_event(payload_tool, &event_payload, &result);
-                        
-                        if (format_ret == ESP_OK && result.formatting_success) {
-                            ESP_LOGI(TAG, "📦 Tag removal payload formatted");
-                            
-                            // Store to filesystem per process map: Main->FS: fs_write_payload(&payload)
-                            cJSON *removal_json = cJSON_Parse(result.json_string);
-                            if (removal_json) {
-                                esp_err_t fs_ret = fs_tool_append_json_log(fs_tool, "rfid_events.json", removal_json);
-                                if (fs_ret == ESP_OK) {
-                                    ESP_LOGI(TAG, "📂 Tag removal event stored to filesystem");
-                                } else {
-                                    ESP_LOGW(TAG, "📂 Failed to store removal event to filesystem: %s", esp_err_to_name(fs_ret));
-                                }
-                                cJSON_Delete(removal_json);
-                            } else {
-                                ESP_LOGW(TAG, "📂 Failed to parse JSON removal payload for storage");
-                            }
-                            
-                            // Send to http_tool per process map: Main->HTTP: http_send_payload(&payload)
-                            http_tool_handle_t http_tool = NULL;
-                            tool_registry_get_handle("http", (void**)&http_tool);
-                            
-                            if (http_tool) {
-                                esp_err_t http_ret = http_send_payload(http_tool, result.json_string, result.json_length);
-                                if (http_ret == ESP_OK) {
-                                    ESP_LOGI(TAG, "🌐 Tag removal payload sent to webhook server");
-                                    // NOTE: For time tracking, events are kept in append-only log for analysis.
-                                    // Process map fs_delete_payload() would apply to individual payload files.
-                                } else {
-                                    ESP_LOGW(TAG, "🌐 Failed to send removal payload: %s", esp_err_to_name(http_ret));
-                                }
-                            } else {
-                                ESP_LOGW(TAG, "🌐 http_tool not available for removal payload transmission");
-                            }
-                            
-                            payload_tool_free_result(&result);
-                        }
-                    }
-                    break;
-                    
-                default:
-                    ESP_LOGW(TAG, "📡 Unknown queued RFID event: %ld", queued_event.event_id);
-                    break;
-            }
-        }
-    }
-    
-    // Task should never reach here
-    ESP_LOGW(TAG, "🔧 RFID processing task ended unexpectedly");
-    vTaskDelete(NULL);
-}
-*/
+// REMOVED: Old manual RFID processing task per Process Map Authority
+// Process Maps 13 & 14: payload_tool now handles RFID events directly via ESP event system
+// Constitutional event flow: RFID → payload_tool → http_tool (no main.c orchestration)
 
 // =============================================================================
 // Event Coordination - WiFi to Feedback Tool (Preserved from Phase 4.2)
@@ -451,48 +227,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 }
 
 // =========================================================================
-// DISABLED: RFID Event Handler for Visual Feedback (Replaced by ESP Event System)
+// REMOVED: Legacy RFID Event Handler (Replaced by payload_tool event subscription)
 // =========================================================================
 
-// DISABLED: Old RFID event handler - now using ESP event system
-/*
-static void rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
-{
-    if (event_base != RFID_TOOL_EVENTS) {
-        ESP_LOGD(TAG, "📡 RFID event handler: base mismatch");
-        return;
-    }
-    
-    // STACK OVERFLOW FIX: Lightweight event handler - just queue the event
-    ESP_LOGI(TAG, "📡 RFID event received: event_id=%ld (queuing for processing)", event_id);
-    
-    // Check if queue is available
-    if (!rfid_event_queue) {
-        ESP_LOGW(TAG, "📡 RFID event queue not initialized, dropping event");
-        return;
-    }
-    
-    // Create queued event (lightweight copy)
-    queued_rfid_event_t queued_event = {
-        .event_id = event_id
-    };
-    
-    // Copy RFID event data if present
-    if (event_data) {
-        memcpy(&queued_event.rfid_event, event_data, sizeof(rfid_tool_event_t));
-    } else {
-        memset(&queued_event.rfid_event, 0, sizeof(rfid_tool_event_t));
-    }
-    
-    // Queue event for processing task (non-blocking)
-    BaseType_t queue_result = xQueueSend(rfid_event_queue, &queued_event, 0);
-    if (queue_result != pdTRUE) {
-        ESP_LOGW(TAG, "📡 RFID event queue full, dropping event_id=%ld", event_id);
-    } else {
-        ESP_LOGD(TAG, "📡 RFID event queued successfully for processing");
-    }
-}
-*/
+// REMOVED: Manual RFID event queueing per Process Map Authority  
+// Process Map 13: payload_tool handles RFID events directly via ESP event subscription
 
 /*
  * Process Map Boot Sequence Task
@@ -746,6 +485,14 @@ static void process_map_boot_task(void *arg)
     
     ESP_LOGI(TAG, "✅ payload_tool: %s v%s initialized", payload_tool_get_id(), payload_tool_get_version());
     
+    // Set up payload_tool dependencies per process map 13
+    esp_err_t payload_deps_ret = payload_tool_set_dependencies(payload_tool, fs_tool, ntp_tool, NULL); // HTTP tool will be set later
+    if (payload_deps_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ payload_tool dependencies configured per Process Map 13");
+    } else {
+        ESP_LOGW(TAG, "⚠️ Failed to set payload_tool dependencies: %s", esp_err_to_name(payload_deps_ret));
+    }
+    
     // Register payload_tool with system_monitor_tool for dashboard visibility
     system_monitor_tool_registration_t payload_registration = {
         .tool_handle = payload_tool,
@@ -819,6 +566,18 @@ static void process_map_boot_task(void *arg)
     }
     
     ESP_LOGI(TAG, "✅ webhook_tool: %s v%s initialized", http_tool_get_id(), http_tool_get_version());
+    
+    // Complete payload_tool HTTP dependency per process map 13
+    payload_tool_handle_t payload_tool_for_http = NULL;
+    tool_registry_get_handle("payload", (void**)&payload_tool_for_http);
+    if (payload_tool_for_http) {
+        esp_err_t http_dep_ret = payload_tool_set_dependencies(payload_tool_for_http, fs_tool, ntp_tool, webhook_tool);
+        if (http_dep_ret == ESP_OK) {
+            ESP_LOGI(TAG, "✅ payload_tool HTTP dependency completed per Process Map 13");
+        } else {
+            ESP_LOGW(TAG, "⚠️ Failed to complete payload_tool HTTP dependency: %s", esp_err_to_name(http_dep_ret));
+        }
+    }
     
     // Register http_tool with system_monitor_tool for dashboard visibility
     system_monitor_tool_registration_t http_registration = {
@@ -916,8 +675,25 @@ static void process_map_boot_task(void *arg)
         ESP_LOGI(TAG, "✅ WiFi→Feedback event coordination registered");
     }
     
-    ESP_LOGI(TAG, "🔧 RFID events handled by ESP event system");
+    // =============================================================================
+    // Process Map 13: Start Payload Tool Event Subscription
+    // =============================================================================
     
+    ESP_LOGI(TAG, "📦 Activating payload_tool RFID event subscription per Process Map 13");
+    payload_tool_handle_t payload_tool_for_events = NULL;
+    tool_registry_get_handle("payload", (void**)&payload_tool_for_events);
+    if (payload_tool_for_events) {
+        esp_err_t payload_sub_ret = payload_tool_start_event_subscription(payload_tool_for_events);
+        if (payload_sub_ret == ESP_OK) {
+            ESP_LOGI(TAG, "✅ payload_tool RFID event subscription active - Process Map 13 operational");
+        } else {
+            ESP_LOGW(TAG, "⚠️ Failed to start payload_tool event subscription: %s", esp_err_to_name(payload_sub_ret));
+        }
+    } else {
+        ESP_LOGW(TAG, "⚠️ payload_tool not found for event subscription");
+    }
+    
+    ESP_LOGI(TAG, "🔧 Constitutional event flow: RFID → payload_tool → http_tool (Process Maps 13 & 14)");
     
     // =============================================================================
     // 5-Second Boot Grace Period per Process Maps
@@ -1027,8 +803,6 @@ static void process_map_boot_task(void *arg)
     } else {
         ESP_LOGE(TAG, "❌ FS tool validation: Failed to create test event JSON");
     }
-    
-    ESP_LOGI(TAG, "🔧 RFID processing handled by ESP event system");
     
     // =============================================================================
     // Enable RFID Scanning (Post Grace Period)

@@ -18,7 +18,7 @@ Layer 5: Insights Interface           → User feedback
 
 ## 📋 **Process Maps = Design Authority**
 
-**🚨 CRITICAL for Claude Code:** Process maps in `/docs/charts/` are **CONSTITUTIONAL documents**.
+**🚨 CRITICAL for Claude Code:** Process maps in `/docs/constitution/process_maps/` are **CONSTITUTIONAL documents**.
 
 ### **Process Map Authority Rules**
 1. **NEVER modify** process maps during implementation phases
@@ -27,11 +27,12 @@ Layer 5: Insights Interface           → User feedback
 4. **USE `/map_check`** command for architectural validation
 
 ### **Key Process Maps**
-- **`01_boot_sequence.mmd`** → Tool initialization order and grace period
-- **`02_tag_placement_happy_path.mmd`** → Normal operation flow
-- **`03_error_handling_http_retry.mmd`** → Error recovery patterns
-- **`04_circular_buffer_stress_test.mmd`** → Load handling and debounce
-- **`05_device_state_machine.mmd`** → Overall device behavior
+- **`01_device_master_fsm.mmd`** → Complete device behavior with esp_event hub
+- **`07_tag_detection_fsm.mmd`** → RFID tag detection lifecycle
+- **`08_tag_event_fsm.mmd`** → Event processing and formatting
+- **`11_feedback_fsm.mmd`** → Visual feedback state management
+- **`13_payload_fsm.mmd`** → Payload creation with NTP dependency
+- **`14_http_fsm.mmd`** → HTTP communication with retry logic
 
 **Process maps define:**
 - Tool boundaries and responsibilities
@@ -43,14 +44,14 @@ Layer 5: Insights Interface           → User feedback
 ## 🔧 **Current Development State [SPR]**
 
 ```txt
-PHASE: 5.7-complete|system-monitor-fixes|dashboard-metrics-corrected|architectural-boundaries-restored|memory-corruption-eliminated
-TOOLS: rfid_tool(95%)|payload_tool(85%)|fs_tool(100%)|feedback_tool(100%)|network_tool(98%)|ntp_tool(88%)|system_monitor_tool(100%)|http_tool(95%)|webserver_tool(100%)|event_system(100%)
-FIXED: storage-calculation-overflow-protection|webhook-counter-bounds-checking|system-monitor-struct-alignment|dashboard-accuracy|memory-safety
-HARDWARE: ESP32-C3|WS2812B-GPIO7|RC522-SPI|LittleFS-1536K|storage-1%-accurate|webhook-counters-reset|dashboard-functional
-ECOSYSTEM: system-monitor-compliant|tool-boundaries-enforced|memory-corruption-resolved|dashboard-metrics-accurate|system-compliance-98%
-ISSUES: resolved|no-critical-issues|ready-for-phase-6
-NEXT: Phase-6.0|webhook-server-layer-2|ecosystem-integration|agent-system-preparation
-STATUS: system-monitor-production-ready|dashboard-accurate|memory-safe|architecturally-compliant
+PHASE: EVENT-FLOW-REPAIR-COMPLETE|process-maps-constitutional-compliance|event-driven-architecture-implemented|not-tested
+TOOLS: rfid_tool(100%)|payload_tool(100%)|fs_tool(100%)|feedback_tool(100%)|network_tool(98%)|ntp_tool(100%)|system_monitor_tool(100%)|http_tool(100%)|webserver_tool(100%)|event_system(100%)
+ARCHITECTURE: rfid-payload-http-chain|process-map-13-14-compliant|ntp-integration-enhanced|deprecated-code-removed|constitutional-event-flow
+HARDWARE: ESP32-C3|WS2812B-GPIO7|RC522-SPI|LittleFS-1536K|event-flow-ready|testing-required
+ECOSYSTEM: constitutional-authority-restored|event-driven-communication|manual-injection-eliminated|webhook-server-integration-ready
+ISSUES: broken-event-flow-FIXED|payload-tool-receives-rfid|http-tool-process-map-compliant|main-c-legacy-removed
+NEXT: hardware-testing|event-flow-validation|constitutional-compliance-verification|ecosystem-integration
+STATUS: implementation-complete|constitutional-compliant|hardware-testing-required
 ```
 
 → **Detail**: `docs/project/current_state_spr.md`  
@@ -173,7 +174,7 @@ ECOSYSTEM: webhook-format-validated|timestamp-precision-confirmed|offline-sync-t
 ```txt
 CLAUDE.md                           → This file (development authority)
 docs/ecosystem/                     → System architecture & integration
-docs/charts/                        → Process maps (constitutional authority)
+docs/constitution/process_maps/     → Process maps (constitutional authority)
 docs/architecture/                  → Technical patterns [SPR compressed]
 docs/project/                       → Current status [SPR compressed]
 docs/archive/                       → Historical preservation

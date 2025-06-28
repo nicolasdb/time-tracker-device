@@ -255,29 +255,30 @@ esp_err_t webserver_tool_start(webserver_tool_handle_t handle);
 ## Orchestration Layer
 
 ### `main.c` - System Orchestrator
-**Domain**: Tool Coordination ONLY
+**Domain**: Tool Coordination & Event System Initialization
 **Responsibilities**:
 - ✅ Tool initialization in correct order (per process maps)
-- ✅ Event routing between tools
-- ✅ State machine transitions
-- ✅ Grace period coordination
+- ✅ ESP event loop management and routing
+- ✅ Health check coordination (5-second timeout)
+- ✅ Grace period orchestration
 - ✅ Tool dependency injection
+- ✅ Boot sequence management
 
 **NOT Responsible For**:
 - ❌ Business logic of any kind
 - ❌ Direct hardware control
-- ❌ Data processing
-- ❌ Decision making (delegates to appropriate tools)
+- ❌ Data processing decisions
+- ❌ Tool-to-tool communication (handled by esp_event system)
 
 **Orchestration Flow**:
 ```
-1. Boot Sequence (per 01_boot_sequence.mmd)
-2. Grace Period (5 seconds - rfid_tool coordination)
-3. Event Loop:
-   - Get RFID events → route to event_formatter_tool
-   - Format events → route to fs_tool + http_tool
-   - Monitor system → delegate to system_monitor_tool
-   - Visual feedback → delegate to led_control_tool
+1. Boot Sequence (per 01_device_master_fsm.mmd)
+2. ESP Event System Initialization
+3. Tool Registration with Health Check (5 seconds timeout)
+4. Grace Period Coordination (rfid_tool grace period)
+5. Event Loop:
+   - ESP event system routes between tools automatically
+   - Main.c monitors health and coordinates state transitions
 ```
 
 ---
@@ -286,9 +287,9 @@ esp_err_t webserver_tool_start(webserver_tool_handle_t handle);
 
 ### Event Flow Architecture
 ```
-rfid_tool → main.c → event_formatter_tool → main.c → fs_tool + http_tool
-                  ↓
-            system_monitor_tool → main.c → led_control_tool
+rfid_tool → esp_event → event_formatter_tool → esp_event → fs_tool + http_tool
+                     ↓
+           system_monitor_tool → esp_event → led_control_tool
 ```
 
 ### Information Flow

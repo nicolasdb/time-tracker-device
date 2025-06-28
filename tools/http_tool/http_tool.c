@@ -63,7 +63,7 @@ struct http_tool_context {
     
     // Event Handlers
     esp_event_handler_instance_t wifi_event_handler;
-    esp_event_handler_instance_t rfid_event_handler;
+    // REMOVED: rfid_event_handler per Process Map 14 Authority
     
     // Persistent Storage
     fs_tool_handle_t fs_handle;
@@ -89,7 +89,6 @@ static uint32_t http_tool_calculate_exponential_backoff(http_tool_handle_t handl
 
 // Event Handlers (Breaking coupling violations)
 static void http_tool_wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-static void http_tool_rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 
 // Background transmission task
 static void http_tool_transmission_task(void* pvParameters);
@@ -232,26 +231,11 @@ http_tool_handle_t http_tool_init(const http_tool_config_t *config) {
         }
     }
     
-    // RFID event subscription DISABLED per Process Map Authority
-    // Main.c will call http_send_payload() directly instead of auto-subscription
-    if (handle->config.subscribe_to_rfid_events) {
-        ESP_LOGW(TAG, "⚠️ RFID auto-subscription is DEPRECATED - use http_send_payload() instead");
-        // Legacy support: keep for backward compatibility but log warning
-        esp_err_t err = esp_event_handler_instance_register(
-            RFID_EVENTS, ESP_EVENT_ANY_ID,
-            http_tool_rfid_event_handler, handle,
-            &handle->rfid_event_handler
-        );
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "❌ Failed to register RFID event handler: %s", esp_err_to_name(err));
-        } else {
-            ESP_LOGI(TAG, "✅ RFID event handler registered successfully for ALL RFID_EVENTS (ANY_ID)");
-            ESP_LOGI(TAG, "✅ HTTP tool will receive: TAG_DETECTED(%d), TAG_REMOVED(%d), and all other RFID events", 
-                     RFID_EVENT_TAG_DETECTED, RFID_EVENT_TAG_REMOVED);
-        }
-    } else {
-        ESP_LOGI(TAG, "✅ RFID auto-subscription DISABLED - Process Map compliant");
-    }
+    // RFID event subscription REMOVED per Process Map Authority
+    // Process Map 14: HTTP tool operates via RETRIEVE_FROM_FS, not direct RFID subscription
+    // Payload tool handles RFID events and calls http_send_payload() per constitutional authority
+    ESP_LOGI(TAG, "✅ RFID direct subscription REMOVED - Process Map 14 compliant");
+    ESP_LOGI(TAG, "📦 HTTP tool receives payloads via http_send_payload() from payload_tool");
     
     // Create background transmission task
     BaseType_t task_result = xTaskCreate(
@@ -298,9 +282,7 @@ esp_err_t http_tool_deinit(http_tool_handle_t handle) {
     if (handle->wifi_event_handler) {
         esp_event_handler_instance_unregister(NETWORK_TOOL_EVENTS, ESP_EVENT_ANY_ID, handle->wifi_event_handler);
     }
-    if (handle->rfid_event_handler) {
-        esp_event_handler_instance_unregister(RFID_EVENTS, ESP_EVENT_ANY_ID, handle->rfid_event_handler);
-    }
+    // REMOVED: rfid_event_handler cleanup per Process Map 14 Authority
     
     // Delete transmission task
     if (handle->transmission_task) {
@@ -435,57 +417,9 @@ static void http_tool_wifi_event_handler(void* arg, esp_event_base_t event_base,
     xSemaphoreGive(handle->mutex);
 }
 
-/**
- * @brief RFID Event Handler - Automatic webhook transmission on tag events
- * 🎯 ENABLES AUTO-TRANSMISSION: No manual http_tool_send_event() calls needed
- */
-static void http_tool_rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    // RAW EVENT DEBUGGING - Log EVERY event that reaches this handler
-    ESP_LOGI(TAG, "🔥 HTTP HANDLER ENTRY: base=%s, id=%ld, data=%p", 
-             event_base ? (const char*)event_base : "NULL", event_id, event_data);
-    
-    http_tool_handle_t handle = (http_tool_handle_t)arg;
-    
-    if (event_base != RFID_EVENTS || handle == NULL || event_data == NULL) {
-        ESP_LOGW(TAG, "❌ Event validation failed: base=%s (expected RFID_EVENTS), handle=%p, data=%p", 
-                 event_base ? (const char*)event_base : "NULL", handle, event_data);
-        return;
-    }
-    
-    ESP_LOGI(TAG, "🔄 RFID event received: event_id=%ld", event_id);
-    
-    // Cast event data to universal RFID event structure
-    rfid_event_data_t* rfid_event = (rfid_event_data_t*)event_data;
-    
-    webhook_event_type_t webhook_event_type;
-    const char* tag_uid = NULL;
-    const char* tag_type = "MIFARE";
-    
-    switch (event_id) {
-        case RFID_EVENT_TAG_DETECTED:
-            webhook_event_type = WEBHOOK_EVENT_TAG_PLACED;
-            tag_uid = rfid_event->tag_uid;
-            ESP_LOGI(TAG, "🏷️ Auto-sending webhook: TAG_PLACED (%s)", tag_uid);
-            break;
-            
-        case RFID_EVENT_TAG_REMOVED:
-            webhook_event_type = WEBHOOK_EVENT_TAG_REMOVED;
-            tag_uid = rfid_event->tag_uid;
-            ESP_LOGI(TAG, "📤 Auto-sending webhook: TAG_REMOVED (%s)", tag_uid);
-            break;
-            
-        default:
-            ESP_LOGW(TAG, "❓ Unhandled RFID event in HTTP tool: event_id=%ld, base=%s", 
-                     event_id, event_base);
-            return; // Ignore other RFID events
-    }
-    
-    // Automatically send webhook event (no manual intervention required)
-    esp_err_t err = http_tool_send_event(handle, webhook_event_type, tag_uid, tag_type);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to auto-send webhook event: %s", esp_err_to_name(err));
-    }
-}
+// REMOVED: http_tool_rfid_event_handler() per Process Map 14 Authority
+// Process Map 14: HTTP tool operates via RETRIEVE_FROM_FS, not direct RFID subscription
+// Payload tool now handles RFID events and calls http_send_payload() directly
 
 // =============================================================================
 // Background Transmission Task
@@ -569,13 +503,18 @@ esp_err_t http_send_payload(http_tool_handle_t handle,
         return ESP_ERR_INVALID_STATE;
     }
     
-    ESP_LOGI(TAG, "📡 Process Map Authority: Sending formatted payload (%zu bytes)", payload_length);
+    ESP_LOGI(TAG, "📡 Process Map 14 Authority: HTTP payload transmission initiated");
     
-    // Check WiFi connectivity
+    // Process Map 14: IDLE → CHECK_WIFI → [Online] → RETRIEVE_FROM_FS → SEND_HTTP
+    //                                  → [Offline] → RETRY_LOGIC
+    
+    // Step 1: CHECK_WIFI (Constitutional requirement per updated process map)
     if (!handle->wifi_connected) {
-        ESP_LOGW(TAG, "WiFi not connected, payload transmission skipped");
+        ESP_LOGW(TAG, "⚠️ CHECK_WIFI: Offline - entering RETRY_LOGIC per Process Map 14");
         return ESP_ERR_WIFI_NOT_CONNECT;
     }
+    
+    ESP_LOGI(TAG, "✅ CHECK_WIFI: Online - proceeding to SEND_HTTP per Process Map 14");
     
     // Send HTTP request directly with formatted payload
     esp_http_client_config_t config = {
@@ -749,12 +688,18 @@ esp_err_t http_tool_process_pending(http_tool_handle_t handle) {
     
     xSemaphoreTake(handle->mutex, portMAX_DELAY);
     
-    // Check if WiFi is connected (USES INTERNAL STATE, NO COUPLING)
+    // Process Map 14 Authority: CHECK_WIFI → [Online] → RETRIEVE_FROM_FS → SEND_HTTP
+    //                                    → [Offline] → RETRY_LOGIC
+    
+    // Step 1: CHECK_WIFI (Process Map 14 constitutional requirement)
     if (!handle->wifi_connected) {
-        ESP_LOGW(TAG, "WiFi not connected, skipping processing of pending events");
+        ESP_LOGW(TAG, "⚠️ WiFi offline - entering RETRY_LOGIC per Process Map 14");
         xSemaphoreGive(handle->mutex);
+        // Process Map 14: Offline → RETRY_LOGIC (no FS retrieval)
         return ESP_ERR_WIFI_NOT_CONNECT;
     }
+    
+    ESP_LOGI(TAG, "✅ WiFi online - proceeding to RETRIEVE_FROM_FS per Process Map 14");
     
     uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
     

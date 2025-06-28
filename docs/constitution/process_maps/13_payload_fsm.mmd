@@ -1,23 +1,28 @@
 ---
 config:
-  layout: elk
+  layout: elk  
+  look: classic
 ---
 stateDiagram-v2
   direction TB
     [*] --> IDLE :esp_event
     
-    IDLE --> BUILD_PAYLOAD 
-    
+    state S1 <<choice>>
+    IDLE --> S1:event received
+    S1 --> BUILD_PAYLOAD : clock synced
+    S1 --> BACKLOG: wait for NTP_SYNC
+    BACKLOG --> S1 : retry event
+
     BUILD_PAYLOAD --> CALC_TIMESTAMP
     CALC_TIMESTAMP --> ADD_DEVICE_INFO : insert timestamp
     ADD_DEVICE_INFO --> ADD_HEALTH : insert device_id
  
     ADD_HEALTH --> PAYLOAD_READY : insert health_report  
 
-    PAYLOAD_READY --> STORE_TO_FS
-    PAYLOAD_READY --> BROADCAST_STATUS
-    STORE_TO_FS --> [*]
-    BROADCAST_STATUS --> [*] :esp_event_post
+    PAYLOAD_READY --> STORE_PAYLOAD : trigger FS
+    PAYLOAD_READY --> SEND_PAYLOAD : trigger HTTP
+    STORE_PAYLOAD --> [*]:esp_event_post
+    SEND_PAYLOAD --> [*] :esp_event_post
     
     note left of CALC_TIMESTAMP
         real_timestamp = event_uptime + ntp_offset

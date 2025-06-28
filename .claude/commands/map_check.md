@@ -21,30 +21,35 @@ Validate proposed changes against process maps to prevent architectural drift an
 ### **Step 1: Process Map References**
 Check against relevant process maps in `docs/constitution/process_maps/`:
 
-#### **Boot & Initialization Changes**
-- **Reference:** `01_boot_sequence.mmd`
-- **Validates:** Tool initialization order, grace period logic, state transitions
-- **Critical:** Grace period must remain 5 seconds, tool order must not change
+#### **Device Master FSM Changes**
+- **Reference:** `01_device_master_fsm.mmd`
+- **Validates:** Tool initialization order, esp_event hub communication, system monitor health checking
+- **Critical:** 5-second health check timeout, esp_event as central communication hub, system_monitor role
 
-#### **Normal Operation Changes**
-- **Reference:** `02_tag_placement_happy_path.mmd`
-- **Validates:** RFID → Buffer → Payload → FS → HTTP flow
-- **Critical:** Tool boundaries, event format, timing requirements
+#### **Tag Detection Changes**
+- **Reference:** `07_tag_detection_fsm.mmd`
+- **Validates:** RFID scanning, debounce logic, grace period handling
+- **Critical:** 5-second boot grace period, 200ms debounce confirmation, polling intervals
 
-#### **Error Handling Changes**
-- **Reference:** `03_error_handling_http_retry.mmd`
-- **Validates:** Retry logic, backoff strategies, degraded operation
-- **Critical:** Exponential backoff, WiFi reset behavior, error propagation
+#### **Tag Event Processing Changes**
+- **Reference:** `08_tag_event_fsm.mmd`
+- **Validates:** Event formatting, payload creation, esp_event posting
+- **Critical:** Event payload format, uptime timestamp calculation, esp_event_post usage
 
-#### **Performance & Load Changes**
-- **Reference:** `04_circular_buffer_stress_test.mmd`
-- **Validates:** Buffer management, debounce logic, overflow handling
-- **Critical:** 5-second debounce, circular buffer behavior, stress response
+#### **Visual Feedback Changes**
+- **Reference:** `11_feedback_fsm.mmd`
+- **Validates:** LED state management, feedback recipes, system state mapping
+- **Critical:** State-to-LED mapping, recipe execution, no decision logic in feedback
 
-#### **State Management Changes**
-- **Reference:** `05_device_state_machine.mmd`
-- **Validates:** State transitions, nested states, recovery paths
-- **Critical:** Flow awareness states, grace period states, AP mode behavior
+#### **Payload Creation Changes**
+- **Reference:** `13_payload_fsm.mmd`
+- **Validates:** NTP dependency checking, timestamp calculation, data formatting
+- **Critical:** NTP sync validation, real timestamp calculation, device metadata inclusion
+
+#### **HTTP Communication Changes**
+- **Reference:** `14_http_fsm.mmd`
+- **Validates:** Webhook transmission, retry logic, error handling
+- **Critical:** Exponential backoff, local storage fallback, retry count limits
 
 ### **Step 2: Architectural Boundary Check**
 
@@ -77,7 +82,9 @@ Check against relevant process maps in `docs/constitution/process_maps/`:
   "metadata": {
     "internal_millis": "number",
     "ntp_offset_ms": "number",
-    "ntp_synced": "boolean"
+    "ntp_synced": "boolean",
+    "boot_counter": "number",
+    "firmware_version": "string"
   }
 }
 ```

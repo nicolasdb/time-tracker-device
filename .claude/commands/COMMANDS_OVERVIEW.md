@@ -98,7 +98,7 @@
 ### 🔄 **During Development**
 - **`/phase_status`** → Quick health checks with ecosystem status
 - **`/map_check`** → Validate any architectural adjustments
-- **Follow process maps** → Use charts/ as constitutional authority
+- **Follow process maps** → Use constitution/process_maps/ as constitutional authority
 
 ### 📈 **Completing Phases**
 - **`/save_progress "phase" COMPLETE "achievement with ecosystem impact"`** → Document progress
@@ -109,13 +109,14 @@
 ## 🎯 **Process Map Authority Integration**
 
 ### **Constitutional Documents**
-Process maps in `/docs/charts/` are **constitutional authority** - they define fundamental system behavior:
+Process maps in `/docs/constitution/process_maps/` are **constitutional authority** - they define fundamental system behavior:
 
-- **`01_boot_sequence.mmd`** → Initialization order and grace period
-- **`02_tag_placement_happy_path.mmd`** → Normal operation flow
-- **`03_error_handling_http_retry.mmd`** → Error recovery patterns
-- **`04_circular_buffer_stress_test.mmd`** → Load handling
-- **`05_device_state_machine.mmd`** → Overall behavior states
+- **`01_device_master_fsm.mmd`** → Complete device behavior with esp_event hub
+- **`07_tag_detection_fsm.mmd`** → RFID tag detection lifecycle
+- **`08_tag_event_fsm.mmd`** → Event processing and formatting
+- **`11_feedback_fsm.mmd`** → Visual feedback state management
+- **`13_payload_fsm.mmd`** → Payload creation with NTP dependency
+- **`14_http_fsm.mmd`** → HTTP communication with retry logic
 
 ### **Process Map Rules**
 1. **NEVER modify** during implementation phases
@@ -163,7 +164,7 @@ Process maps in `/docs/charts/` are **constitutional authority** - they define f
 
 ### **Supporting Documentation**
 - `docs/ecosystem/` → Complete system architecture
-- `docs/charts/` → Process maps (constitutional authority)
+- `docs/constitution/process_maps/` → Process maps (constitutional authority)
 - `docs/architecture/` → SPR-compressed technical patterns
 - `docs/project/` → Current development status
 

@@ -40,7 +40,8 @@ POST /api/v1/time-events
     "internal_millis": 123456789,
     "ntp_offset_ms": 1642234245000,
     "ntp_synced": true,
-    "boot_counter": 42
+    "boot_counter": 42,
+    "firmware_version": "v3.1.2"
   }
 }
 ```

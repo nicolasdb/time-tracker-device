@@ -64,7 +64,7 @@ graph LR
 ## 🏗️ **For Developers**
 
 ### **Architecture & Development**
-- **Process Maps:** See `docs/charts/README.md` for complete system behavior diagrams
+- **Process Maps:** See `docs/constitution/process_maps/` for complete system behavior diagrams
 - **Architecture Authority:** See `CLAUDE.md` for development context and command usage
 - **Current Status:** Use `/.claude/commands/phase_status` for latest development state
 - **Ecosystem Context:** See `docs/ecosystem/` for integration specifications
@@ -172,7 +172,7 @@ This device embodies principles of **technology that enhances human potential**:
 README.md                    → This file (ecosystem discovery)
 CLAUDE.md                    → Development context for AI collaboration
 docs/ecosystem/              → Complete system architecture
-docs/charts/                 → Process maps (design authority)
+docs/constitution/process_maps/ → Process maps (design authority)
 docs/architecture/           → Technical patterns (SPR compressed)
 docs/project/                → Current development status
 .claude/commands/            → Development workflow automation
@@ -186,7 +186,7 @@ This project uses a unique **human-AI collaboration workflow** with:
 - **Custom commands** for session continuity
 - **Ecosystem awareness** for integration planning
 
-See `CLAUDE.md` and `docs/charts/README.md` for the complete development approach.
+See `CLAUDE.md` and `docs/constitution/process_maps/` for the complete development approach.
 
 ## 📄 **License**
 

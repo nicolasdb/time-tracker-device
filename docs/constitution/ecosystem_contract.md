@@ -42,10 +42,12 @@ System Status → Visual Feedback → Human Understanding → Behavior Adjustmen
   "tag_uid": "unique_identifier",
   "device_id": "esp32_mac_address",
   "timestamp": "ISO8601_utc",
-  "internal_millis": "device_uptime_ms",
-  "ntp_offset_ms": "time_correction",
-  "session_metadata": {
+  "metadata": {
+    "internal_millis": "device_uptime_ms",
+    "ntp_offset_ms": "time_correction",
+    "ntp_synced": "boolean",
     "boot_counter": "device_restart_tracking",
+    "firmware_version": "semantic_version",
     "wifi_network": "connection_context",
     "signal_strength": "connectivity_quality"
   }
