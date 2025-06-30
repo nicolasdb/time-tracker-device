@@ -263,8 +263,8 @@ esp_err_t system_monitor_tool_register_tool(system_monitor_tool_handle_t handle,
     
     // Set up registration
     reg_tool->tool_handle = registration->tool_handle;
-    strncpy(reg_tool->tool_id, registration->tool_id, sizeof(reg_tool->tool_id) - 1);
-    strncpy(reg_tool->tool_version, registration->tool_version, sizeof(reg_tool->tool_version) - 1);
+    snprintf(reg_tool->tool_id, sizeof(reg_tool->tool_id), "%s", registration->tool_id);
+    snprintf(reg_tool->tool_version, sizeof(reg_tool->tool_version), "%s", registration->tool_version);
     reg_tool->get_status_func = registration->get_status_func;
     reg_tool->status_struct_size = registration->status_struct_size;
     reg_tool->is_active = true;

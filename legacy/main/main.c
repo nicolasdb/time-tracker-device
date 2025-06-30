@@ -147,6 +147,39 @@ static const tool_interface_t webserver_tool_interface = {
 // Constitutional event flow: RFID → payload_tool → http_tool (no main.c orchestration)
 
 // =============================================================================
+// Event Coordination - Constitutional Authority Process Map 01 
+// =============================================================================
+
+/**
+ * @brief Constitutional RFID Event Handler per Process Map 01
+ * Flow: RFID → ESP_EVENT → orchestrator → payload_tool (direct call)
+ */
+static void orchestrator_rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    if (event_base != RFID_EVENTS) {
+        return;
+    }
+    
+    ESP_LOGI(TAG, "🏷️ Orchestrator handling RFID event per Process Map 01: event_id=%ld", event_id);
+    
+    // Get payload_tool handle from registry (Constitutional Authority)
+    payload_tool_handle_t payload_tool = NULL;
+    tool_registry_get_handle("payload", (void**)&payload_tool);
+    
+    if (!payload_tool) {
+        ESP_LOGW(TAG, "⚠️ payload_tool not found in registry");
+        return;
+    }
+    
+    // Constitutional Authority: Call payload_tool directly (no event recursion)
+    esp_err_t payload_ret = payload_tool_build_and_transmit_payload(payload_tool, event_id, event_data);
+    if (payload_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Constitutional flow: RFID → orchestrator → payload_tool → PAYLOAD_EVENTS");
+    } else {
+        ESP_LOGW(TAG, "⚠️ Payload processing failed: %s", esp_err_to_name(payload_ret));
+    }
+}
+
 // Event Coordination - WiFi to Feedback Tool (Preserved from Phase 4.2)
 // =============================================================================
 
@@ -485,13 +518,8 @@ static void process_map_boot_task(void *arg)
     
     ESP_LOGI(TAG, "✅ payload_tool: %s v%s initialized", payload_tool_get_id(), payload_tool_get_version());
     
-    // Set up payload_tool dependencies per process map 13
-    esp_err_t payload_deps_ret = payload_tool_set_dependencies(payload_tool, fs_tool, ntp_tool, NULL); // HTTP tool will be set later
-    if (payload_deps_ret == ESP_OK) {
-        ESP_LOGI(TAG, "✅ payload_tool dependencies configured per Process Map 13");
-    } else {
-        ESP_LOGW(TAG, "⚠️ Failed to set payload_tool dependencies: %s", esp_err_to_name(payload_deps_ret));
-    }
+    // Constitutional compliance: No tool dependencies - pure event-driven communication
+    ESP_LOGI(TAG, "✅ payload_tool configured per Process Map 13 - pure event-driven");
     
     // Register payload_tool with system_monitor_tool for dashboard visibility
     system_monitor_tool_registration_t payload_registration = {
@@ -567,17 +595,8 @@ static void process_map_boot_task(void *arg)
     
     ESP_LOGI(TAG, "✅ webhook_tool: %s v%s initialized", http_tool_get_id(), http_tool_get_version());
     
-    // Complete payload_tool HTTP dependency per process map 13
-    payload_tool_handle_t payload_tool_for_http = NULL;
-    tool_registry_get_handle("payload", (void**)&payload_tool_for_http);
-    if (payload_tool_for_http) {
-        esp_err_t http_dep_ret = payload_tool_set_dependencies(payload_tool_for_http, fs_tool, ntp_tool, webhook_tool);
-        if (http_dep_ret == ESP_OK) {
-            ESP_LOGI(TAG, "✅ payload_tool HTTP dependency completed per Process Map 13");
-        } else {
-            ESP_LOGW(TAG, "⚠️ Failed to complete payload_tool HTTP dependency: %s", esp_err_to_name(http_dep_ret));
-        }
-    }
+    // Constitutional compliance: No tool dependencies - pure event-driven per Process Map 01
+    ESP_LOGI(TAG, "✅ All tools communicate via ESP_EVENT per Process Map 01 authority");
     
     // Register http_tool with system_monitor_tool for dashboard visibility
     system_monitor_tool_registration_t http_registration = {
@@ -675,23 +694,21 @@ static void process_map_boot_task(void *arg)
         ESP_LOGI(TAG, "✅ WiFi→Feedback event coordination registered");
     }
     
+    // Constitutional Authority: Register RFID→DATA orchestrator per Process Map 01
+    esp_err_t rfid_event_ret = esp_event_handler_register(RFID_EVENTS, ESP_EVENT_ANY_ID, orchestrator_rfid_event_handler, NULL);
+    if (rfid_event_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Constitutional flow: RFID→orchestrator→payload_tool registered");
+    } else {
+        ESP_LOGW(TAG, "⚠️ Failed to register RFID event handler: %s", esp_err_to_name(rfid_event_ret));
+    }
+    
     // =============================================================================
     // Process Map 13: Start Payload Tool Event Subscription
     // =============================================================================
     
-    ESP_LOGI(TAG, "📦 Activating payload_tool RFID event subscription per Process Map 13");
-    payload_tool_handle_t payload_tool_for_events = NULL;
-    tool_registry_get_handle("payload", (void**)&payload_tool_for_events);
-    if (payload_tool_for_events) {
-        esp_err_t payload_sub_ret = payload_tool_start_event_subscription(payload_tool_for_events);
-        if (payload_sub_ret == ESP_OK) {
-            ESP_LOGI(TAG, "✅ payload_tool RFID event subscription active - Process Map 13 operational");
-        } else {
-            ESP_LOGW(TAG, "⚠️ Failed to start payload_tool event subscription: %s", esp_err_to_name(payload_sub_ret));
-        }
-    } else {
-        ESP_LOGW(TAG, "⚠️ payload_tool not found for event subscription");
-    }
+    ESP_LOGI(TAG, "📦 Constitutional Authority: Orchestrator handles RFID→DATA per Process Map 01");
+    ESP_LOGI(TAG, "✅ RFID events will flow: RFID → ESP_EVENT → orchestrator → payload_tool");
+    ESP_LOGI(TAG, "🚫 Removed direct payload_tool RFID subscription - violates Process Map 01");
     
     ESP_LOGI(TAG, "🔧 Constitutional event flow: RFID → payload_tool → http_tool (Process Maps 13 & 14)");
     

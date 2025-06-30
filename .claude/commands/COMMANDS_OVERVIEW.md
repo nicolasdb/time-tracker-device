@@ -83,25 +83,65 @@
 
 ---
 
-## 🔄 **Recommended Ecosystem-Aware Workflow**
+## 🏛️ **Constitutional Validation Enhancement**
 
-### 🚀 **Starting Major Development**
+### 🛡️ `/validate_constitutional` - Constitutional Compliance Validation
+**Purpose**: Validate existing implementation against constitutional requirements
+
+**When to use**:
+- Before modifying existing implementation
+- When constitutional violations suspected  
+- For compliance verification of current code
+- As enhancement to existing `/map_check` validation
+
+**Validation areas**:
+- Container isolation in existing code
+- Process map compliance verification
+- ESP_EVENT communication validation
+- Constitutional authority adherence
+
+**Integration**: Enhances existing ecosystem workflow, does not replace
+
+---
+
+### 🏗️ `/container_status` - Quick Container Health Check
+**Purpose**: Fast assessment of container architecture in existing implementation
+
+**Usage**: `/container_status`
+
+**Provides**:
+- Container isolation status in current code
+- ESP_EVENT communication health
+- Quick coupling detection
+- Implementation compliance overview
+
+**Integration**: Complements existing `/phase_status` with constitutional focus
+
+---
+
+## 🔄 **Enhanced Ecosystem-Aware Workflow**
+
+### 🚀 **Starting Development Session**
 1. **`/ecosystem_context`** → Understand device role in complete system
-2. **`/spr_reload`** → Load technical patterns and current state
-3. **`/phase_status`** → Check integration readiness and dependencies
+2. **`/spr_reload`** → Load technical patterns and current state  
+3. **`/phase_status`** → Check current status and readiness
+4. **`/container_status`** → Quick constitutional health check (optional)
 
-### 🛠️ **Making Architectural Changes**
-1. **`/map_check "component" "change"`** → Validate against process maps
-2. **Review ecosystem impact** → Consider webhook server, agents, database
-3. **Proceed only if approved** → Follow process map authority strictly
+### 🛠️ **Making Changes to Existing Implementation**
+1. **`/map_check "component" "change"`** → Validate against process maps (primary)
+2. **`/validate_constitutional`** → Check constitutional compliance (enhancement)
+3. **Review ecosystem impact** → Consider webhook server, agents, database
+4. **Proceed when validated** → Process map + constitutional compliance
 
 ### 🔄 **During Development**
-- **`/phase_status`** → Quick health checks with ecosystem status
-- **`/map_check`** → Validate any architectural adjustments
-- **Follow process maps** → Use constitution/process_maps/ as constitutional authority
+- **`/phase_status`** → Quick health checks with ecosystem status (primary)
+- **`/map_check`** → Validate architectural adjustments (primary)
+- **`/container_status`** → Quick constitutional checks (enhancement)
+- **Follow process maps** → Constitutional authority as defined in existing workflow
 
 ### 📈 **Completing Phases**
-- **`/save_progress "phase" COMPLETE "achievement with ecosystem impact"`** → Document progress
+- **`/save_progress "phase" STATUS "achievement"`** → Document progress (existing pattern)
+- **`/validate_constitutional`** → Optional constitutional validation
 - **`/ecosystem_context`** → Verify readiness for next ecosystem layer
 
 ---

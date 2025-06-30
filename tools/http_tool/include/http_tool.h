@@ -34,7 +34,7 @@ extern "C" {
 
 #define HTTP_TOOL_MAX_URL_LEN        256
 #define HTTP_TOOL_MAX_DEVICE_ID_LEN  33
-#define HTTP_TOOL_MAX_TAG_UID_LEN    21
+#define HTTP_TOOL_MAX_TAG_UID_LEN    32  // Constitutional Authority: Match event_system.h and payload_tool.h
 #define HTTP_TOOL_MAX_TAG_TYPE_LEN   17
 #define HTTP_TOOL_MAX_LOG_ENTRIES    50
 #define HTTP_TOOL_DEFAULT_TIMEOUT_MS 5000

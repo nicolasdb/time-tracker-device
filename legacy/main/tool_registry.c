@@ -127,14 +127,14 @@ esp_err_t tool_registry_register(const char* tool_id,
     // Register tool
     tool_registration_entry_t* entry = &g_registry->tools[slot];
     
-    strncpy(entry->tool_id, tool_id, TOOL_REGISTRY_MAX_ID_LENGTH - 1);
+    snprintf(entry->tool_id, TOOL_REGISTRY_MAX_ID_LENGTH, "%s", tool_id);
     entry->tool_id[TOOL_REGISTRY_MAX_ID_LENGTH - 1] = '\0';
     
     // Get version from tool interface
     if (interface->get_version) {
         const char* version = interface->get_version();
         if (version) {
-            strncpy(entry->tool_version, version, TOOL_REGISTRY_MAX_VERSION_LENGTH - 1);
+            snprintf(entry->tool_version, TOOL_REGISTRY_MAX_VERSION_LENGTH, "%s", version);
             entry->tool_version[TOOL_REGISTRY_MAX_VERSION_LENGTH - 1] = '\0';
         }
     }
@@ -338,7 +338,7 @@ esp_err_t tool_registry_list_tools(char tool_ids[][TOOL_REGISTRY_MAX_ID_LENGTH],
     for (int i = 0; i < TOOL_REGISTRY_MAX_TOOLS && *actual_count < max_tools; i++) {
         tool_registration_entry_t* entry = &g_registry->tools[i];
         if (entry->state != TOOL_STATE_UNINITIALIZED) {
-            strncpy(tool_ids[*actual_count], entry->tool_id, TOOL_REGISTRY_MAX_ID_LENGTH - 1);
+            snprintf(tool_ids[*actual_count], TOOL_REGISTRY_MAX_ID_LENGTH, "%s", entry->tool_id);
             tool_ids[*actual_count][TOOL_REGISTRY_MAX_ID_LENGTH - 1] = '\0';
             (*actual_count)++;
         }

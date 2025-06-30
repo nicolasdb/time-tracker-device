@@ -125,15 +125,15 @@ network_tool_config_t network_tool_create_default_config(void)
     network_tool_config_t config = {0};
     
     // Default AP configuration (Proof of Concept - Low Risk Scenario)
-    strncpy(config.ap_config.ssid, "TimeTracker-Setup", sizeof(config.ap_config.ssid) - 1);
+    snprintf(config.ap_config.ssid, sizeof(config.ap_config.ssid), "%s", "TimeTracker-Setup");
     config.ap_config.password[0] = '\0';  // Open network for simple PoC setup
     config.ap_config.channel = 1;
     config.ap_config.max_connections = 4;
     config.ap_config.auth_mode = WIFI_AUTH_OPEN;
     config.ap_config.ssid_hidden = false;
-    strncpy(config.ap_config.ip_address, "192.168.4.1", sizeof(config.ap_config.ip_address) - 1);
-    strncpy(config.ap_config.gateway, "192.168.4.1", sizeof(config.ap_config.gateway) - 1);
-    strncpy(config.ap_config.netmask, "255.255.255.0", sizeof(config.ap_config.netmask) - 1);
+    snprintf(config.ap_config.ip_address, sizeof(config.ap_config.ip_address), "%s", "192.168.4.1");
+    snprintf(config.ap_config.gateway, sizeof(config.ap_config.gateway), "%s", "192.168.4.1");
+    snprintf(config.ap_config.netmask, sizeof(config.ap_config.netmask), "%s", "255.255.255.0");
     
     // Default behavior settings (from Kconfig)
     config.connect_timeout_ms = CONFIG_NETWORK_TOOL_CONNECT_TIMEOUT_MS;
@@ -143,7 +143,7 @@ network_tool_config_t network_tool_create_default_config(void)
     config.enable_ap_fallback = true;
     
     // Default configuration persistence
-    strncpy(config.config_file_path, "/littlefs/wifi.json", sizeof(config.config_file_path) - 1);
+    snprintf(config.config_file_path, sizeof(config.config_file_path), "%s", "/littlefs/wifi.json");
     config.auto_save_config = true;
     
     // Default event publishing
@@ -490,7 +490,7 @@ esp_err_t network_tool_get_ip_address(network_tool_handle_t handle, char* ip_str
         return ESP_ERR_INVALID_STATE;
     }
     
-    strncpy(ip_str, ctx->ip_address, len - 1);
+    snprintf(ip_str, len, "%s", ctx->ip_address);
     ip_str[len - 1] = '\0';
     
     return ESP_OK;
@@ -754,8 +754,8 @@ static esp_err_t try_connect_next_network(struct network_tool_context *ctx)
     wifi_network_config_t *network = &ctx->config.networks[ctx->current_network_index];
     
     wifi_config_t wifi_config = {0};
-    strncpy((char*)wifi_config.sta.ssid, network->ssid, sizeof(wifi_config.sta.ssid) - 1);
-    strncpy((char*)wifi_config.sta.password, network->password, sizeof(wifi_config.sta.password) - 1);
+    snprintf((char*)wifi_config.sta.ssid, sizeof(wifi_config.sta.ssid), "%s", network->ssid);
+    snprintf((char*)wifi_config.sta.password, sizeof(wifi_config.sta.password), "%s", network->password);
     
     ESP_LOGI(TAG, "Connecting to network: %s", network->ssid);
     
@@ -831,9 +831,9 @@ esp_err_t network_tool_connect(network_tool_handle_t handle, const char* ssid, c
     ESP_LOGI(TAG, "Connecting to network: %s", ssid);
     
     wifi_config_t wifi_config = {0};
-    strncpy((char*)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
+    snprintf((char*)wifi_config.sta.ssid, sizeof(wifi_config.sta.ssid), "%s", ssid);
     if (password) {
-        strncpy((char*)wifi_config.sta.password, password, sizeof(wifi_config.sta.password) - 1);
+        snprintf((char*)wifi_config.sta.password, sizeof(wifi_config.sta.password), "%s", password);
     }
     
     esp_err_t ret = esp_wifi_set_mode(WIFI_MODE_STA);

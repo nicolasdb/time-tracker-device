@@ -26,6 +26,9 @@
 
 static const char *TAG = "HTTP_TOOL";
 
+// Constitutional authority: Use canonical event definitions from event_system.h
+// No duplicate definitions - event_system.h is the authority
+
 // =============================================================================
 // Tool Context Structure (Handle-based Design)
 // =============================================================================
@@ -65,6 +68,9 @@ struct http_tool_context {
     esp_event_handler_instance_t wifi_event_handler;
     // REMOVED: rfid_event_handler per Process Map 14 Authority
     
+    // Constitutional Authority: Process Map 14 - PAYLOAD_EVENTS subscription
+    esp_event_handler_instance_t payload_event_handler;
+    
     // Persistent Storage
     fs_tool_handle_t fs_handle;
     
@@ -89,6 +95,9 @@ static uint32_t http_tool_calculate_exponential_backoff(http_tool_handle_t handl
 
 // Event Handlers (Breaking coupling violations)
 static void http_tool_wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+
+// Constitutional Authority: Process Map 14 - PAYLOAD_EVENTS handler
+static void http_tool_payload_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 
 // Background transmission task
 static void http_tool_transmission_task(void* pvParameters);
@@ -231,11 +240,25 @@ http_tool_handle_t http_tool_init(const http_tool_config_t *config) {
         }
     }
     
-    // RFID event subscription REMOVED per Process Map Authority
-    // Process Map 14: HTTP tool operates via RETRIEVE_FROM_FS, not direct RFID subscription
-    // Payload tool handles RFID events and calls http_send_payload() per constitutional authority
+    // Constitutional Authority: Subscribe to PAYLOAD_EVENTS per Process Map 14
+    esp_err_t payload_sub_ret = esp_event_handler_instance_register(
+        PAYLOAD_EVENTS,
+        ESP_EVENT_ANY_ID,
+        http_tool_payload_event_handler,
+        handle,
+        &handle->payload_event_handler
+    );
+    
+    if (payload_sub_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ PAYLOAD_EVENTS subscription active - Process Map 14 constitutional compliance");
+        ESP_LOGI(TAG, "🌐 http_tool will handle: PAYLOAD_READY → CHECK_WIFI → RETRIEVE_FROM_FS → SEND_HTTP");
+    } else {
+        ESP_LOGW(TAG, "⚠️ Failed to subscribe to PAYLOAD_EVENTS: %s", esp_err_to_name(payload_sub_ret));
+    }
+    
+    // RFID direct subscription REMOVED per Process Map 14 Authority - now uses PAYLOAD_EVENTS
     ESP_LOGI(TAG, "✅ RFID direct subscription REMOVED - Process Map 14 compliant");
-    ESP_LOGI(TAG, "📦 HTTP tool receives payloads via http_send_payload() from payload_tool");
+    ESP_LOGI(TAG, "📦 HTTP tool receives payloads via PAYLOAD_EVENTS constitutional flow");
     
     // Create background transmission task
     BaseType_t task_result = xTaskCreate(
@@ -281,6 +304,20 @@ esp_err_t http_tool_deinit(http_tool_handle_t handle) {
     // Unregister event handlers
     if (handle->wifi_event_handler) {
         esp_event_handler_instance_unregister(NETWORK_TOOL_EVENTS, ESP_EVENT_ANY_ID, handle->wifi_event_handler);
+    }
+    
+    // Constitutional Authority: Unregister PAYLOAD_EVENTS subscription
+    if (handle->payload_event_handler) {
+        esp_err_t unsub_ret = esp_event_handler_instance_unregister(
+            PAYLOAD_EVENTS, 
+            ESP_EVENT_ANY_ID, 
+            handle->payload_event_handler
+        );
+        if (unsub_ret == ESP_OK) {
+            ESP_LOGI(TAG, "✅ PAYLOAD_EVENTS subscription deregistered");
+        } else {
+            ESP_LOGW(TAG, "⚠️ Failed to deregister PAYLOAD_EVENTS: %s", esp_err_to_name(unsub_ret));
+        }
     }
     // REMOVED: rfid_event_handler cleanup per Process Map 14 Authority
     
@@ -417,9 +454,122 @@ static void http_tool_wifi_event_handler(void* arg, esp_event_base_t event_base,
     xSemaphoreGive(handle->mutex);
 }
 
+// =============================================================================
+// Constitutional Authority: Process Map 14 - PAYLOAD_EVENTS Handler
+// =============================================================================
+
+/**
+ * @brief Handle PAYLOAD_READY events following Process Map 14 FSM
+ * 
+ * Process Map 14: PAYLOAD_READY → CHECK_WIFI → [Online] → RETRIEVE_FROM_FS → SEND_HTTP → CONFIRMED
+ *                                            → [Offline] → RETRY_LOGIC
+ */
+static void http_tool_payload_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    http_tool_handle_t handle = (http_tool_handle_t)arg;
+    
+    if (event_base != PAYLOAD_EVENTS || !handle || !event_data) {
+        ESP_LOGW(TAG, "❌ Invalid PAYLOAD event parameters");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "📡 PAYLOAD event received: event_id=%ld per Process Map 14", event_id);
+    
+    switch (event_id) {
+        case PAYLOAD_EVENT_READY: {
+            // Extract constitutional payload data and JSON string  
+            payload_esp_event_data_t* payload_data = (payload_esp_event_data_t*)event_data;
+            char* json_string = (char*)((char*)event_data + sizeof(payload_esp_event_data_t));  // JSON follows the struct
+            
+            ESP_LOGI(TAG, "🌐 Processing PAYLOAD_READY: tag=%s, type=%s", 
+                     payload_data->tag_uid, payload_data->event_type);
+            
+            // Process Map 14 Constitutional Authority: CHECK_WIFI first
+            ESP_LOGI(TAG, "📶 Process Map 14: CHECK_WIFI step");
+            
+            if (!handle->wifi_connected) {
+                ESP_LOGW(TAG, "⚠️ CHECK_WIFI: Offline - entering RETRY_LOGIC per Process Map 14");
+                
+                // Process Map 14: [Offline] → RETRY_LOGIC
+                // Store payload for later retry (queuing mechanism)
+                webhook_event_t webhook_event = {0};
+                snprintf(webhook_event.tag_uid, sizeof(webhook_event.tag_uid), "%s", payload_data->tag_uid);
+                // Convert event type string to webhook event type enum
+                if (strcmp(payload_data->event_type, "tag_placed") == 0) {
+                    webhook_event.event_type = WEBHOOK_EVENT_TAG_PLACED;
+                } else if (strcmp(payload_data->event_type, "tag_removed") == 0) {
+                    webhook_event.event_type = WEBHOOK_EVENT_TAG_REMOVED;
+                } else {
+                    // Default to tag_placed for unknown event types
+                    webhook_event.event_type = WEBHOOK_EVENT_TAG_PLACED;
+                    ESP_LOGW(TAG, "⚠️ Unknown event type: %s, defaulting to tag_placed", payload_data->event_type);
+                }
+                webhook_event.timestamp = payload_data->internal_timestamp_us / 1000000; // Convert to seconds
+                
+                esp_err_t queue_ret = http_tool_send_event(handle, webhook_event.event_type, webhook_event.tag_uid, NULL);
+                if (queue_ret == ESP_OK) {
+                    ESP_LOGI(TAG, "✅ Payload queued for RETRY_LOGIC per Process Map 14");
+                } else {
+                    ESP_LOGW(TAG, "⚠️ Failed to queue payload for retry: %s", esp_err_to_name(queue_ret));
+                }
+                return;
+            }
+            
+            ESP_LOGI(TAG, "✅ CHECK_WIFI: Online - proceeding to RETRIEVE_FROM_FS per Process Map 14");
+            
+            // Process Map 14: [Online] → RETRIEVE_FROM_FS → SEND_HTTP
+            // For real-time events, send directly without FS storage (payload already in JSON string)
+            ESP_LOGI(TAG, "🌐 Process Map 14: SEND_HTTP step (direct payload transmission)");
+            
+            esp_err_t send_ret = http_send_payload(handle, json_string, strlen(json_string));
+            if (send_ret == ESP_OK) {
+                ESP_LOGI(TAG, "✅ Constitutional SEND_HTTP completed - Process Map 14: CONFIRMED");
+                
+                // Process Map 14: CONFIRMED → esp_event_post(PAYLOAD_TRANSMITTED)
+                esp_event_post(PAYLOAD_EVENTS, PAYLOAD_EVENT_TRANSMITTED, 
+                              payload_data, sizeof(payload_esp_event_data_t), 
+                              100 / portTICK_PERIOD_MS);
+            } else {
+                ESP_LOGW(TAG, "⚠️ Constitutional SEND_HTTP failed - Process Map 14: RETRY_LOGIC");
+                
+                // Process Map 14: HTTP fail → RETRY_LOGIC
+                webhook_event_t webhook_event = {0};
+                snprintf(webhook_event.tag_uid, sizeof(webhook_event.tag_uid), "%s", payload_data->tag_uid);
+                // Convert event type string to webhook event type enum
+                if (strcmp(payload_data->event_type, "tag_placed") == 0) {
+                    webhook_event.event_type = WEBHOOK_EVENT_TAG_PLACED;
+                } else if (strcmp(payload_data->event_type, "tag_removed") == 0) {
+                    webhook_event.event_type = WEBHOOK_EVENT_TAG_REMOVED;
+                } else {
+                    // Default to tag_placed for unknown event types
+                    webhook_event.event_type = WEBHOOK_EVENT_TAG_PLACED;
+                    ESP_LOGW(TAG, "⚠️ Unknown event type: %s, defaulting to tag_placed", payload_data->event_type);
+                }
+                webhook_event.timestamp = payload_data->internal_timestamp_us / 1000000;
+                
+                esp_err_t queue_ret = http_tool_send_event(handle, webhook_event.event_type, webhook_event.tag_uid, NULL);
+                if (queue_ret == ESP_OK) {
+                    ESP_LOGI(TAG, "✅ Payload queued for RETRY_LOGIC per Process Map 14");
+                } else {
+                    ESP_LOGW(TAG, "⚠️ Failed to queue payload for retry: %s", esp_err_to_name(queue_ret));
+                    
+                    // Process Map 14: Error path → esp_event_post(PAYLOAD_FAILED)
+                    esp_event_post(PAYLOAD_EVENTS, PAYLOAD_EVENT_FAILED, 
+                                  payload_data, sizeof(payload_esp_event_data_t), 
+                                  100 / portTICK_PERIOD_MS);
+                }
+            }
+            break;
+        }
+        
+        default:
+            ESP_LOGD(TAG, "❓ Unhandled PAYLOAD event in http_tool: event_id=%ld", event_id);
+            break;
+    }
+}
+
 // REMOVED: http_tool_rfid_event_handler() per Process Map 14 Authority
-// Process Map 14: HTTP tool operates via RETRIEVE_FROM_FS, not direct RFID subscription
-// Payload tool now handles RFID events and calls http_send_payload() directly
+// Process Map 14: HTTP tool now operates via PAYLOAD_EVENTS constitutional flow
 
 // =============================================================================
 // Background Transmission Task
@@ -516,12 +666,21 @@ esp_err_t http_send_payload(http_tool_handle_t handle,
     
     ESP_LOGI(TAG, "✅ CHECK_WIFI: Online - proceeding to SEND_HTTP per Process Map 14");
     
-    // Send HTTP request directly with formatted payload
+    // Enhanced HTTP client configuration for better connectivity
+    ESP_LOGI(TAG, "🔍 DEBUG: Attempting connection to %s (timeout: %lums)", 
+             handle->config.webhook_url, handle->config.timeout_ms);
+    
     esp_http_client_config_t config = {
         .url = handle->config.webhook_url,
         .method = HTTP_METHOD_POST,
         .timeout_ms = handle->config.timeout_ms,
         .event_handler = http_tool_http_event_handler,
+        .transport_type = HTTP_TRANSPORT_OVER_TCP,
+        .buffer_size = 2048,
+        .buffer_size_tx = 1024,
+        .disable_auto_redirect = false,
+        .max_redirection_count = 3,
+        .user_data = handle,
     };
     
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -542,8 +701,10 @@ esp_err_t http_send_payload(http_tool_handle_t handle,
         return err;
     }
     
-    // Perform HTTP request
+    // Perform HTTP request with enhanced error logging
     ESP_LOGI(TAG, "🌐 Sending POST to %s", handle->config.webhook_url);
+    ESP_LOGI(TAG, "🔍 DEBUG: Payload size: %zu bytes", payload_length);
+    
     err = esp_http_client_perform(client);
     
     if (err == ESP_OK) {
@@ -571,6 +732,17 @@ esp_err_t http_send_payload(http_tool_handle_t handle,
         }
     } else {
         ESP_LOGE(TAG, "❌ HTTP request failed: %s", esp_err_to_name(err));
+        
+        // Enhanced error diagnosis
+        if (err == ESP_ERR_HTTP_CONNECT) {
+            ESP_LOGE(TAG, "🔍 CONNECTION DIAGNOSIS:");
+            ESP_LOGE(TAG, "   • Target: %s", handle->config.webhook_url);
+            ESP_LOGE(TAG, "   • Timeout: %lums", handle->config.timeout_ms);
+            ESP_LOGE(TAG, "   • WiFi connected: %s", handle->wifi_connected ? "YES" : "NO");
+            ESP_LOGE(TAG, "   • Possible causes: DNS resolution, firewall, server down");
+        } else if (err == ESP_ERR_HTTP_FETCH_HEADER) {
+            ESP_LOGE(TAG, "🔍 FETCH DIAGNOSIS: Connection established but response timeout");
+        }
         // Prevent overflow - reset counters at max value
         if (handle->failed_count < UINT32_MAX) {
             handle->failed_count++;
@@ -606,7 +778,7 @@ esp_err_t http_tool_send_event(http_tool_handle_t handle,
     // Create new event
     webhook_event_t *evt = &handle->events[handle->event_count];
     evt->event_type = event_type;
-    strncpy(evt->tag_uid, tag_uid, sizeof(evt->tag_uid) - 1);
+    snprintf(evt->tag_uid, sizeof(evt->tag_uid), "%s", tag_uid);
     
     // Use configured device ID
     snprintf(evt->device_id, sizeof(evt->device_id), "%s", handle->config.device_id);
@@ -618,7 +790,7 @@ esp_err_t http_tool_send_event(http_tool_handle_t handle,
     
     // Set tag type if provided
     if (tag_type != NULL) {
-        strncpy(evt->tag_type, tag_type, sizeof(evt->tag_type) - 1);
+        snprintf(evt->tag_type, sizeof(evt->tag_type), "%s", tag_type);
     } else {
         evt->tag_type[0] = '\0';
     }
@@ -1170,13 +1342,13 @@ static esp_err_t http_tool_load_log_internal(http_tool_handle_t handle) {
             event->event_type = (webhook_event_type_t)cJSON_GetNumberValue(type);
         }
         if (cJSON_IsString(tag_uid)) {
-            strncpy(event->tag_uid, cJSON_GetStringValue(tag_uid), sizeof(event->tag_uid) - 1);
+            snprintf(event->tag_uid, sizeof(event->tag_uid), "%s", cJSON_GetStringValue(tag_uid));
         }
         if (cJSON_IsString(device_id)) {
-            strncpy(event->device_id, cJSON_GetStringValue(device_id), sizeof(event->device_id) - 1);
+            snprintf(event->device_id, sizeof(event->device_id), "%s", cJSON_GetStringValue(device_id));
         }
         if (cJSON_IsString(tag_type)) {
-            strncpy(event->tag_type, cJSON_GetStringValue(tag_type), sizeof(event->tag_type) - 1);
+            snprintf(event->tag_type, sizeof(event->tag_type), "%s", cJSON_GetStringValue(tag_type));
         }
         if (cJSON_IsNumber(timestamp)) {
             event->timestamp = (uint32_t)cJSON_GetNumberValue(timestamp);
@@ -1276,7 +1448,7 @@ esp_err_t http_tool_set_device_id(http_tool_handle_t handle, const char *device_
     
     xSemaphoreTake(handle->mutex, portMAX_DELAY);
     ESP_LOGI(TAG, "Setting device ID to: %s", device_id);
-    strncpy(handle->config.device_id, device_id, sizeof(handle->config.device_id) - 1);
+    snprintf(handle->config.device_id, sizeof(handle->config.device_id), "%s", device_id);
     xSemaphoreGive(handle->mutex);
     
     return ESP_OK;
@@ -1387,3 +1559,4 @@ const char* http_tool_http_status_to_string(int status_code) {
 // =============================================================================
 
 ESP_EVENT_DEFINE_BASE(HTTP_TOOL_EVENTS);
+// Constitutional Authority: event_system.c defines PAYLOAD_EVENTS

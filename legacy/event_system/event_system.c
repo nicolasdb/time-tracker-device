@@ -196,9 +196,9 @@ esp_err_t publish_payload_event(payload_event_id_t event_id, payload_event_data_
     
     if (ret == ESP_OK) {
         ESP_LOGD(TAG, "📡 Published PAYLOAD_EVENT: %d", event_id);
-        if (data && event_id == PAYLOAD_EVENT_FORMATTED) {
-            ESP_LOGI(TAG, "📦 Payload formatted: tag=%s, success=%s", 
-                     data->tag_uid, "success");
+        if (data && event_id == PAYLOAD_EVENT_READY) {
+            ESP_LOGI(TAG, "📦 Payload ready: tag=%s", 
+                     data->tag_uid);
         }
     } else {
         ESP_LOGW(TAG, "❌ Failed to publish PAYLOAD_EVENT %d: %s", event_id, esp_err_to_name(ret));

@@ -74,6 +74,16 @@ typedef enum {
 } payload_event_type_t;
 
 /**
+ * @brief ESP_EVENT payload event IDs (Constitutional Authority)
+ */
+typedef enum {
+    PAYLOAD_EVENT_READY = 0,
+    PAYLOAD_EVENT_STORED = 1,
+    PAYLOAD_EVENT_TRANSMITTED = 2,
+    PAYLOAD_EVENT_FAILED = 3
+} payload_event_id_t;
+
+/**
  * @brief Event data structure for payload creation
  */
 typedef struct {
@@ -85,6 +95,20 @@ typedef struct {
     uint32_t boot_counter;               // Boot counter value
     char additional_data[256];           // Additional event-specific data
 } payload_event_data_t;
+
+/**
+ * @brief ESP_EVENT payload data structure (Constitutional Authority)
+ * Used for esp_event_post() communication between tools
+ */
+typedef struct {
+    char event_type[32];           // "tag_placed", "tag_removed", etc.
+    uint64_t internal_timestamp_us;
+    bool ntp_synced;
+    uint32_t boot_counter;
+    char tag_uid[32];
+    char additional_data[256];
+    char iso_timestamp[32];
+} payload_esp_event_data_t;
 
 /**
  * @brief Formatted payload result
@@ -229,18 +253,8 @@ esp_err_t payload_tool_generate_device_id(char* device_id);
  */
 esp_err_t payload_tool_start_event_subscription(payload_tool_handle_t handle);
 
-/**
- * @brief Set tool dependencies for process map compliance
- * @param handle Tool handle
- * @param fs_tool_handle FS tool handle for storage
- * @param ntp_tool_handle NTP tool handle for time sync
- * @param http_tool_handle HTTP tool handle for transmission
- * @return ESP_OK on success
- */
-esp_err_t payload_tool_set_dependencies(payload_tool_handle_t handle,
-                                       void* fs_tool_handle,
-                                       void* ntp_tool_handle,
-                                       void* http_tool_handle);
+// Constitutional compliance: Tool dependencies removed - pure event-driven communication
+// Tools communicate via esp_event system only per Process Maps 13 & 14
 
 /**
  * @brief Build and transmit payload per process map 13

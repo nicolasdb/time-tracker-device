@@ -1,9 +1,11 @@
 /**
  * @file feedback_tool.c
- * @brief MCP-Inspired Feedback Tool Implementation
+ * @brief Constitutional Feedback Tool Implementation per Process Map 11
  * 
- * Transformed from feedback_manager to follow MCP tool composition patterns.
- * Preserves the excellent priority queue architecture and animation system.
+ * Constitutional Authority: Process Map 11 - IDLE { LISTENING → LOOKUP → EXECUTE → LISTENING }
+ * "Direct LED control via led_strip, No queues, no priorities, Just execute the recipe"
+ * 
+ * Implements simple FSM with recipe lookup system instead of complex priority queues.
  */
 
 #include "feedback_tool.h"
@@ -83,12 +85,39 @@ struct feedback_tool {
     // Hardware Resources
     led_strip_handle_t led_strip;
     
-    // Priority Queue System (Preserved from Original)
-    feedback_state_entry_t state_queue[FEEDBACK_QUEUE_SIZE];
-    uint8_t queue_head;
-    uint8_t queue_count;
-    feedback_state_t current_state;
-    feedback_priority_t current_priority;
+    // Constitutional Authority: Process Map 11 FSM (LISTENING → LOOKUP → EXECUTE)
+    typedef enum {
+        FSM_LISTENING,    // Wait for esp_event state changes
+        FSM_LOOKUP,       // Match state to recipe
+        FSM_EXECUTE       // Execute LED recipe
+    } constitutional_fsm_state_t;
+    
+    constitutional_fsm_state_t fsm_state;
+    feedback_state_t pending_state;     // State received in LISTENING
+    feedback_state_t current_state;     // State being executed
+    
+    // Constitutional Authority: Recipe System per Process Map 11
+    typedef enum {
+        RECIPE_GREEN_STEADY,        // TAG_PRESENT
+        RECIPE_BLUE_FADE,          // SYSTEM_IDLE
+        RECIPE_CYAN_BLINK,         // WIFI_CONNECTING
+        RECIPE_CYAN_STEADY,        // WIFI_CONNECTED
+        RECIPE_AP_MODE_SEQUENCE,   // AP_MODE (yellow→blue→purple)
+        RECIPE_BLUE_BLINK,         // NTP_CALL
+        RECIPE_BLUE_STEADY,        // NTP_SYNC
+        RECIPE_GREEN_PULSE,        // HTTP_SENDING
+        RECIPE_RED_BLINK,          // ERROR_DETECTED
+        RECIPE_ORANGE_FADE,        // FLOW60
+        RECIPE_ORANGE_PULSE,       // FLOW90
+        RECIPE_WHITE_PULSE         // BOOT
+    } led_recipe_type_t;
+    
+    typedef struct {
+        feedback_state_t state;
+        led_recipe_type_t recipe;
+    } constitutional_recipe_t;
+    
+    led_recipe_type_t current_recipe;
     
     // Task Management
     TaskHandle_t task_handle;
@@ -111,18 +140,34 @@ struct feedback_tool {
 };
 
 // =============================================================================
-// Forward Declarations
+// Constitutional Authority: Recipe Lookup Table per Process Map 11
 // =============================================================================
 
-static void feedback_tool_task(void *arg);
-static esp_err_t queue_state_change(struct feedback_tool *tool, 
-                                   feedback_state_t state, 
-                                   feedback_priority_t priority, 
-                                   uint32_t duration_ms);
-static feedback_state_t get_highest_priority_state(struct feedback_tool *tool);
-static feedback_priority_t get_state_default_priority(feedback_state_t state);
-static rgb_color_t get_state_color(feedback_state_t state);
-static void update_led_display(struct feedback_tool *tool);
+static const constitutional_recipe_t CONSTITUTIONAL_RECIPES[] = {
+    {FEEDBACK_STATE_TAG_DETECTED,     RECIPE_GREEN_STEADY},      // TAG_PRESENT → green_steady
+    {FEEDBACK_STATE_IDLE,             RECIPE_BLUE_FADE},          // SYSTEM_IDLE → blue.fadeIn→fadeOut
+    {FEEDBACK_STATE_WIFI_CONNECTING,  RECIPE_CYAN_BLINK},         // WIFI_CONNECTING → cyan_blink
+    {FEEDBACK_STATE_WIFI_CONNECTED,   RECIPE_CYAN_STEADY},        // WIFI_CONNECTED → cyan_steady
+    {FEEDBACK_STATE_AP_MODE,          RECIPE_AP_MODE_SEQUENCE},   // AP_MODE → yellow→blue→purple
+    {FEEDBACK_STATE_NTP_SYNC_STARTED, RECIPE_BLUE_BLINK},         // NTP_CALL → blue_blink
+    {FEEDBACK_STATE_NTP_SYNCED,       RECIPE_BLUE_STEADY},        // NTP_SYNC → blue_steady
+    {FEEDBACK_STATE_HTTP_SENDING,     RECIPE_GREEN_PULSE},        // HTTP_SENDING → green_pulse
+    {FEEDBACK_STATE_ERROR,            RECIPE_RED_BLINK},          // ERROR_DETECTED → red_blink
+    {FEEDBACK_STATE_FLOW_60,          RECIPE_ORANGE_FADE},        // FLOW60 → orange.fadeIn→fadeOut
+    {FEEDBACK_STATE_FLOW_90,          RECIPE_ORANGE_PULSE},       // FLOW90 → orange_pulse
+    {FEEDBACK_STATE_BOOTING,          RECIPE_WHITE_PULSE}         // BOOT → white_pulse
+};
+
+#define CONSTITUTIONAL_RECIPE_COUNT (sizeof(CONSTITUTIONAL_RECIPES) / sizeof(constitutional_recipe_t))
+
+// =============================================================================
+// Constitutional Forward Declarations per Process Map 11
+// =============================================================================
+
+static void constitutional_feedback_fsm(void *arg);  // LISTENING → LOOKUP → EXECUTE
+static led_recipe_type_t constitutional_lookup_recipe(feedback_state_t state);  // LOOKUP phase
+static void constitutional_execute_recipe(struct feedback_tool *tool, led_recipe_type_t recipe);  // EXECUTE phase
+static rgb_color_t get_state_color(feedback_state_t state);  // Preserved for compatibility
 
 // =============================================================================
 // MCP Tool Interface Implementation
@@ -170,11 +215,10 @@ feedback_tool_handle_t feedback_tool_init(const feedback_tool_config_t *config)
     tool->config = *config;
     tool->uptime_start = xTaskGetTickCount() * portTICK_PERIOD_MS;
     
-    // Set capabilities
+    // Constitutional Authority: Set capabilities per Process Map 11
     tool->capabilities = FEEDBACK_CAP_LED_CONTROL | 
-                        FEEDBACK_CAP_PRIORITY_QUEUE |
-                        FEEDBACK_CAP_ANIMATIONS |
-                        FEEDBACK_CAP_AUTO_EXPIRE |
+                        FEEDBACK_CAP_FSM_EXECUTION |
+                        FEEDBACK_CAP_RECIPE_LOOKUP |
                         FEEDBACK_CAP_THREAD_SAFE;
     
     // Initialize queue mutex
@@ -238,10 +282,10 @@ feedback_tool_handle_t feedback_tool_init(const feedback_tool_config_t *config)
     // Mark as active before creating task to avoid race condition
     tool->is_active = true;
     
-    // Create background task
+    // Constitutional Authority: Create FSM task per Process Map 11
     BaseType_t task_ret = xTaskCreate(
-        feedback_tool_task,
-        "feedback_tool",
+        constitutional_feedback_fsm,
+        "constitutional_fsm",
         TASK_STACK_SIZE,
         tool,
         TASK_PRIORITY,
@@ -360,35 +404,24 @@ esp_err_t feedback_tool_set_state(feedback_tool_handle_t handle,
 
 esp_err_t feedback_tool_set_state_simple(feedback_tool_handle_t handle, feedback_state_t state)
 {
-    feedback_priority_t priority = get_state_default_priority(state);
-    uint32_t duration = 0; // Permanent by default
-    
-    // Some states are naturally temporary
-    switch (state) {
-        case FEEDBACK_STATE_WIFI_CONNECTED:
-        case FEEDBACK_STATE_TIME_SYNCED:
-        case FEEDBACK_STATE_WEBHOOK_SUCCESS:
-            duration = 1000; // Flash for 1 second
-            break;
-        default:
-            break;
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
     }
     
-    ESP_LOGI(TAG, "🔄 State Change Request: %s (priority=%s, duration=%lums)", 
-             feedback_tool_state_to_string(state), 
-             feedback_tool_priority_to_string(priority), 
-             duration);
+    struct feedback_tool *tool = (struct feedback_tool*)handle;
     
-    // Special handling for IDLE state - clear higher priority states
-    if (state == FEEDBACK_STATE_IDLE) {
-        ESP_LOGI(TAG, "🔄 Clearing higher priority states before IDLE transition");
-        feedback_tool_clear_state(handle, FEEDBACK_STATE_BOOTING);
-        feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTING);
-        feedback_tool_clear_state(handle, FEEDBACK_STATE_WIFI_CONNECTED);
-        feedback_tool_clear_state(handle, FEEDBACK_STATE_TAG_DETECTED);  // Phase 5.4: Clear RFID states
-    }
+    ESP_LOGI(TAG, "🔄 Constitutional State Change: %s → triggers FSM LISTENING", 
+             feedback_tool_state_to_string(state));
     
-    return feedback_tool_set_state(handle, state, priority, duration);
+    // Constitutional Authority: Process Map 11 - esp_event triggers LISTENING state
+    // Direct state setting for FSM (no queues, no priorities per Process Map 11)
+    xSemaphoreTake(tool->queue_mutex, portMAX_DELAY);
+    tool->pending_state = state;
+    xSemaphoreGive(tool->queue_mutex);
+    
+    ESP_LOGI(TAG, "✅ FSM triggered: LISTENING state will detect pending_state change");
+    
+    return ESP_OK;
 }
 
 esp_err_t feedback_tool_flash_event(feedback_tool_handle_t handle, 
@@ -514,50 +547,240 @@ esp_err_t feedback_tool_reset(feedback_tool_handle_t handle)
 // Background Task Implementation (Enhanced from Original)
 // =============================================================================
 
-static void feedback_tool_task(void *arg)
+// =============================================================================
+// Constitutional Authority: Process Map 11 FSM Implementation
+// IDLE { LISTENING → LOOKUP → EXECUTE → LISTENING }
+// =============================================================================
+
+static void constitutional_feedback_fsm(void *arg)
 {
     struct feedback_tool *tool = (struct feedback_tool*)arg;
     TickType_t last_wake_time = xTaskGetTickCount();
     uint32_t debug_counter = 0;
     
-    ESP_LOGI(TAG, "Feedback tool task started");
+    ESP_LOGI(TAG, "✅ Constitutional FSM started - Process Map 11 compliance");
+    
+    // Initialize FSM to LISTENING state
+    tool->fsm_state = FSM_LISTENING;
+    tool->pending_state = FEEDBACK_STATE_IDLE;
+    tool->current_state = FEEDBACK_STATE_IDLE;
+    tool->current_recipe = RECIPE_BLUE_FADE;
     
     while (tool->is_active) {
-        // Process state queue and update current state
-        feedback_state_t new_state = get_highest_priority_state(tool);
-        
-        if (new_state != tool->current_state) {
-            ESP_LOGI(TAG, "🔄 State Transition: %s -> %s", 
-                     feedback_tool_state_to_string(tool->current_state),
-                     feedback_tool_state_to_string(new_state));
-            tool->current_state = new_state;
-            tool->cycle_counter = 0; // Reset animation cycle
+        switch (tool->fsm_state) {
+            case FSM_LISTENING:
+                // Process Map 11: LISTENING state - wait for state changes
+                if (tool->pending_state != tool->current_state) {
+                    ESP_LOGI(TAG, "🔄 FSM: LISTENING → LOOKUP (state change detected)");
+                    tool->fsm_state = FSM_LOOKUP;
+                }
+                break;
+                
+            case FSM_LOOKUP:
+                // Process Map 11: LOOKUP state - match state to recipe
+                ESP_LOGI(TAG, "🔍 FSM: LOOKUP phase - matching state to recipe");
+                led_recipe_type_t new_recipe = constitutional_lookup_recipe(tool->pending_state);
+                
+                if (new_recipe != tool->current_recipe) {
+                    ESP_LOGI(TAG, "🔄 State Transition: %s -> %s", 
+                             feedback_tool_state_to_string(tool->current_state),
+                             feedback_tool_state_to_string(tool->pending_state));
+                    tool->current_state = tool->pending_state;
+                    tool->current_recipe = new_recipe;
+                    tool->cycle_counter = 0; // Reset recipe cycle
+                }
+                
+                ESP_LOGI(TAG, "✅ FSM: LOOKUP → EXECUTE (recipe matched)");
+                tool->fsm_state = FSM_EXECUTE;
+                break;
+                
+            case FSM_EXECUTE:
+                // Process Map 11: EXECUTE state - "Just execute the recipe"
+                constitutional_execute_recipe(tool, tool->current_recipe);
+                
+                // Increment cycle for recipe animations
+                tool->cycle_counter++;
+                debug_counter++;
+                
+                // Constitutional Authority: Return to LISTENING after execution
+                tool->fsm_state = FSM_LISTENING;
+                break;
         }
         
-        // Update LED display based on current state
-        update_led_display(tool);
-        
-        // Increment cycle counter for animations
-        tool->cycle_counter++;
-        debug_counter++;
-        
-        // Debug task activity every 5 seconds
-        if (debug_counter % 100 == 0) {
-            ESP_LOGI(TAG, "🔄 Task Status: state=%s, queue=%d, cycle=%lu, active=%d", 
+        // Debug FSM activity every 5 seconds (reduced logging)
+        if (debug_counter % 500 == 0) {
+            ESP_LOGI(TAG, "🔄 Constitutional FSM: state=%s, fsm=%s, cycle=%lu", 
                      feedback_tool_state_to_string(tool->current_state),
-                     tool->queue_count, tool->cycle_counter, tool->is_active);
+                     (tool->fsm_state == FSM_LISTENING) ? "LISTENING" :
+                     (tool->fsm_state == FSM_LOOKUP) ? "LOOKUP" : "EXECUTE",
+                     tool->cycle_counter);
         }
         
-        // Wait for next cycle
-        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(tool->config.cleanup_interval_ms));
+        // Constitutional timing: 10ms cycle for responsive feedback
+        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(10));
     }
     
-    ESP_LOGI(TAG, "Feedback tool task ended");
+    ESP_LOGI(TAG, "Constitutional FSM ended");
     vTaskDelete(NULL);
 }
 
 // =============================================================================
-// State Queue Management (Preserved from Original)
+// Constitutional Authority: LOOKUP Implementation per Process Map 11
+// =============================================================================
+
+static led_recipe_type_t constitutional_lookup_recipe(feedback_state_t state)
+{
+    // Process Map 11 LOOKUP phase: "Match to recipe"
+    for (int i = 0; i < CONSTITUTIONAL_RECIPE_COUNT; i++) {
+        if (CONSTITUTIONAL_RECIPES[i].state == state) {
+            ESP_LOGD(TAG, "🔍 Constitutional lookup: state=%s → recipe=%d", 
+                     feedback_tool_state_to_string(state), CONSTITUTIONAL_RECIPES[i].recipe);
+            return CONSTITUTIONAL_RECIPES[i].recipe;
+        }
+    }
+    
+    // Default recipe if state not found
+    ESP_LOGW(TAG, "⚠️ Constitutional lookup: state=%s not found, using BLUE_FADE default", 
+             feedback_tool_state_to_string(state));
+    return RECIPE_BLUE_FADE;
+}
+
+// =============================================================================
+// Constitutional Authority: EXECUTE Implementation per Process Map 11
+// =============================================================================
+
+static void constitutional_execute_recipe(struct feedback_tool *tool, led_recipe_type_t recipe)
+{
+    // Process Map 11 EXECUTE phase: "Direct LED control via led_strip, No queues, no priorities, Just execute the recipe"
+    
+    switch (recipe) {
+        case RECIPE_GREEN_STEADY:
+            // TAG_PRESENT → green_steady
+            led_strip_set_pixel(tool->led_strip, 0, 0, 255, 0);  // Green
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_BLUE_FADE:
+            // SYSTEM_IDLE → blue.fadeIn → blue.fadeOut
+            {
+                float phase = (2.0 * M_PI * tool->cycle_counter) / 400.0;  // 4 second cycle
+                float intensity = (sin(phase) + 1.0) / 2.0;
+                uint8_t blue_value = (uint8_t)(intensity * 255);
+                led_strip_set_pixel(tool->led_strip, 0, 0, 0, blue_value);
+                led_strip_refresh(tool->led_strip);
+            }
+            break;
+            
+        case RECIPE_CYAN_BLINK:
+            // WIFI_CONNECTING → cyan_blink (CORRECTED: was blue, now cyan)
+            if ((tool->cycle_counter / 50) % 2 == 0) {  // 1 second blink
+                led_strip_set_pixel(tool->led_strip, 0, 0, 255, 255);  // Cyan
+            } else {
+                led_strip_set_pixel(tool->led_strip, 0, 0, 0, 0);  // Off
+            }
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_CYAN_STEADY:
+            // WIFI_CONNECTED → cyan_steady
+            led_strip_set_pixel(tool->led_strip, 0, 0, 255, 255);  // Cyan
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_ORANGE_FADE:
+            // FLOW60 → orange.fadeIn → orange.fadeOut
+            {
+                float phase = (2.0 * M_PI * tool->cycle_counter) / 400.0;  // 4 second cycle
+                float intensity = (sin(phase) + 1.0) / 2.0;
+                uint8_t orange_red = (uint8_t)(intensity * 255);
+                uint8_t orange_green = (uint8_t)(intensity * 165);
+                led_strip_set_pixel(tool->led_strip, 0, orange_red, orange_green, 0);
+                led_strip_refresh(tool->led_strip);
+            }
+            break;
+            
+        case RECIPE_ORANGE_PULSE:
+            // FLOW90 → orange_pulse
+            if ((tool->cycle_counter / 25) % 2 == 0) {  // 0.5 second pulse
+                led_strip_set_pixel(tool->led_strip, 0, 255, 165, 0);  // Orange
+            } else {
+                led_strip_set_pixel(tool->led_strip, 0, 128, 82, 0);   // Dim orange
+            }
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_WHITE_PULSE:
+            // BOOT → white_pulse
+            if ((tool->cycle_counter / 30) % 2 == 0) {  // ~0.6 second pulse
+                led_strip_set_pixel(tool->led_strip, 0, 255, 255, 255);  // White
+            } else {
+                led_strip_set_pixel(tool->led_strip, 0, 128, 128, 128);   // Dim white
+            }
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_RED_BLINK:
+            // ERROR_DETECTED → red_blink
+            if ((tool->cycle_counter / 20) % 2 == 0) {  // Fast blink
+                led_strip_set_pixel(tool->led_strip, 0, 255, 0, 0);  // Red
+            } else {
+                led_strip_set_pixel(tool->led_strip, 0, 0, 0, 0);    // Off
+            }
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_GREEN_PULSE:
+            // HTTP_SENDING → green_pulse
+            if ((tool->cycle_counter / 40) % 2 == 0) {  // 0.8 second pulse
+                led_strip_set_pixel(tool->led_strip, 0, 0, 255, 0);  // Green
+            } else {
+                led_strip_set_pixel(tool->led_strip, 0, 0, 128, 0);   // Dim green
+            }
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_BLUE_BLINK:
+            // NTP_CALL → blue_blink
+            if ((tool->cycle_counter / 30) % 2 == 0) {  // ~0.6 second blink
+                led_strip_set_pixel(tool->led_strip, 0, 0, 0, 255);  // Blue
+            } else {
+                led_strip_set_pixel(tool->led_strip, 0, 0, 0, 0);    // Off
+            }
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_BLUE_STEADY:
+            // NTP_SYNC → blue_steady
+            led_strip_set_pixel(tool->led_strip, 0, 0, 0, 255);  // Blue
+            led_strip_refresh(tool->led_strip);
+            break;
+            
+        case RECIPE_AP_MODE_SEQUENCE:
+            // AP_MODE → yellow_flash0.2 → blue_flash0.3 → purple_steady2.0
+            {
+                uint32_t sequence_pos = tool->cycle_counter % 300;  // 3 second total cycle
+                if (sequence_pos < 20) {  // Yellow flash 0.2s
+                    led_strip_set_pixel(tool->led_strip, 0, 255, 255, 0);  // Yellow
+                } else if (sequence_pos < 50) {  // Blue flash 0.3s
+                    led_strip_set_pixel(tool->led_strip, 0, 0, 0, 255);    // Blue
+                } else {  // Purple steady 2.5s
+                    led_strip_set_pixel(tool->led_strip, 0, 128, 0, 128);  // Purple
+                }
+                led_strip_refresh(tool->led_strip);
+            }
+            break;
+            
+        default:
+            // Fallback to blue fade
+            ESP_LOGW(TAG, "⚠️ Unknown recipe %d, using blue fade", recipe);
+            led_strip_set_pixel(tool->led_strip, 0, 0, 0, 64);
+            led_strip_refresh(tool->led_strip);
+            break;
+    }
+}
+
+// =============================================================================
+// DEPRECATED: Old Queue Management (Will be removed)
 // =============================================================================
 
 static esp_err_t queue_state_change(struct feedback_tool *tool, 
@@ -1141,9 +1364,8 @@ const feedback_tool_registry_t* feedback_tool_get_registry_entry(void)
         .version = FEEDBACK_TOOL_VERSION,
         .description = FEEDBACK_TOOL_DESCRIPTION,
         .capabilities = FEEDBACK_CAP_LED_CONTROL | 
-                       FEEDBACK_CAP_PRIORITY_QUEUE |
-                       FEEDBACK_CAP_ANIMATIONS |
-                       FEEDBACK_CAP_AUTO_EXPIRE |
+                       FEEDBACK_CAP_FSM_EXECUTION |
+                       FEEDBACK_CAP_RECIPE_LOOKUP |
                        FEEDBACK_CAP_THREAD_SAFE,
         .init_func = feedback_tool_init,
         .deinit_func = feedback_tool_deinit

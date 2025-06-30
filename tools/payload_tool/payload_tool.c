@@ -7,11 +7,10 @@
  */
 
 #include "payload_tool.h"
+#include "event_system.h"   // Constitutional Authority: RFID_EVENTS and all event bases
 #include "esp_event.h"      // ESP event system base
 #include "esp_log.h"
-#include "ntp_tool.h"       // NTP tool for sync checking per process map 13
-#include "fs_tool.h"        // FS tool for payload storage
-#include "http_tool.h"      // HTTP tool for payload transmission
+#include "ntp_tool.h"       // NTP events only - no direct tool access
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
@@ -23,33 +22,15 @@
 static const char *TAG = "payload_tool";
 
 // =============================================================================
-// RFID Event Declarations (from event_system.h - avoiding circular dependency)
+// Constitutional Authority: event_system.h defines all event types and bases
 // =============================================================================
 
-ESP_EVENT_DECLARE_BASE(RFID_EVENTS);
-ESP_EVENT_DECLARE_BASE(PAYLOAD_EVENTS);
+// Constitutional Authority: event_system.c defines all event bases
+// Tools only declare/use - never define
 
-typedef enum {
-    RFID_EVENT_READY = 0,
-    RFID_EVENT_TAG_DETECTED = 1,
-    RFID_EVENT_TAG_REMOVED = 2,
-    RFID_EVENT_TAG_IGNORED = 3,
-    RFID_EVENT_ERROR = 4
-} rfid_event_id_t;
-
-typedef enum {
-    PAYLOAD_EVENT_READY = 0,
-    PAYLOAD_EVENT_STORED = 1,
-    PAYLOAD_EVENT_TRANSMITTED = 2,
-    PAYLOAD_EVENT_FAILED = 3
-} payload_event_id_t;
-
-typedef struct {
-    char tag_uid[20];
-    uint64_t detection_time_us;
-    uint32_t debounce_counter;
-    bool is_valid;
-} rfid_event_data_t;
+// Constitutional Authority: All event types come from event_system.h
+// - rfid_event_id_t, rfid_event_data_t from event_system.h
+// - payload_event_id_t defined in payload_tool.h
 
 
 // =============================================================================
@@ -65,14 +46,15 @@ typedef struct payload_tool {
     uint32_t last_error_code;
     nvs_handle_t nvs_handle;
     
-    // Event system integration per process map 13
+    // Event system integration per Process Map 01 constitutional authority
     esp_event_handler_instance_t rfid_event_handler;
+    esp_event_handler_instance_t ntp_event_handler;
     bool event_subscription_active;
     
-    // Tool dependencies for process map compliance
-    void* fs_tool_handle;      // FS tool for payload storage
-    void* ntp_tool_handle;     // NTP tool for timestamp coordination
-    void* http_tool_handle;    // HTTP tool for transmission
+    // Constitutional compliance: Pure esp_event communication only
+    bool ntp_is_synced;         // NTP sync status via events
+    int64_t ntp_offset_us;      // Last known NTP offset
+    int64_t last_ntp_sync_time; // Last sync timestamp
 } payload_tool_t;
 
 // =============================================================================
@@ -87,6 +69,7 @@ typedef struct payload_tool {
 // =============================================================================
 
 static void payload_tool_rfid_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static void payload_tool_ntp_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static esp_err_t payload_tool_process_rfid_event(payload_tool_handle_t handle, rfid_event_id_t event_id, rfid_event_data_t* event_data);
 
 // =============================================================================
@@ -151,10 +134,10 @@ payload_tool_handle_t payload_tool_init(const payload_tool_config_t* config)
     tool->ntp_integration_active = tool->config.enable_ntp_integration;
     tool->event_subscription_active = false;
     
-    // Initialize tool dependency handles to NULL
-    tool->fs_tool_handle = NULL;
-    tool->ntp_tool_handle = NULL;
-    tool->http_tool_handle = NULL;
+    // Constitutional compliance: Initialize NTP status via events
+    tool->ntp_is_synced = false;
+    tool->ntp_offset_us = 0;
+    tool->last_ntp_sync_time = 0;
     
     ESP_LOGI(TAG, "Payload tool initialized - Device ID: %s", tool->config.device_id);
     
@@ -169,14 +152,26 @@ esp_err_t payload_tool_cleanup(payload_tool_handle_t handle)
     
     payload_tool_t* tool = (payload_tool_t*)handle;
     
-    // Unregister RFID event handler if subscribed
-    if (tool->event_subscription_active && tool->rfid_event_handler) {
-        esp_err_t unregister_ret = esp_event_handler_instance_unregister(RFID_EVENTS, ESP_EVENT_ANY_ID, tool->rfid_event_handler);
-        if (unregister_ret == ESP_OK) {
-            ESP_LOGI(TAG, "✅ RFID event subscription deregistered");
-        } else {
-            ESP_LOGW(TAG, "⚠️ Failed to deregister RFID event subscription: %s", esp_err_to_name(unregister_ret));
+    // Unregister event handlers if subscribed
+    if (tool->event_subscription_active) {
+        if (tool->rfid_event_handler) {
+            esp_err_t rfid_unregister_ret = esp_event_handler_instance_unregister(RFID_EVENTS, ESP_EVENT_ANY_ID, tool->rfid_event_handler);
+            if (rfid_unregister_ret == ESP_OK) {
+                ESP_LOGI(TAG, "✅ RFID event subscription deregistered");
+            } else {
+                ESP_LOGW(TAG, "⚠️ Failed to deregister RFID event subscription: %s", esp_err_to_name(rfid_unregister_ret));
+            }
         }
+        
+        if (tool->ntp_event_handler) {
+            esp_err_t ntp_unregister_ret = esp_event_handler_instance_unregister(NTP_TOOL_EVENTS, ESP_EVENT_ANY_ID, tool->ntp_event_handler);
+            if (ntp_unregister_ret == ESP_OK) {
+                ESP_LOGI(TAG, "✅ NTP event subscription deregistered");
+            } else {
+                ESP_LOGW(TAG, "⚠️ Failed to deregister NTP event subscription: %s", esp_err_to_name(ntp_unregister_ret));
+            }
+        }
+        
         tool->event_subscription_active = false;
     }
     
@@ -378,18 +373,14 @@ esp_err_t payload_tool_calculate_timestamp(payload_tool_handle_t handle,
     // Process Map 13: Calculate real timestamp = event_uptime + ntp_offset
     *ntp_offset_ms = 0;
     
-    // Get NTP offset if NTP tool is available and synced
-    if (tool->ntp_tool_handle) {
-        ntp_tool_status_t ntp_status;
-        esp_err_t ntp_ret = ntp_tool_get_status((ntp_tool_handle_t)tool->ntp_tool_handle, &ntp_status);
-        if (ntp_ret == ESP_OK && ntp_status.sync_status == NTP_STATUS_SYNCED) {
-            // Calculate proper NTP offset: real_timestamp = event_uptime + ntp_offset
-            *ntp_offset_ms = ntp_status.last_offset_us / 1000;  // Convert μs to ms
-            ESP_LOGD(TAG, "🕐 Using NTP offset: %lld ms (last sync: %lld)", 
-                     (long long)*ntp_offset_ms, (long long)ntp_status.last_sync_time);
-        } else {
-            ESP_LOGW(TAG, "⚠️ NTP not synced - using system time");
-        }
+    // Constitutional Authority: Use NTP status from events per Process Map 01
+    if (tool->ntp_is_synced) {
+        // Calculate proper NTP offset: real_timestamp = event_uptime + ntp_offset
+        *ntp_offset_ms = tool->ntp_offset_us / 1000;  // Convert μs to ms
+        ESP_LOGD(TAG, "🕐 Using NTP offset: %lld ms (last sync: %lld)", 
+                 (long long)*ntp_offset_ms, (long long)tool->last_ntp_sync_time);
+    } else {
+        ESP_LOGW(TAG, "⚠️ NTP not synced - using system time");
     }
     
     // Calculate final timestamp
@@ -513,8 +504,8 @@ esp_err_t payload_tool_start_event_subscription(payload_tool_handle_t handle)
         return ESP_OK;
     }
     
-    // Register for ALL RFID events per process map authority
-    esp_err_t ret = esp_event_handler_instance_register(
+    // Register for RFID events per process map authority
+    esp_err_t rfid_ret = esp_event_handler_instance_register(
         RFID_EVENTS, 
         ESP_EVENT_ANY_ID,
         payload_tool_rfid_event_handler,
@@ -522,37 +513,29 @@ esp_err_t payload_tool_start_event_subscription(payload_tool_handle_t handle)
         &tool->rfid_event_handler
     );
     
-    if (ret == ESP_OK) {
-        tool->event_subscription_active = true;
-        ESP_LOGI(TAG, "✅ RFID event subscription started - Process Map 13 active");
-        ESP_LOGI(TAG, "📦 Payload tool will receive: TAG_DETECTED, TAG_REMOVED events");
-    } else {
-        ESP_LOGE(TAG, "❌ Failed to register RFID event handler: %s", esp_err_to_name(ret));
-    }
+    // Register for NTP events per Process Map 01 constitutional authority
+    esp_err_t ntp_ret = esp_event_handler_instance_register(
+        NTP_TOOL_EVENTS,
+        ESP_EVENT_ANY_ID,
+        payload_tool_ntp_event_handler,
+        tool,
+        &tool->ntp_event_handler
+    );
     
-    return ret;
+    if (rfid_ret == ESP_OK && ntp_ret == ESP_OK) {
+        tool->event_subscription_active = true;
+        ESP_LOGI(TAG, "✅ Event subscriptions started - Process Map 01 compliance");
+        ESP_LOGI(TAG, "📦 Payload tool will receive: RFID events + NTP sync events");
+        return ESP_OK;
+    } else {
+        ESP_LOGE(TAG, "❌ Failed to register event handlers: RFID=%s, NTP=%s", 
+                 esp_err_to_name(rfid_ret), esp_err_to_name(ntp_ret));
+        return ESP_FAIL;
+    }
 }
 
-esp_err_t payload_tool_set_dependencies(payload_tool_handle_t handle, 
-                                       void* fs_tool_handle,
-                                       void* ntp_tool_handle, 
-                                       void* http_tool_handle)
-{
-    if (!handle) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    payload_tool_t* tool = (payload_tool_t*)handle;
-    
-    tool->fs_tool_handle = fs_tool_handle;
-    tool->ntp_tool_handle = ntp_tool_handle;
-    tool->http_tool_handle = http_tool_handle;
-    
-    ESP_LOGI(TAG, "🔗 Tool dependencies set: FS=%p, NTP=%p, HTTP=%p", 
-             fs_tool_handle, ntp_tool_handle, http_tool_handle);
-    
-    return ESP_OK;
-}
+// Constitutional compliance: Dependencies removed - pure event-driven communication
+// Tools communicate via esp_event system only per Process Maps 13 & 14
 
 // =============================================================================
 // RFID Event Handler Implementation (Process Map 13)
@@ -595,19 +578,14 @@ static esp_err_t payload_tool_process_rfid_event(payload_tool_handle_t handle, r
             // Check NTP sync status per process map 13 (S1 choice)
             bool ntp_synced = false;
             
-            if (tool->ntp_tool_handle) {
-                ntp_tool_status_t ntp_status;
-                esp_err_t ntp_ret = ntp_tool_get_status((ntp_tool_handle_t)tool->ntp_tool_handle, &ntp_status);
-                if (ntp_ret == ESP_OK) {
-                    ntp_synced = (ntp_status.sync_status == NTP_STATUS_SYNCED);
-                    ESP_LOGD(TAG, "🕐 NTP sync status: %s (last sync: %lld)", 
-                             ntp_synced ? "synced" : "not synced", (long long)ntp_status.last_sync_time);
-                } else {
-                    ESP_LOGW(TAG, "⚠️ Failed to get NTP status: %s", esp_err_to_name(ntp_ret));
-                }
-            } else {
-                ESP_LOGW(TAG, "⚠️ NTP tool not available - proceeding without sync check");
-                ntp_synced = true; // Allow processing when NTP tool is not available
+            // Constitutional Authority: Use NTP status from events per Process Map 01
+            ntp_synced = tool->ntp_is_synced;
+            ESP_LOGD(TAG, "🕐 NTP sync status: %s (last sync: %lld)", 
+                     ntp_synced ? "synced" : "not synced", (long long)tool->last_ntp_sync_time);
+            
+            if (!ntp_synced) {
+                ESP_LOGW(TAG, "⚠️ NTP not synced via events - allowing processing anyway");
+                ntp_synced = true; // Allow processing when NTP not synced
             }
             
             if (!ntp_synced) {
@@ -651,8 +629,7 @@ esp_err_t payload_tool_build_and_transmit_payload(payload_tool_handle_t handle, 
     };
     
     // Copy tag UID
-    strncpy(payload_data.tag_uid, rfid_data->tag_uid, sizeof(payload_data.tag_uid) - 1);
-    payload_data.tag_uid[sizeof(payload_data.tag_uid) - 1] = '\0';
+    snprintf(payload_data.tag_uid, sizeof(payload_data.tag_uid), "%s", rfid_data->tag_uid);
     
     // Format payload using existing function
     payload_formatted_result_t result;
@@ -670,23 +647,37 @@ esp_err_t payload_tool_build_and_transmit_payload(payload_tool_handle_t handle, 
     
     ESP_LOGI(TAG, "📡 Publishing PAYLOAD_READY event per Process Map 13 authority");
     
-    // Create payload event data for ESP event system
-    payload_event_data_t* event_payload = malloc(sizeof(payload_event_data_t) + result.json_length + 1);
-    if (!event_payload) {
+    // Create ESP event payload using constitutional structure
+    payload_esp_event_data_t esp_event_payload = {0};
+    
+    // Convert to constitutional ESP event format
+    snprintf(esp_event_payload.event_type, sizeof(esp_event_payload.event_type), "%s", payload_event_type_to_string(payload_data.event_type));
+    esp_event_payload.internal_timestamp_us = payload_data.internal_timestamp_us;
+    esp_event_payload.ntp_synced = payload_data.ntp_synced;
+    esp_event_payload.boot_counter = payload_data.boot_counter;
+    snprintf(esp_event_payload.tag_uid, sizeof(esp_event_payload.tag_uid), "%s", payload_data.tag_uid);
+    snprintf(esp_event_payload.additional_data, sizeof(esp_event_payload.additional_data), "%s", payload_data.additional_data);
+    snprintf(esp_event_payload.iso_timestamp, sizeof(esp_event_payload.iso_timestamp), "%s", result.iso_timestamp);
+    
+    // Append JSON string after the structure
+    size_t total_size = sizeof(payload_esp_event_data_t) + result.json_length + 1;
+    char* complete_payload = malloc(total_size);
+    if (!complete_payload) {
         ESP_LOGE(TAG, "❌ Failed to allocate memory for payload event");
         payload_tool_free_result(&result);
         return ESP_ERR_NO_MEM;
     }
     
-    // Copy payload data and JSON string
-    memcpy(event_payload, &payload_data, sizeof(payload_event_data_t));
-    strcpy((char*)(event_payload + 1), result.json_string);
+    memcpy(complete_payload, &esp_event_payload, sizeof(payload_esp_event_data_t));
+    strcpy(complete_payload + sizeof(payload_esp_event_data_t), result.json_string);
     
-    // Constitutional Authority: Pure event-driven communication
+    // Constitutional Authority: Pure event-driven communication (ASYNC to prevent stack overflow)
     esp_err_t event_ret = esp_event_post(PAYLOAD_EVENTS, PAYLOAD_EVENT_READY, 
-                                        event_payload, 
-                                        sizeof(payload_event_data_t) + result.json_length + 1,
-                                        100 / portTICK_PERIOD_MS);
+                                        complete_payload, 
+                                        total_size,
+                                        0);  // CRITICAL: timeout=0 prevents recursion in esp_event task
+    
+    free(complete_payload);
     
     if (event_ret == ESP_OK) {
         ESP_LOGI(TAG, "✅ PAYLOAD_READY event published - fs_tool and http_tool will handle");
@@ -694,7 +685,7 @@ esp_err_t payload_tool_build_and_transmit_payload(payload_tool_handle_t handle, 
         ESP_LOGE(TAG, "❌ Failed to publish PAYLOAD_READY event: %s", esp_err_to_name(event_ret));
     }
     
-    free(event_payload);
+    // Memory already freed above
     
     // Update statistics
     tool->payloads_formatted++;
@@ -704,4 +695,49 @@ esp_err_t payload_tool_build_and_transmit_payload(payload_tool_handle_t handle, 
     
     // Constitutional Authority: Event published - tools will handle asynchronously
     return event_ret;
+}
+
+// =============================================================================
+// NTP Event Handler Implementation (Process Map 01 Constitutional Authority)
+// =============================================================================
+
+static void payload_tool_ntp_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    payload_tool_t* tool = (payload_tool_t*)arg;
+    
+    if (event_base != NTP_TOOL_EVENTS || !tool) {
+        ESP_LOGW(TAG, "❌ Invalid NTP event parameters");
+        return;
+    }
+    
+    ESP_LOGD(TAG, "📡 NTP event received: event_id=%ld", event_id);
+    
+    switch (event_id) {
+        case NTP_TOOL_EVENT_SYNC_SUCCESS: {
+            // NTP sync successful - update internal status
+            ntp_tool_event_t* ntp_event = (ntp_tool_event_t*)event_data;
+            if (ntp_event) {
+                tool->ntp_is_synced = true;
+                tool->ntp_offset_us = ntp_event->data.time_info.offset_us;
+                tool->last_ntp_sync_time = esp_timer_get_time();
+                
+                ESP_LOGI(TAG, "🕐 NTP sync success - offset: %lld μs", 
+                         (long long)tool->ntp_offset_us);
+            }
+            break;
+        }
+        
+        case NTP_TOOL_EVENT_SYNC_FAILED:
+            ESP_LOGW(TAG, "⚠️ NTP sync failed - continuing with system time");
+            // Keep previous sync status - don't immediately mark as unsynced
+            break;
+            
+        case NTP_TOOL_EVENT_SYNC_STARTED:
+            ESP_LOGD(TAG, "🔄 NTP sync started");
+            break;
+            
+        default:
+            ESP_LOGD(TAG, "ℹ️ Unhandled NTP event: %ld", event_id);
+            break;
+    }
 }

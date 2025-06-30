@@ -75,4 +75,4 @@ INTEGRATION: cross-tool-communication|event-system|capabilities-discovery
 ```
 
 ---
-*References: architecture_insights.md build patterns, platformio.ini, CMakeLists.txt configurations*
+*References: platformio.ini, CMakeLists.txt configurations*

@@ -123,14 +123,9 @@ typedef struct {
 // Payload Events (Event formatting and preparation)
 // =============================================================================
 
-typedef enum {
-    PAYLOAD_EVENT_READY = 0,
-    PAYLOAD_EVENT_FORMAT_REQUEST,
-    PAYLOAD_EVENT_FORMATTED,
-    PAYLOAD_EVENT_ERROR
-} payload_event_id_t;
-
-// Type definitions from payload_tool.h are now available
+// Constitutional Authority: payload_tool.h defines the canonical event types
+// Include payload_tool.h to get payload_event_id_t and payload_event_data_t
+#include "payload_tool.h"
 
 // =============================================================================
 // Filesystem Events (Storage operations)

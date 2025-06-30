@@ -8,6 +8,8 @@
  */
 
 #include "fs_tool.h"
+#include "payload_tool.h"      // Constitutional Authority: PAYLOAD_EVENTS and event definitions
+#include "event_system.h"      // ESP event system integration
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_littlefs.h"
@@ -21,6 +23,9 @@
 #include <unistd.h>
 
 static const char *TAG = "FS_TOOL";
+
+// Constitutional authority: Use canonical event definitions from event_system.h
+// No duplicate definitions - event_system.h is the authority
 
 // =============================================================================
 // Tool Context Structure (Handle-based Design)
@@ -57,6 +62,9 @@ struct fs_tool_context {
     
     // Event publishing
     esp_event_handler_instance_t event_handler;
+    
+    // Constitutional Authority: Process Map 13 - PAYLOAD_EVENTS subscription
+    esp_event_handler_instance_t payload_event_handler;
 };
 
 // =============================================================================
@@ -68,6 +76,9 @@ static esp_err_t fs_tool_create_full_path(fs_tool_handle_t handle, const char *f
 static esp_err_t fs_tool_atomic_file_operation(fs_tool_handle_t handle, const char *filename, const char *data, size_t data_len, bool is_append);
 static void fs_tool_monitor_task(void *pvParameters);
 static esp_err_t fs_tool_publish_event(fs_tool_handle_t handle, fs_tool_event_type_t event_type, void *event_data, size_t data_size);
+
+// Constitutional Authority: Process Map 13 - PAYLOAD_EVENTS handler
+static void fs_tool_payload_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 
 // =============================================================================
 // MCP Tool Interface Implementation
@@ -170,6 +181,22 @@ fs_tool_handle_t fs_tool_init(const fs_tool_config_t *config) {
         }
     }
     
+    // Constitutional Authority: Subscribe to PAYLOAD_EVENTS per Process Map 13
+    esp_err_t payload_sub_ret = esp_event_handler_instance_register(
+        PAYLOAD_EVENTS,
+        ESP_EVENT_ANY_ID,
+        fs_tool_payload_event_handler,
+        handle,
+        &handle->payload_event_handler
+    );
+    
+    if (payload_sub_ret == ESP_OK) {
+        ESP_LOGI(TAG, "✅ PAYLOAD_EVENTS subscription active - Process Map 13 constitutional compliance");
+        ESP_LOGI(TAG, "📂 fs_tool will handle: PAYLOAD_READY → STORE_PAYLOAD → PAYLOAD_STORED");
+    } else {
+        ESP_LOGW(TAG, "⚠️ Failed to subscribe to PAYLOAD_EVENTS: %s", esp_err_to_name(payload_sub_ret));
+    }
+    
     handle->is_initialized = true;
     handle->is_active = true;
     
@@ -212,6 +239,20 @@ esp_err_t fs_tool_deinit(fs_tool_handle_t handle) {
         if (unmount_result != ESP_OK) {
             ESP_LOGW(TAG, "Unmount failed during deinit: %s", esp_err_to_name(unmount_result));
             // Continue with cleanup even if unmount fails
+        }
+    }
+    
+    // Constitutional Authority: Unregister PAYLOAD_EVENTS subscription
+    if (handle->payload_event_handler) {
+        esp_err_t unsub_ret = esp_event_handler_instance_unregister(
+            PAYLOAD_EVENTS, 
+            ESP_EVENT_ANY_ID, 
+            handle->payload_event_handler
+        );
+        if (unsub_ret == ESP_OK) {
+            ESP_LOGI(TAG, "✅ PAYLOAD_EVENTS subscription deregistered");
+        } else {
+            ESP_LOGW(TAG, "⚠️ Failed to deregister PAYLOAD_EVENTS: %s", esp_err_to_name(unsub_ret));
         }
     }
     
@@ -331,7 +372,7 @@ esp_err_t fs_tool_mount(fs_tool_handle_t handle) {
                     .error_message = error_msg
                 }
             };
-            strncpy(event.data.error_info.file_path, handle->config.mount_point, sizeof(event.data.error_info.file_path) - 1);
+            snprintf(event.data.error_info.file_path, sizeof(event.data.error_info.file_path), "%s", handle->config.mount_point);
             fs_tool_publish_event(handle, FS_TOOL_EVENT_ERROR, &event, sizeof(event));
         }
         
@@ -563,7 +604,7 @@ esp_err_t fs_tool_save_json_config(fs_tool_handle_t handle, const char *filename
                     .success = true
                 }
             };
-            strncpy(event.data.file_info.file_path, filename, sizeof(event.data.file_info.file_path) - 1);
+            snprintf(event.data.file_info.file_path, sizeof(event.data.file_info.file_path), "%s", filename);
             fs_tool_publish_event(handle, FS_TOOL_EVENT_CONFIG_SAVED, &event, sizeof(event));
         }
     } else {
@@ -666,7 +707,7 @@ esp_err_t fs_tool_load_json_config(fs_tool_handle_t handle, const char *filename
                 .success = true
             }
         };
-        strncpy(event.data.file_info.file_path, filename, sizeof(event.data.file_info.file_path) - 1);
+        snprintf(event.data.file_info.file_path, sizeof(event.data.file_info.file_path), "%s", filename);
         fs_tool_publish_event(handle, FS_TOOL_EVENT_CONFIG_LOADED, &event, sizeof(event));
     }
     
@@ -733,7 +774,7 @@ esp_err_t fs_tool_save_json_log(fs_tool_handle_t handle, const char *filename, c
                     .success = true
                 }
             };
-            strncpy(event.data.file_info.file_path, filename, sizeof(event.data.file_info.file_path) - 1);
+            snprintf(event.data.file_info.file_path, sizeof(event.data.file_info.file_path), "%s", filename);
             fs_tool_publish_event(handle, FS_TOOL_EVENT_LOG_SAVED, &event, sizeof(event));
         }
     } else {
@@ -759,7 +800,7 @@ esp_err_t fs_tool_load_json_log(fs_tool_handle_t handle, const char *filename, c
                 .success = true
             }
         };
-        strncpy(event.data.file_info.file_path, filename, sizeof(event.data.file_info.file_path) - 1);
+        snprintf(event.data.file_info.file_path, sizeof(event.data.file_info.file_path), "%s", filename);
         fs_tool_publish_event(handle, FS_TOOL_EVENT_LOG_LOADED, &event, sizeof(event));
         xSemaphoreGive(handle->mutex);
     }
@@ -1190,3 +1231,71 @@ esp_err_t fs_tool_health_check(fs_tool_handle_t handle) {
 // =============================================================================
 
 ESP_EVENT_DEFINE_BASE(FS_TOOL_EVENTS);
+// Constitutional Authority: event_system.c defines PAYLOAD_EVENTS
+
+// =============================================================================
+// Constitutional Authority: Process Map 13 - PAYLOAD_EVENTS Handler
+// =============================================================================
+
+/**
+ * @brief Handle PAYLOAD_READY events for constitutional compliance
+ * 
+ * Process Map 13: PAYLOAD_READY → STORE_PAYLOAD → esp_event_post
+ * This implements the fs_tool side of the constitutional event flow.
+ */
+static void fs_tool_payload_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    fs_tool_handle_t handle = (fs_tool_handle_t)arg;
+    
+    if (event_base != PAYLOAD_EVENTS || !handle || !event_data) {
+        ESP_LOGW(TAG, "❌ Invalid PAYLOAD event parameters");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "📡 PAYLOAD event received: event_id=%ld per Process Map 13", event_id);
+    
+    switch (event_id) {
+        case PAYLOAD_EVENT_READY: {
+            // Extract constitutional payload data and JSON string
+            payload_esp_event_data_t* payload_data = (payload_esp_event_data_t*)event_data;
+            char* json_string = (char*)((char*)event_data + sizeof(payload_esp_event_data_t));  // JSON follows the struct
+            
+            ESP_LOGI(TAG, "📂 Processing PAYLOAD_READY: tag=%s, type=%s", 
+                     payload_data->tag_uid, payload_data->event_type);
+            
+            // Constitutional Authority: STORE_PAYLOAD per Process Map 13
+            cJSON* payload_json = cJSON_Parse(json_string);
+            if (payload_json) {
+                esp_err_t store_ret = fs_tool_append_json_log(handle, "rfid_events.json", payload_json);
+                if (store_ret == ESP_OK) {
+                    ESP_LOGI(TAG, "✅ Constitutional STORE_PAYLOAD completed successfully");
+                    
+                    // Process Map 13: STORE_PAYLOAD → esp_event_post(PAYLOAD_STORED)
+                    esp_event_post(PAYLOAD_EVENTS, PAYLOAD_EVENT_STORED, 
+                                  payload_data, sizeof(payload_esp_event_data_t), 
+                                  100 / portTICK_PERIOD_MS);
+                } else {
+                    ESP_LOGW(TAG, "⚠️ Constitutional STORE_PAYLOAD failed: %s", esp_err_to_name(store_ret));
+                    
+                    // Process Map 13: Error path → esp_event_post(PAYLOAD_FAILED)
+                    esp_event_post(PAYLOAD_EVENTS, PAYLOAD_EVENT_FAILED, 
+                                  payload_data, sizeof(payload_esp_event_data_t), 
+                                  100 / portTICK_PERIOD_MS);
+                }
+                cJSON_Delete(payload_json);
+            } else {
+                ESP_LOGE(TAG, "❌ Failed to parse payload JSON for constitutional storage");
+                
+                // Process Map 13: Error path → esp_event_post(PAYLOAD_FAILED)
+                esp_event_post(PAYLOAD_EVENTS, PAYLOAD_EVENT_FAILED, 
+                              payload_data, sizeof(payload_esp_event_data_t), 
+                              100 / portTICK_PERIOD_MS);
+            }
+            break;
+        }
+        
+        default:
+            ESP_LOGD(TAG, "❓ Unhandled PAYLOAD event in fs_tool: event_id=%ld", event_id);
+            break;
+    }
+}

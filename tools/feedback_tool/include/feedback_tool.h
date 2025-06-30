@@ -1,9 +1,11 @@
 /**
  * @file feedback_tool.h
- * @brief MCP-Inspired Feedback Tool - Visual State Management
+ * @brief Constitutional Feedback Tool per Process Map 11
  * 
- * Universal tool interface for visual feedback with priority-based state management.
- * Transformed from feedback_manager to follow MCP tool composition patterns.
+ * Constitutional Authority: Process Map 11 - IDLE { LISTENING → LOOKUP → EXECUTE → LISTENING }
+ * "Direct LED control via led_strip, No queues, no priorities, Just execute the recipe"
+ * 
+ * Simple FSM with recipe lookup system for predictable visual feedback.
  */
 
 #pragma once
@@ -25,17 +27,16 @@ extern "C" {
  */
 #define FEEDBACK_TOOL_ID "feedback"
 #define FEEDBACK_TOOL_VERSION "1.0.0"
-#define FEEDBACK_TOOL_DESCRIPTION "Visual state feedback with priority queue management"
+#define FEEDBACK_TOOL_DESCRIPTION "Constitutional visual feedback with FSM recipe execution"
 
 /**
- * @brief Tool capabilities bitmask
+ * @brief Constitutional Tool capabilities per Process Map 11
  */
 typedef enum {
     FEEDBACK_CAP_LED_CONTROL     = (1 << 0),  // RGB LED control
-    FEEDBACK_CAP_PRIORITY_QUEUE  = (1 << 1),  // Priority-based state management
-    FEEDBACK_CAP_ANIMATIONS      = (1 << 2),  // Complex animation patterns
-    FEEDBACK_CAP_AUTO_EXPIRE     = (1 << 3),  // Automatic state expiration
-    FEEDBACK_CAP_THREAD_SAFE     = (1 << 4)   // Thread-safe operations
+    FEEDBACK_CAP_FSM_EXECUTION   = (1 << 1),  // Constitutional FSM (LISTENING→LOOKUP→EXECUTE)
+    FEEDBACK_CAP_RECIPE_LOOKUP   = (1 << 2),  // Recipe-based LED patterns
+    FEEDBACK_CAP_THREAD_SAFE     = (1 << 3)   // Thread-safe operations
 } feedback_tool_capabilities_t;
 
 // =============================================================================

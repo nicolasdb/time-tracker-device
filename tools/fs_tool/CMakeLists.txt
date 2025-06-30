@@ -9,6 +9,8 @@ idf_component_register(
         esp_system
         json
         vfs
+        event_system
     PRIV_REQUIRES
         esp_partition
+        payload_tool
 )
