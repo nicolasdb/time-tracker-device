@@ -1,16 +1,17 @@
+# Constitutional FS Tool - CMakeLists.txt
+# Filesystem management tool with constitutional patterns
+
 idf_component_register(
     SRCS "fs_tool.c"
     INCLUDE_DIRS "include"
     REQUIRES 
-        freertos 
-        log 
-        joltwallet__littlefs
+        esp_common
+        esp_timer
+        freertos
         esp_event
-        esp_system
         json
-        vfs
-        event_system
-    PRIV_REQUIRES
         esp_partition
-        payload_tool
+        wear_levelling
+        vfs
+        littlefs
 )

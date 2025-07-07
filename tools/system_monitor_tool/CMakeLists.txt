@@ -8,7 +8,5 @@ idf_component_register(
         esp_common
         esp_timer
         freertos
-        feedback_tool
         esp_event
-        event_system
 )

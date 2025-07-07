@@ -1,11 +1,15 @@
 /**
  * @file feedback_tool.h
- * @brief Constitutional Feedback Tool per Process Map 11
+ * @brief Constitutional Feedback Tool - LED Visual Feedback Implementation
  * 
- * Constitutional Authority: Process Map 11 - IDLE { LISTENING → LOOKUP → EXECUTE → LISTENING }
- * "Direct LED control via led_strip, No queues, no priorities, Just execute the recipe"
+ * Constitutional implementation following constitutional patterns:
+ * - Handle-based design (no static globals)
+ * - ESP_EVENT-only communication
+ * - Constitutional memory safety (snprintf, PRIu32)
+ * - Container isolation principles
  * 
- * Simple FSM with recipe lookup system for predictable visual feedback.
+ * Constitutional Authority: Process Map 11 (feedback_fsm) visual feedback management
+ * Architecture Pattern: Handle-based, ESP_EVENT communication, zero coupling
  */
 
 #pragma once
@@ -13,59 +17,66 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "esp_event.h"
+#include <inttypes.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 // =============================================================================
-// MCP-Inspired Tool Metadata
+// Constitutional Tool Metadata
 // =============================================================================
 
 /**
- * @brief Tool identification and capabilities
+ * @brief Constitutional tool identification
  */
-#define FEEDBACK_TOOL_ID "feedback"
-#define FEEDBACK_TOOL_VERSION "1.0.0"
-#define FEEDBACK_TOOL_DESCRIPTION "Constitutional visual feedback with FSM recipe execution"
+#define FEEDBACK_TOOL_ID "feedback_tool"
+#define FEEDBACK_TOOL_VERSION "6.1.0"
+#define FEEDBACK_TOOL_DESCRIPTION "Constitutional LED visual feedback with handle-based design"
 
 /**
- * @brief Constitutional Tool capabilities per Process Map 11
+ * @brief Constitutional feedback tool capabilities
  */
 typedef enum {
-    FEEDBACK_CAP_LED_CONTROL     = (1 << 0),  // RGB LED control
-    FEEDBACK_CAP_FSM_EXECUTION   = (1 << 1),  // Constitutional FSM (LISTENING→LOOKUP→EXECUTE)
-    FEEDBACK_CAP_RECIPE_LOOKUP   = (1 << 2),  // Recipe-based LED patterns
-    FEEDBACK_CAP_THREAD_SAFE     = (1 << 3)   // Thread-safe operations
+    FEEDBACK_TOOL_CAP_LED_CONTROL     = (1 << 0),  // RGB LED control
+    FEEDBACK_TOOL_CAP_STATE_MANAGEMENT = (1 << 1),  // Visual state management
+    FEEDBACK_TOOL_CAP_EVENT_PUBLISH   = (1 << 2),  // ESP_EVENT publishing
+    FEEDBACK_TOOL_CAP_PROCESS_MAP_11  = (1 << 3),  // Process Map 11 compliance
+    FEEDBACK_TOOL_CAP_FLOW_AWARENESS  = (1 << 4),  // Flow awareness context
+    FEEDBACK_TOOL_CAP_DASHBOARD       = (1 << 5),  // Constitutional dashboard
+    FEEDBACK_TOOL_CAP_HEALTH_CHECK    = (1 << 6),  // Health monitoring
+    FEEDBACK_TOOL_CAP_ANIMATION       = (1 << 7)   // LED animation patterns
 } feedback_tool_capabilities_t;
 
 // =============================================================================
-// Universal Tool Interface (MCP Pattern)
+// Constitutional Tool Handle & Configuration
 // =============================================================================
 
 /**
- * @brief Opaque tool handle (preserves existing handle pattern)
+ * @brief Opaque constitutional tool handle
  */
 typedef struct feedback_tool* feedback_tool_handle_t;
 
 /**
- * @brief Tool configuration structure
+ * @brief Constitutional tool configuration
  */
 typedef struct {
     uint8_t led_gpio;                    // GPIO pin for RGB LED
     uint8_t max_brightness;              // Maximum LED brightness (0-255)
     uint32_t breathing_period_ms;        // Breathing animation period
-    bool auto_cleanup_enabled;           // Enable automatic state cleanup
-    uint32_t cleanup_interval_ms;        // State cleanup check interval
+    uint32_t blink_period_ms;           // Blink animation period  
+    uint32_t update_interval_ms;        // LED update interval
+    bool publish_events;                // Enable ESP_EVENT publishing
+    bool enable_flow_awareness;         // Enable flow awareness context
 } feedback_tool_config_t;
 
 // =============================================================================
-// System State Definitions (Enhanced from Original)
+// Constitutional Visual States
 // =============================================================================
 
 /**
- * @brief Universal system state enum for feedback
- * Enhanced with MCP-inspired categorization
+ * @brief Constitutional visual feedback states per Process Map 11
  */
 typedef enum {
     // System Core States
@@ -78,292 +89,205 @@ typedef enum {
     FEEDBACK_STATE_WIFI_CONNECTING   = 0x0100,
     FEEDBACK_STATE_WIFI_CONNECTED    = 0x0101,
     FEEDBACK_STATE_WIFI_FAILED       = 0x0102,
-    FEEDBACK_STATE_WIFI_AP_MODE      = 0x0103,
+    FEEDBACK_STATE_AP_MODE           = 0x0103,
     
-    // Time Tool States  
-    FEEDBACK_STATE_TIME_SYNCING      = 0x0200,
-    FEEDBACK_STATE_TIME_SYNCED       = 0x0201,
-    FEEDBACK_STATE_TIME_SYNC_FAILED  = 0x0202,
+    // RFID Tool States  
+    FEEDBACK_STATE_TAG_DETECTED      = 0x0200,
+    FEEDBACK_STATE_TAG_IGNORED       = 0x0201,
+    FEEDBACK_STATE_RFID_ERROR        = 0x0202,
     
-    // RFID Tool States
-    FEEDBACK_STATE_RFID_INITIALIZING = 0x0300,
-    FEEDBACK_STATE_RFID_ACTIVE       = 0x0301,
-    FEEDBACK_STATE_RFID_ERROR        = 0x0302,
-    FEEDBACK_STATE_TAG_DETECTED      = 0x0303,
-    FEEDBACK_STATE_TAG_READ_ERROR    = 0x0304,
-    FEEDBACK_STATE_TAG_IGNORED       = 0x0305,  // Process Map Authority: yellow flash for ignored duplicates
+    // NTP Tool States
+    FEEDBACK_STATE_NTP_SYNC_STARTED  = 0x0300,
+    FEEDBACK_STATE_NTP_SYNCED        = 0x0301,
+    FEEDBACK_STATE_NTP_FAILED        = 0x0302,
     
-    // Webhook Tool States
-    FEEDBACK_STATE_WEBHOOK_SENDING   = 0x0400,
-    FEEDBACK_STATE_WEBHOOK_SUCCESS   = 0x0401,
-    FEEDBACK_STATE_WEBHOOK_ERROR     = 0x0402,
-    FEEDBACK_STATE_WEBHOOK_QUEUED    = 0x0403,
+    // HTTP Tool States
+    FEEDBACK_STATE_HTTP_SENDING      = 0x0400,
+    FEEDBACK_STATE_HTTP_SUCCESS      = 0x0401,
+    FEEDBACK_STATE_HTTP_ERROR        = 0x0402,
     
-    // Webserver Tool States
-    FEEDBACK_STATE_WEBSERVER_STARTING = 0x0500,
-    FEEDBACK_STATE_WEBSERVER_ACTIVE   = 0x0501,
-    FEEDBACK_STATE_WEBSERVER_ERROR    = 0x0502,
-    
-    // Initialization Sequence States
-    FEEDBACK_STATE_INIT_START        = 0x1000,
-    FEEDBACK_STATE_INIT_FS           = 0x1001,
-    FEEDBACK_STATE_INIT_WIFI_PREP    = 0x1002,
-    FEEDBACK_STATE_INIT_TIME         = 0x1003,
-    FEEDBACK_STATE_INIT_WEBHOOK      = 0x1004,
-    FEEDBACK_STATE_INIT_RFID         = 0x1005,
-    FEEDBACK_STATE_INIT_COMPLETE     = 0x1006,
-    
-    // Flow Awareness States (Process Map Authority: Constitutional Requirement)
-    FEEDBACK_STATE_FLOW_AWARENESS    = 0x2100,  // Orange breathing at 60min sessions
-    FEEDBACK_STATE_FLOW_URGENCY      = 0x2101,  // Orange pulsing at 90min sessions
-    
-    // Tool Communication States
-    FEEDBACK_STATE_TOOL_REGISTERED   = 0x2000,
-    FEEDBACK_STATE_TOOL_ERROR        = 0x2001,
-    FEEDBACK_STATE_TOOL_DISCONNECTED = 0x2002,
-    
-    // Must be last
-    FEEDBACK_STATE_MAX = 0xFFFF
+    // Flow Awareness States (Constitutional Requirement)
+    FEEDBACK_STATE_FLOW_60           = 0x0500,  // 60-minute flow awareness
+    FEEDBACK_STATE_FLOW_90           = 0x0501   // 90-minute flow urgency
 } feedback_state_t;
 
 /**
- * @brief State priority levels for queue management
+ * @brief Constitutional visual pattern types
  */
 typedef enum {
-    FEEDBACK_PRIORITY_LOW = 0,      // Ambient states (idle breathing)
-    FEEDBACK_PRIORITY_MEDIUM = 1,   // Status updates (WiFi, connections)
-    FEEDBACK_PRIORITY_HIGH = 2,     // Critical events (tag detected, errors)
-    FEEDBACK_PRIORITY_CRITICAL = 3  // System errors, tool failures
-} feedback_priority_t;
+    FEEDBACK_PATTERN_OFF,        // LED off
+    FEEDBACK_PATTERN_SOLID,      // Solid color
+    FEEDBACK_PATTERN_BREATHING,  // Breathing effect
+    FEEDBACK_PATTERN_BLINKING,   // Blinking pattern
+    FEEDBACK_PATTERN_PULSING,    // Pulsing effect
+    FEEDBACK_PATTERN_SEQUENCE    // Color sequence
+} feedback_pattern_t;
+
+// =============================================================================
+// Constitutional Status & Events
+// =============================================================================
 
 /**
- * @brief Tool status structure
+ * @brief Constitutional tool status
  */
 typedef struct {
-    bool is_initialized;                 // Tool initialization state
-    bool is_active;                      // Tool active state
-    uint8_t queue_count;                 // Number of queued states
-    feedback_state_t current_state;      // Currently active state
-    uint32_t uptime_ms;                  // Tool uptime in milliseconds
-    feedback_tool_capabilities_t capabilities; // Tool capabilities
+    bool is_initialized;
+    bool is_active;
+    bool led_hardware_ok;
+    feedback_state_t current_state;
+    feedback_pattern_t current_pattern;
+    uint32_t uptime_ms;
+    uint32_t state_changes_count;
+    uint32_t error_count;
+    uint8_t led_gpio;
+    uint8_t current_brightness;
+    feedback_tool_capabilities_t capabilities;
+    char mount_point[32];            // Future filesystem integration
+    char version[16];
 } feedback_tool_status_t;
 
+/**
+ * @brief Constitutional feedback events
+ */
+ESP_EVENT_DECLARE_BASE(FEEDBACK_TOOL_EVENTS);
+
+typedef enum {
+    FEEDBACK_TOOL_EVENT_STATE_CHANGED = 0,
+    FEEDBACK_TOOL_EVENT_PATTERN_UPDATED,
+    FEEDBACK_TOOL_EVENT_ERROR_DETECTED,
+    FEEDBACK_TOOL_EVENT_HEALTH_CHECK
+} feedback_tool_event_id_t;
+
+/**
+ * @brief Constitutional event data structure
+ */
+typedef struct {
+    feedback_tool_event_id_t type;
+    union {
+        struct {
+            feedback_state_t old_state;
+            feedback_state_t new_state;
+            uint32_t timestamp_ms;
+        } state_change;
+        
+        struct {
+            feedback_pattern_t pattern;
+            uint8_t brightness;
+            uint32_t duration_ms;
+        } pattern_update;
+        
+        struct {
+            esp_err_t error_code;
+            char error_message[64];
+            uint32_t timestamp_ms;
+        } error_info;
+        
+        struct {
+            bool health_ok;
+            uint32_t uptime_ms;
+            uint32_t error_count;
+        } health_status;
+    } data;
+} feedback_tool_event_data_t;
+
 // =============================================================================
-// MCP Tool Interface Functions
+// Constitutional Tool Interface Functions
 // =============================================================================
 
 /**
- * @brief Initialize feedback tool with configuration
+ * @brief Get constitutional tool identification
+ */
+const char* feedback_tool_get_id(void);
+
+/**
+ * @brief Get constitutional tool version
+ */
+const char* feedback_tool_get_version(void);
+
+/**
+ * @brief Get constitutional tool capabilities
+ */
+feedback_tool_capabilities_t feedback_tool_get_capabilities(feedback_tool_handle_t handle);
+
+/**
+ * @brief Create constitutional default configuration
+ */
+feedback_tool_config_t feedback_tool_create_default_config(void);
+
+/**
+ * @brief Initialize constitutional feedback tool
  * @param config Tool configuration
- * @return Tool handle on success, NULL on failure
+ * @return Handle on success, NULL on failure
  */
 feedback_tool_handle_t feedback_tool_init(const feedback_tool_config_t *config);
 
 /**
- * @brief Deinitialize feedback tool and cleanup resources
+ * @brief Deinitialize constitutional feedback tool
  * @param handle Tool handle
  * @return ESP_OK on success
  */
 esp_err_t feedback_tool_deinit(feedback_tool_handle_t handle);
 
 /**
- * @brief Get tool capabilities
+ * @brief Get constitutional tool status
  * @param handle Tool handle
- * @return Capabilities bitmask
- */
-feedback_tool_capabilities_t feedback_tool_get_capabilities(feedback_tool_handle_t handle);
-
-/**
- * @brief Get tool status
- * @param handle Tool handle
- * @param status Pointer to store status information
+ * @param status Output status structure
  * @return ESP_OK on success
  */
 esp_err_t feedback_tool_get_status(feedback_tool_handle_t handle, feedback_tool_status_t *status);
 
-/**
- * @brief Get tool identification string
- * @return Static tool ID string
- */
-const char* feedback_tool_get_id(void);
-
-/**
- * @brief Get tool version string
- * @return Static version string
- */
-const char* feedback_tool_get_version(void);
-
 // =============================================================================
-// State Management Interface (Enhanced from Original)
+// Constitutional Visual Feedback Functions
 // =============================================================================
 
 /**
- * @brief Set primary system state with priority and duration
+ * @brief Set constitutional visual state
  * @param handle Tool handle
- * @param state System state to set
- * @param priority State priority level
- * @param duration_ms Duration in milliseconds (0 = permanent)
+ * @param state Visual state to display
  * @return ESP_OK on success
  */
-esp_err_t feedback_tool_set_state(feedback_tool_handle_t handle, 
-                                  feedback_state_t state,
-                                  feedback_priority_t priority,
-                                  uint32_t duration_ms);
+esp_err_t feedback_tool_set_state(feedback_tool_handle_t handle, feedback_state_t state);
 
 /**
- * @brief Set state with default priority (inferred from state type)
+ * @brief Set constitutional visual pattern
  * @param handle Tool handle
- * @param state System state to set
+ * @param pattern Visual pattern type
+ * @param brightness LED brightness (0-255)
+ * @param duration_ms Pattern duration (0 = permanent)
  * @return ESP_OK on success
  */
-esp_err_t feedback_tool_set_state_simple(feedback_tool_handle_t handle, feedback_state_t state);
+esp_err_t feedback_tool_set_pattern(feedback_tool_handle_t handle, 
+                                   feedback_pattern_t pattern,
+                                   uint8_t brightness,
+                                   uint32_t duration_ms);
 
 /**
- * @brief Flash a temporary state indication
+ * @brief Constitutional health check
  * @param handle Tool handle
- * @param state State to flash
- * @param count Number of times to flash
- * @param flash_duration_ms Duration of each flash
+ * @return ESP_OK if healthy
+ */
+esp_err_t feedback_tool_health_check(feedback_tool_handle_t handle);
+
+/**
+ * @brief Generate constitutional dashboard
+ * @param handle Tool handle
+ * @param dashboard_buffer Output buffer (must be 1KB+)
+ * @param buffer_size Buffer size
  * @return ESP_OK on success
  */
-esp_err_t feedback_tool_flash_event(feedback_tool_handle_t handle, 
-                                    feedback_state_t state, 
-                                    int count,
-                                    uint32_t flash_duration_ms);
-
-/**
- * @brief Clear specific state from queue
- * @param handle Tool handle
- * @param state State to clear
- * @return ESP_OK on success
- */
-esp_err_t feedback_tool_clear_state(feedback_tool_handle_t handle, feedback_state_t state);
-
-/**
- * @brief Clear all states and reset to idle
- * @param handle Tool handle
- * @return ESP_OK on success
- */
-esp_err_t feedback_tool_reset(feedback_tool_handle_t handle);
-
-/**
- * @brief Get current active state
- * @param handle Tool handle
- * @return Current active state
- */
-feedback_state_t feedback_tool_get_current_state(feedback_tool_handle_t handle);
-
-/**
- * @brief Get number of queued states
- * @param handle Tool handle
- * @return Number of states in queue
- */
-uint8_t feedback_tool_get_queue_count(feedback_tool_handle_t handle);
+esp_err_t feedback_tool_generate_dashboard(feedback_tool_handle_t handle, 
+                                          char* dashboard_buffer, 
+                                          size_t buffer_size);
 
 // =============================================================================
-// MCP Tool Registry Integration (Phase 2 target)
+// Constitutional Flow Awareness Functions
 // =============================================================================
 
 /**
- * @brief Tool registry entry structure
- */
-typedef struct {
-    const char* tool_id;
-    const char* version;
-    const char* description;
-    feedback_tool_capabilities_t capabilities;
-    feedback_tool_handle_t (*init_func)(const feedback_tool_config_t*);
-    esp_err_t (*deinit_func)(feedback_tool_handle_t);
-} feedback_tool_registry_t;
-
-/**
- * @brief Get tool registry entry (for tool discovery)
- * @return Pointer to static registry entry
- */
-const feedback_tool_registry_t* feedback_tool_get_registry_entry(void);
-
-// =============================================================================
-// Utility Functions (Enhanced from Original)
-// =============================================================================
-
-/**
- * @brief Validate initialization step with visual feedback
+ * @brief Set constitutional flow awareness context
  * @param handle Tool handle
- * @param step_name Name of initialization step (for logging)
- * @param success Whether the step was successful
- * @return ESP_OK on success
- */
-esp_err_t feedback_tool_validate_init_step(feedback_tool_handle_t handle, 
-                                           const char* step_name,
-                                           bool success);
-
-/**
- * @brief Convert state enum to human-readable string
- * @param state State to convert
- * @return Static string representation
- */
-const char* feedback_tool_state_to_string(feedback_state_t state);
-
-/**
- * @brief Convert priority enum to human-readable string
- * @param priority Priority to convert
- * @return Static string representation
- */
-const char* feedback_tool_priority_to_string(feedback_priority_t priority);
-
-/**
- * @brief Create default tool configuration
- * @return Default configuration structure
- */
-feedback_tool_config_t feedback_tool_create_default_config(void);
-
-// =============================================================================
-// Dashboard & Status Aggregation (Phase 4.3 Enhancement)
-// =============================================================================
-
-/**
- * @brief System dashboard data structure
- */
-typedef struct {
-    char ascii_dashboard[512];           // ASCII formatted dashboard (reduced)
-    char json_status[256];               // JSON structured status (reduced)
-    uint32_t timestamp;                  // Dashboard generation timestamp
-    bool is_operational;                 // Overall system health
-} feedback_dashboard_t;
-
-/**
- * @brief Generate ASCII dashboard with system status
- * @param handle Tool handle
- * @param dashboard Output dashboard structure
- * @return ESP_OK on success
- */
-esp_err_t feedback_tool_generate_dashboard(feedback_tool_handle_t handle, feedback_dashboard_t* dashboard);
-
-/**
- * @brief Subscribe to tool events for status aggregation
- * @param handle Tool handle
- * @return ESP_OK on success
- */
-esp_err_t feedback_tool_subscribe_to_all_events(feedback_tool_handle_t handle);
-
-/**
- * @brief Get latest system status as JSON string
- * @param handle Tool handle
- * @param json_buffer Output buffer for JSON
- * @param buffer_size Size of output buffer
- * @return ESP_OK on success
- */
-esp_err_t feedback_tool_get_status_json(feedback_tool_handle_t handle, char* json_buffer, size_t buffer_size);
-
-// =============================================================================
-// Flow Awareness Context (Process Map Authority: Constitutional Requirement)
-// =============================================================================
-
-/**
- * @brief Set flow awareness context for visual state modification
- * @param handle Tool handle
- * @param flow_active Whether flow awareness should modify visuals
- * @param flow_urgent Whether flow urgency should modify visuals
+ * @param flow_active 60-minute flow awareness
+ * @param flow_urgent 90-minute flow urgency
  * @return ESP_OK on success
  */
 esp_err_t feedback_tool_set_flow_context(feedback_tool_handle_t handle, 
@@ -371,48 +295,23 @@ esp_err_t feedback_tool_set_flow_context(feedback_tool_handle_t handle,
                                         bool flow_urgent);
 
 // =============================================================================
-// Event-Driven Architecture Functions (Phase 6.0)
+// Constitutional Utility Functions
 // =============================================================================
 
 /**
- * @brief Start event subscription for async visual feedback
- * @param handle Tool handle
- * @return ESP_OK on success
+ * @brief Convert state to constitutional string representation
+ * @param state Feedback state
+ * @return String representation
  */
-esp_err_t feedback_tool_start_event_subscription(feedback_tool_handle_t handle);
+const char* feedback_tool_state_to_string(feedback_state_t state);
 
 /**
- * @brief Stop event subscription and cleanup
- * @param handle Tool handle
- * @return ESP_OK on success
+ * @brief Convert pattern to constitutional string representation
+ * @param pattern Feedback pattern
+ * @return String representation
  */
-esp_err_t feedback_tool_stop_event_subscription(feedback_tool_handle_t handle);
+const char* feedback_tool_pattern_to_string(feedback_pattern_t pattern);
 
 #ifdef __cplusplus
 }
 #endif
-
-/**
- * @brief Tool Usage Example
- * 
- * // Initialize with default config
- * feedback_tool_config_t config = feedback_tool_create_default_config();
- * config.led_gpio = 5;
- * 
- * feedback_tool_handle_t tool = feedback_tool_init(&config);
- * 
- * // Set states with automatic priority inference
- * feedback_tool_set_state_simple(tool, FEEDBACK_STATE_WIFI_CONNECTING);
- * feedback_tool_set_state_simple(tool, FEEDBACK_STATE_WIFI_CONNECTED);
- * 
- * // Set temporary high-priority state
- * feedback_tool_set_state(tool, FEEDBACK_STATE_TAG_DETECTED, 
- *                        FEEDBACK_PRIORITY_HIGH, 0); // Permanent until cleared
- * 
- * // Flash event indication
- * feedback_tool_flash_event(tool, FEEDBACK_STATE_WEBHOOK_SUCCESS, 2, 300);
- * 
- * // Cleanup
- * feedback_tool_clear_state(tool, FEEDBACK_STATE_TAG_DETECTED);
- * feedback_tool_deinit(tool);
- */

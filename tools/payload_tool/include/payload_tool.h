@@ -1,272 +1,358 @@
 /**
  * @file payload_tool.h
- * @brief MCP-Inspired Payload Tool - Event Data Formatting
+ * @brief Constitutional Payload Tool Interface - JSON Data Formatting
  * 
- * Centralized tool for creating properly formatted event payloads.
- * Extracts payload formatting logic per process map authority requirements.
+ * Constitutional implementation following constitutional patterns:
+ * - Handle-based design (no static globals)
+ * - ESP_EVENT-only communication
+ * - Constitutional memory safety (snprintf, PRIu32)
+ * - Container isolation principles
+ * 
+ * Constitutional Authority: Process Map 13 (payload_fsm.mmd)
+ * Architecture Pattern: Handle-based, ESP_EVENT communication, zero coupling
  */
 
-#pragma once
+#ifndef PAYLOAD_TOOL_H
+#define PAYLOAD_TOOL_H
 
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
-#include "cJSON.h"
+#include "esp_event.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 // =============================================================================
-// MCP-Inspired Tool Metadata
+// Constitutional Tool Metadata
 // =============================================================================
 
-/**
- * @brief Tool identification and capabilities
- */
-#define PAYLOAD_TOOL_ID "payload"
-#define PAYLOAD_TOOL_VERSION "1.0.0"
-#define PAYLOAD_TOOL_DESCRIPTION "Event payload formatting and timestamp coordination"
+#define PAYLOAD_TOOL_ID            "payload_tool"
+#define PAYLOAD_TOOL_VERSION       "6.1.0"
+#define PAYLOAD_TOOL_DESCRIPTION   "Constitutional payload formatting with JSON structure"
+
+#define PAYLOAD_TOOL_MAX_PAYLOAD_SIZE    1024
+#define PAYLOAD_TOOL_MAX_RFID_UID_LEN    20
+#define PAYLOAD_TOOL_MAX_DEVICE_ID_LEN   32
+
+// =============================================================================
+// Constitutional ESP_EVENT System
+// =============================================================================
+
+ESP_EVENT_DECLARE_BASE(PAYLOAD_TOOL_EVENTS);
 
 /**
- * @brief Tool capabilities bitmask
+ * @brief Constitutional Payload Tool Event Types
  */
 typedef enum {
-    PAYLOAD_CAP_JSON_FORMATTING  = (1 << 0),  // JSON payload creation
-    PAYLOAD_CAP_TIMESTAMP_CALC   = (1 << 1),  // Precise timestamp calculation
-    PAYLOAD_CAP_NTP_INTEGRATION  = (1 << 2),  // NTP offset coordination
-    PAYLOAD_CAP_DEVICE_METADATA  = (1 << 3),  // Device information embedding
-    PAYLOAD_CAP_BOOT_COUNTER     = (1 << 4),  // Boot counter persistence
-    PAYLOAD_CAP_THREAD_SAFE      = (1 << 5)   // Thread-safe operations
-} payload_tool_capabilities_t;
+    PAYLOAD_TOOL_EVENT_CREATED = 0,        ///< Payload created successfully
+    PAYLOAD_TOOL_EVENT_FORMATTED,          ///< Payload formatted to JSON
+    PAYLOAD_TOOL_EVENT_VALIDATED,          ///< Payload validation passed
+    PAYLOAD_TOOL_EVENT_ERROR,              ///< Payload processing error
+    PAYLOAD_TOOL_EVENT_READY,              ///< Tool ready for payload creation
+} payload_tool_event_type_t;
+
+/**
+ * @brief Constitutional Session Types
+ */
+typedef enum {
+    PAYLOAD_SESSION_START = 0,             ///< Work session start event
+    PAYLOAD_SESSION_END,                   ///< Work session end event
+    PAYLOAD_SESSION_ACTIVE,                ///< Ongoing session heartbeat
+    PAYLOAD_SESSION_UNKNOWN                ///< Unknown session type
+} payload_session_type_t;
+
+/**
+ * @brief Constitutional Work Session Data
+ */
+typedef struct {
+    payload_session_type_t type;           ///< Session event type
+    char rfid_uid[PAYLOAD_TOOL_MAX_RFID_UID_LEN + 1]; ///< RFID tag UID
+    uint64_t timestamp_us;                 ///< Event timestamp (microseconds)
+    uint32_t session_duration_ms;          ///< Session duration (for end events)
+    char project_id[32];                   ///< Project identifier
+    char task_description[128];            ///< Task description
+} payload_work_session_t;
+
+/**
+ * @brief Constitutional Device Metadata
+ */
+typedef struct {
+    char device_id[PAYLOAD_TOOL_MAX_DEVICE_ID_LEN + 1]; ///< Unique device identifier
+    char firmware_version[16];             ///< Firmware version string
+    char hardware_revision[16];            ///< Hardware revision
+    uint64_t uptime_us;                    ///< Device uptime in microseconds
+    uint32_t free_memory_bytes;            ///< Available memory
+    int8_t wifi_rssi;                      ///< WiFi signal strength
+} payload_device_metadata_t;
+
+/**
+ * @brief Constitutional Payload Structure
+ */
+typedef struct {
+    // Core session data
+    payload_work_session_t session;
+    
+    // Device metadata
+    payload_device_metadata_t device;
+    
+    // Formatted output
+    char json_payload[PAYLOAD_TOOL_MAX_PAYLOAD_SIZE];
+    size_t json_size;
+    
+    // Validation status
+    bool is_valid;
+    uint32_t checksum;
+    uint64_t creation_timestamp_us;
+} payload_data_t;
+
+/**
+ * @brief Constitutional Payload Tool Event Data Structure
+ */
+typedef struct {
+    payload_tool_event_type_t type;
+    payload_data_t payload;
+    uint64_t timestamp_us;
+    esp_err_t error_code;
+    char error_message[64];
+} payload_tool_event_t;
 
 // =============================================================================
-// Universal Tool Interface (MCP Pattern)
+// Constitutional Tool Configuration
 // =============================================================================
 
 /**
- * @brief Opaque tool handle
+ * @brief Constitutional Payload Tool Capabilities (Bitmask)
+ */
+typedef enum {
+    PAYLOAD_CAP_JSON_FORMAT      = (1 << 0),  ///< JSON formatting support
+    PAYLOAD_CAP_SESSION_TRACKING = (1 << 1),  ///< Work session tracking
+    PAYLOAD_CAP_DEVICE_METADATA  = (1 << 2),  ///< Device metadata inclusion
+    PAYLOAD_CAP_VALIDATION       = (1 << 3),  ///< Payload validation
+    PAYLOAD_CAP_COMPRESSION      = (1 << 4),  ///< Data compression
+    PAYLOAD_CAP_ENCRYPTION       = (1 << 5),  ///< Data encryption
+    PAYLOAD_CAP_BATCHING         = (1 << 6),  ///< Batch processing
+} payload_tool_capabilities_t;
+
+/**
+ * @brief Constitutional Payload Tool Configuration
+ */
+typedef struct {
+    // Output formatting
+    bool include_device_metadata;          ///< Include device info in payload
+    bool include_debug_info;               ///< Include debug information
+    bool compress_payload;                 ///< Enable payload compression
+    bool encrypt_payload;                  ///< Enable payload encryption
+    
+    // Session tracking
+    bool enable_session_tracking;          ///< Enable work session detection
+    uint32_t min_session_duration_ms;      ///< Minimum valid session duration
+    uint32_t max_session_duration_ms;      ///< Maximum valid session duration
+    
+    // Validation settings
+    bool enable_payload_validation;        ///< Enable payload validation
+    bool require_ntp_sync;                 ///< Require NTP time synchronization
+    
+    // Event publishing
+    bool publish_events;                   ///< Enable event publishing
+    uint32_t event_queue_size;             ///< Event queue size
+} payload_tool_config_t;
+
+// =============================================================================
+// Constitutional Tool Types & Handles
+// =============================================================================
+
+/**
+ * @brief Opaque Constitutional Payload Tool Handle
  */
 typedef struct payload_tool* payload_tool_handle_t;
 
 /**
- * @brief Tool configuration structure
+ * @brief Constitutional Payload Tool Status Information
  */
 typedef struct {
-    char device_id[32];              // Device identifier (MAC-based)
-    bool enable_boot_counter;        // Enable boot counter persistence
-    bool enable_ntp_integration;     // Enable NTP offset calculation
-    uint32_t timestamp_precision_us; // Timestamp precision (microseconds)
-} payload_tool_config_t;
-
-// =============================================================================
-// Event Type Definitions (Process Map Authority)
-// =============================================================================
-
-/**
- * @brief Event types as defined in process maps
- */
-typedef enum {
-    PAYLOAD_EVENT_TAG_PLACED    = 0x01,
-    PAYLOAD_EVENT_TAG_REMOVED   = 0x02,
-    PAYLOAD_EVENT_SYSTEM_BOOT   = 0x03,
-    PAYLOAD_EVENT_SYSTEM_ERROR  = 0x04
-} payload_event_type_t;
-
-/**
- * @brief ESP_EVENT payload event IDs (Constitutional Authority)
- */
-typedef enum {
-    PAYLOAD_EVENT_READY = 0,
-    PAYLOAD_EVENT_STORED = 1,
-    PAYLOAD_EVENT_TRANSMITTED = 2,
-    PAYLOAD_EVENT_FAILED = 3
-} payload_event_id_t;
-
-/**
- * @brief Event data structure for payload creation
- */
-typedef struct {
-    payload_event_type_t event_type;     // Event type
-    char tag_uid[32];                    // RFID tag UID (if applicable)
-    uint64_t internal_timestamp_us;      // Internal timestamp (microseconds)
-    int64_t ntp_offset_ms;               // NTP offset (milliseconds)
-    bool ntp_synced;                     // NTP synchronization status
-    uint32_t boot_counter;               // Boot counter value
-    char additional_data[256];           // Additional event-specific data
-} payload_event_data_t;
-
-/**
- * @brief ESP_EVENT payload data structure (Constitutional Authority)
- * Used for esp_event_post() communication between tools
- */
-typedef struct {
-    char event_type[32];           // "tag_placed", "tag_removed", etc.
-    uint64_t internal_timestamp_us;
-    bool ntp_synced;
-    uint32_t boot_counter;
-    char tag_uid[32];
-    char additional_data[256];
-    char iso_timestamp[32];
-} payload_esp_event_data_t;
-
-/**
- * @brief Formatted payload result
- */
-typedef struct {
-    char* json_string;                   // Formatted JSON payload
-    size_t json_length;                  // JSON string length
-    char iso_timestamp[32];              // ISO 8601 timestamp string
-    bool formatting_success;             // Formatting operation status
-} payload_formatted_result_t;
-
-// =============================================================================
-// Tool Status and Capabilities
-// =============================================================================
-
-/**
- * @brief Tool status structure
- */
-typedef struct {
-    bool is_initialized;                 // Tool initialization status
-    uint32_t payloads_formatted;         // Total payloads formatted
-    uint32_t boot_counter_value;         // Current boot counter
-    bool ntp_integration_active;         // NTP integration status
-    uint32_t last_error_code;            // Last error encountered
+    bool is_initialized;                   ///< Tool initialization status
+    bool is_active;                        ///< Tool active status
+    bool ntp_sync_required;                ///< NTP synchronization required
+    bool validation_enabled;               ///< Payload validation enabled
+    uint32_t payloads_created;             ///< Total payloads created
+    uint32_t validation_errors;            ///< Total validation errors
+    uint32_t format_errors;                ///< Total formatting errors
+    uint64_t uptime_us;                    ///< Tool uptime in microseconds
+    payload_tool_capabilities_t capabilities; ///< Tool capabilities
 } payload_tool_status_t;
 
 // =============================================================================
-// MCP Tool Interface Functions
+// Constitutional Tool Interface Functions
 // =============================================================================
 
 /**
- * @brief Create default configuration
- * @return Default configuration structure
- */
-payload_tool_config_t payload_tool_create_default_config(void);
-
-/**
- * @brief Initialize payload tool
- * @param config Tool configuration
- * @return Tool handle or NULL on failure
- */
-payload_tool_handle_t payload_tool_init(const payload_tool_config_t* config);
-
-/**
- * @brief Cleanup payload tool
- * @param handle Tool handle
- * @return ESP_OK on success
- */
-esp_err_t payload_tool_cleanup(payload_tool_handle_t handle);
-
-/**
- * @brief Get tool identification
+ * @brief Get payload tool identifier
  * @return Tool ID string
  */
 const char* payload_tool_get_id(void);
 
 /**
- * @brief Get tool version
- * @return Tool version string
+ * @brief Get payload tool version
+ * @return Version string
  */
 const char* payload_tool_get_version(void);
 
 /**
- * @brief Get tool capabilities
+ * @brief Create default payload tool configuration
+ * @return Default configuration structure
+ */
+payload_tool_config_t payload_tool_create_default_config(void);
+
+/**
+ * @brief Initialize constitutional payload tool with configuration
+ * @param config Tool configuration
+ * @return Tool handle or NULL on failure
+ */
+payload_tool_handle_t payload_tool_init(const payload_tool_config_t *config);
+
+/**
+ * @brief Deinitialize constitutional payload tool and free resources
+ * @param handle Tool handle
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_deinit(payload_tool_handle_t handle);
+
+/**
+ * @brief Get constitutional payload tool capabilities
  * @param handle Tool handle
  * @return Capabilities bitmask
  */
 payload_tool_capabilities_t payload_tool_get_capabilities(payload_tool_handle_t handle);
 
 /**
- * @brief Get tool status
+ * @brief Get constitutional payload tool status
  * @param handle Tool handle
- * @param status Status structure to fill
- * @return ESP_OK on success
+ * @param status Pointer to status structure
+ * @return ESP_OK on success, error code on failure
  */
-esp_err_t payload_tool_get_status(payload_tool_handle_t handle, payload_tool_status_t* status);
+esp_err_t payload_tool_get_status(payload_tool_handle_t handle, payload_tool_status_t *status);
+
+/**
+ * @brief Set NTP tool dependency for timestamp generation
+ * @param handle Payload tool handle
+ * @param ntp_tool NTP tool handle
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_set_ntp_dependency(payload_tool_handle_t handle, void* ntp_tool);
+
+/**
+ * @brief Set filesystem tool dependency for payload storage
+ * @param handle Payload tool handle
+ * @param fs_tool Filesystem tool handle
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_set_fs_dependency(payload_tool_handle_t handle, void* fs_tool);
 
 // =============================================================================
-// Core Payload Formatting Functions (Process Map Authority)
-// =============================================================================
-
-/**
- * @brief Format event payload (main function per process maps)
- * @param handle Tool handle
- * @param event_data Event data structure
- * @param result Formatted result structure
- * @return ESP_OK on success
- */
-esp_err_t payload_tool_format_event(payload_tool_handle_t handle, 
-                                  const payload_event_data_t* event_data,
-                                  payload_formatted_result_t* result);
-
-/**
- * @brief Free formatted payload result
- * @param result Result structure to free
- */
-void payload_tool_free_result(payload_formatted_result_t* result);
-
-/**
- * @brief Calculate precise timestamp with NTP coordination
- * @param handle Tool handle
- * @param internal_timestamp_us Internal timestamp (microseconds)
- * @param iso_timestamp ISO 8601 string buffer (min 32 bytes)
- * @param ntp_offset_ms NTP offset output (milliseconds)
- * @return ESP_OK on success
- */
-esp_err_t payload_tool_calculate_timestamp(payload_tool_handle_t handle,
-                                         uint64_t internal_timestamp_us,
-                                         char* iso_timestamp,
-                                         int64_t* ntp_offset_ms);
-
-/**
- * @brief Get current boot counter value
- * @param handle Tool handle
- * @param boot_counter Boot counter output
- * @return ESP_OK on success
- */
-esp_err_t payload_tool_get_boot_counter(payload_tool_handle_t handle, uint32_t* boot_counter);
-
-/**
- * @brief Increment boot counter (called on system boot)
- * @param handle Tool handle
- * @return ESP_OK on success
- */
-esp_err_t payload_tool_increment_boot_counter(payload_tool_handle_t handle);
-
-/**
- * @brief Generate device ID from MAC address
- * @param device_id Buffer for device ID (min 32 bytes)
- * @return ESP_OK on success
- */
-esp_err_t payload_tool_generate_device_id(char* device_id);
-
-// =============================================================================
-// Event System Integration (Process Map 13 Compliance) 
+// Constitutional Payload Operations Interface
 // =============================================================================
 
 /**
- * @brief Start RFID event subscription per process map 13
+ * @brief Create constitutional work session payload
  * @param handle Tool handle
- * @return ESP_OK on success
+ * @param session Work session data
+ * @param payload Output payload structure
+ * @return ESP_OK on success, error code on failure
  */
-esp_err_t payload_tool_start_event_subscription(payload_tool_handle_t handle);
-
-// Constitutional compliance: Tool dependencies removed - pure event-driven communication
-// Tools communicate via esp_event system only per Process Maps 13 & 14
+esp_err_t payload_tool_create_session_payload(payload_tool_handle_t handle, 
+                                             const payload_work_session_t *session,
+                                             payload_data_t *payload);
 
 /**
- * @brief Build and transmit payload per process map 13
- * @param handle Tool handle  
- * @param event_id RFID event ID
- * @param event_data RFID event data
- * @return ESP_OK on success
+ * @brief Format payload to JSON string
+ * @param handle Tool handle
+ * @param payload Payload data to format
+ * @param json_buffer Output JSON buffer
+ * @param buffer_size Size of JSON buffer
+ * @return ESP_OK on success, error code on failure
  */
-esp_err_t payload_tool_build_and_transmit_payload(payload_tool_handle_t handle, 
-                                                 int event_id, 
-                                                 void* event_data);
+esp_err_t payload_tool_format_to_json(payload_tool_handle_t handle,
+                                     const payload_data_t *payload,
+                                     char *json_buffer,
+                                     size_t buffer_size);
+
+/**
+ * @brief Validate constitutional payload structure
+ * @param handle Tool handle
+ * @param payload Payload to validate
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_validate_payload(payload_tool_handle_t handle,
+                                       const payload_data_t *payload);
+
+/**
+ * @brief Get current device metadata
+ * @param handle Tool handle
+ * @param metadata Output device metadata structure
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_get_device_metadata(payload_tool_handle_t handle,
+                                          payload_device_metadata_t *metadata);
+
+/**
+ * @brief Calculate payload checksum for validation
+ * @param handle Tool handle
+ * @param payload Payload data
+ * @return Checksum value
+ */
+uint32_t payload_tool_calculate_checksum(payload_tool_handle_t handle,
+                                        const payload_data_t *payload);
+
+/**
+ * @brief Constitutional hardware self-test for payload creation
+ * @param handle Tool handle
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_hardware_self_test(payload_tool_handle_t handle);
+
+/**
+ * @brief Process batch of session events
+ * @param handle Tool handle
+ * @param sessions Array of session events
+ * @param session_count Number of sessions
+ * @param batch_payload Output batch payload
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_create_batch_payload(payload_tool_handle_t handle,
+                                           const payload_work_session_t *sessions,
+                                           size_t session_count,
+                                           payload_data_t *batch_payload);
+
+// =============================================================================
+// Constitutional Utility Functions
+// =============================================================================
+
+/**
+ * @brief Convert payload tool event type to string
+ * @param event_type Event type
+ * @return String representation
+ */
+const char* payload_tool_event_to_string(payload_tool_event_type_t event_type);
+
+/**
+ * @brief Convert session type to string
+ * @param session_type Session type
+ * @return String representation  
+ */
+const char* payload_tool_session_type_to_string(payload_session_type_t session_type);
+
+/**
+ * @brief Generate device ID from hardware MAC address
+ * @param device_id Output buffer for device ID (minimum 33 chars)
+ * @param buffer_size Buffer size
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_generate_device_id(char *device_id, size_t buffer_size);
 
 #ifdef __cplusplus
 }
 #endif
+
+#endif // PAYLOAD_TOOL_H

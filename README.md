@@ -69,25 +69,41 @@ graph LR
 - **Current Status:** Use `/.claude/commands/phase_status` for latest development state
 - **Ecosystem Context:** See `docs/ecosystem/` for integration specifications
 
-### **MCP-Inspired Design**
-This device demonstrates **tool-based architecture** with independent, reusable components:
+### **Constitutional Architecture with Smart Contracts**
+
+🏛️ **IMPORTANT**: Our "smart contracts" are **NOT blockchain-based**. They are constitutional validation contracts that enforce architectural integrity.
+
+#### Constitutional Smart Contracts = Process Map Authority + Automated Validation
 
 ```
-🎯 main.c (Orchestrator)
-├── 🔧 rfid_tool        → Tag detection and debouncing
-├── 🔧 network_tool     → WiFi + AP mode management  
-├── 🔧 ntp_tool         → Time synchronization
-├── 🔧 fs_tool          → File system operations
-├── 🔧 payload_tool     → Event formatting
-├── 🔧 http_tool        → Webhook communication
-└── 🔧 feedback_tool    → Visual LED feedback
+HOST (main.c)           →  Docker-like orchestrator
+├── CONTAINERS (tools)  →  Isolated, event-driven tools  
+└── CONTRACTS (process) →  Smart contract validation
 ```
 
-**Benefits:**
-- **Reusable components** across different ESP32 projects
-- **Testable architecture** with clear boundaries
-- **Maintainable codebase** with single responsibility tools
-- **Extensible design** for future sensor integrations
+**Constitutional Tool Architecture:**
+```
+🎯 main.c (Constitutional HOST)
+├── 🔧 rfid_tool        → Container: Tag detection with process map 07
+├── 🔧 network_tool     → Container: WiFi management with ESP_EVENT only
+├── 🔧 ntp_tool         → Container: Time sync with constitutional timing
+├── 🔧 fs_tool          → Container: File operations with handle-based pattern
+├── 🔧 payload_tool     → Container: Event formatting with process map 13
+├── 🔧 http_tool        → Container: HTTP communication with process map 14
+└── 🔧 feedback_tool    → Container: LED feedback with process map 11
+```
+
+#### Smart Contract Types:
+- **Container Contracts**: Validate tool isolation (zero coupling)
+- **Communication Contracts**: Enforce ESP_EVENT-only patterns
+- **Process Contracts**: Validate FSM state transitions per process maps
+- **Memory Contracts**: Enforce safety patterns (snprintf, handle-based)
+
+#### Constitutional Requirements:
+- **Zero Coupling**: Tools communicate only via ESP_EVENT
+- **Handle-Based**: No static globals, context in handles
+- **Process Map Authority**: FSM diagrams are executable validation rules
+- **Constitutional Gates**: Automated compliance checkpoints
 
 ### **Build Environment**
 - **Platform:** ESP-IDF with PlatformIO integration

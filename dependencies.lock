@@ -16,6 +16,6 @@ dependencies:
       path: /home/nicolas/github/time-tracker-device/managed_components/joltwallet__littlefs
       type: local
     version: 1.20.0
-manifest_hash: 324aad46ea91d0c7a2d13cd45f6345686d81ed3c6f61abd184d97423fe24aa9c
+manifest_hash: c6cd467726d36d08567eb994b67888cf9134b5e88c16963b29090fbfee6ffc77
 target: esp32c3
 version: 1.0.0

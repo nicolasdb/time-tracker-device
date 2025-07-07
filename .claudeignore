@@ -21,7 +21,7 @@ managed_components/
 docs/archive
 
 # Data files
-data/
+<!-- data/ -->
 
 # Temporary and backup files
 *.tmp

@@ -1,0 +1,10 @@
+{
+  "name": "led_strip",
+  "version": "2.5.5",
+  "description": "ESP32 LED Strip Component for WS2812, SK6812, etc.",
+  "frameworks": "espidf",
+  "platforms": "espressif32",
+  "build": {
+    "srcFilter": "+<src/> -<examples/>"
+  }
+}

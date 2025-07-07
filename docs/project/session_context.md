@@ -11,9 +11,9 @@ Rebuild `/main/main.c` with constitutional compliance following container archit
 - **CONTRACTS**: Process maps as smart contracts binding input/output
 
 ### **Current Phase**
-**PHASE**: MAIN_ORCHESTRATOR_REBUILD_REQUIRED  
-**STATUS**: Tools validated and working, main.c deleted, orchestrator missing
-**NEXT**: Rebuild main.c as HOST with constitutional compliance
+**PHASE**: CONSTITUTIONAL_HOST_SUCCESS  
+**STATUS**: Phase 5.8 COMPLETE - HOST operational, hardware validated, ready for smart contracts
+**NEXT**: Implement smart contracts framework and begin tool-by-tool container integration
 
 ---
 
@@ -125,19 +125,61 @@ When Claude context gets full or memory is limited:
 - Constitutional validation commands integrated
 - Event flow repair completed (but needs validation)
 
-### **Current Reality** ✅⚠️
+### **Current Reality** ✅
 - **Tools individually validated** and working (feedback, wifi, rfid, fs, webhook, system_monitor)
 - **Hardware completely validated** (ESP32-C3, WiFi, LittleFS, WS2812B, RC522)
-- **main.c deleted** - central orchestrator missing
-- **Tool registry missing** - no ESP_EVENT coordination
-- **Constitutional compliance** - need to implement Process Map 01 orchestrator
+- **main.c HOST orchestrator** - constitutional Process Map 01 implemented
+- **Tool registry system** - ESP_EVENT coordination restored
+- **Constitutional compliance** - container architecture pattern achieved
 
 ### **Next Steps** 📋
-1. **Rebuild main.c** as HOST orchestrator following Process Map 01
-2. **Implement tool registry** with ESP_EVENT coordination
-3. **Restore operational system** with constitutional compliance
-4. **Validate end-to-end flow** (RFID → payload → HTTP)
-5. **Test complete system** with hardware validation
+1. **Compile and test clean HOST** - verify constitutional orchestrator runs independently
+2. **Implement smart contracts** - create process map validation framework
+3. **Add fs_tool** - first container with constitutional compliance validation
+4. **Add feedback_tool** - second container with ESP_EVENT isolation
+5. **Tool-by-tool integration** - continue with network→ntp→payload→rfid→http→webserver
+6. **Design authority compliance** - each tool must pass constitutional validation
+
+---
+
+## Smart Contracts Implementation Strategy
+
+### **Smart Contract Pattern**
+- **Process Maps** = Smart contracts defining container behavior
+- **Validation Framework** = Constitutional compliance checking
+- **Tool Integration** = One container at a time with validation gates
+
+### **Implementation Phases**
+1. **Smart Contract Framework**
+   - Create process map compliance validator
+   - Implement container interface validation
+   - Build ESP_EVENT communication validators
+
+2. **Tool Integration Protocol**
+   ```
+   For each tool:
+   1. Create minimal tool implementation
+   2. Validate against process map contract
+   3. Test ESP_EVENT isolation
+   4. Integrate with HOST orchestrator
+   5. Verify no coupling violations
+   ```
+
+3. **Constitutional Gates**
+   - ✅ Process map compliance validation
+   - ✅ Container isolation verification
+   - ✅ ESP_EVENT-only communication
+   - ✅ No direct coupling between containers
+
+### **Tool Addition Order (Constitutional Authority)**
+1. **fs_tool** → Persistent storage foundation
+2. **feedback_tool** → Visual feedback system
+3. **network_tool** → WiFi connectivity
+4. **ntp_tool** → Time synchronization
+5. **payload_tool** → Event formatting
+6. **rfid_tool** → Tag detection
+7. **http_tool** → Webhook transmission
+8. **webserver_tool** → AP mode configuration
 
 ---
 

@@ -1,0 +1,6 @@
+version: "6.1.0"
+description: "Constitutional Payload Tool - JSON Data Formatting"
+url: "https://github.com/your-repo/time-tracker-device"
+dependencies:
+  idf:
+    version: ">=5.0.0"

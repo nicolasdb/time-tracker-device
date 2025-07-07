@@ -1,235 +1,449 @@
 /**
  * @file ntp_tool.c
- * @brief MCP-Inspired NTP Time Synchronization Tool Implementation
+ * @brief Constitutional NTP Tool Implementation - Time Synchronization
  * 
- * Provides handle-based NTP time synchronization with WiFi-triggered updates.
- * Subscribes to WiFi connection events and automatically syncs time.
+ * Constitutional implementation following constitutional patterns:
+ * - Handle-based design (no static globals)
+ * - ESP_EVENT-only communication
+ * - Constitutional memory safety (snprintf, PRIu32)
+ * - Container isolation principles
+ * 
+ * Constitutional Authority: Process Map 13 dependency - "wait for NTP_SYNC" → "clock synced"
+ * Architecture Pattern: Handle-based, ESP_EVENT communication, zero coupling
  */
 
 #include "ntp_tool.h"
-#include <string.h>
-#include <sys/time.h>
-#include <inttypes.h>
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_timer.h"
-#include "esp_netif_sntp.h"
+#include "esp_netif.h"
 #include "esp_sntp.h"
-#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
+#include <string.h>
+#include <stdio.h>
+#include <inttypes.h>
+#include <sys/time.h>
 
-static const char *TAG = "NTP_TOOL";
+static const char* TAG = "ntp_tool";
 
-// =============================================================================
-// MCP Tool Context Structure
-// =============================================================================
-
-/**
- * @brief NTP Tool Context Structure (Private)
- */
-typedef struct ntp_tool_context {
-    // MCP Tool State
-    ntp_tool_config_t config;
-    ntp_tool_capabilities_t capabilities;
-    bool is_initialized;
-    bool is_active;
-    uint32_t uptime_start;
-    
-    // NTP State
-    ntp_sync_status_t sync_status;
-    time_t last_sync_time;
-    time_t next_sync_time;
-    int64_t last_offset_us;
-    uint32_t sync_attempts;
-    uint32_t successful_syncs;
-    uint32_t failed_syncs;
-    char active_server[NTP_TOOL_MAX_HOSTNAME];
-    
-    // FreeRTOS Resources
-    TimerHandle_t sync_timer;
-    TaskHandle_t sync_task_handle;
-    
-    // SNTP State Management
-    bool sntp_initialized;
-} ntp_tool_context_t;
-
-// =============================================================================
-// Event System
-// =============================================================================
-
+// Constitutional NTP Tool Event Base
 ESP_EVENT_DEFINE_BASE(NTP_TOOL_EVENTS);
 
-// =============================================================================
-// Forward Declarations
-// =============================================================================
+// Forward declaration for network_tool events
+ESP_EVENT_DECLARE_BASE(NETWORK_TOOL_EVENTS);
 
-static void ntp_sync_timer_callback(TimerHandle_t timer);
-static esp_err_t ntp_tool_perform_sync(ntp_tool_handle_t handle);
-static esp_err_t ntp_tool_publish_event(ntp_tool_handle_t handle, ntp_tool_event_type_t event_type, const void* event_data);
-static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
-static void ntp_sync_notification_cb(struct timeval *tv);
-
-// =============================================================================
-// MCP Tool Registry
-// =============================================================================
-
-static const ntp_tool_registry_t ntp_tool_registry = {
-    .tool_id = NTP_TOOL_ID,
-    .version = NTP_TOOL_VERSION,
-    .description = NTP_TOOL_DESCRIPTION,
-    .capabilities = NTP_CAP_TIME_SYNC | NTP_CAP_MULTIPLE_SERVERS | NTP_CAP_AUTO_SYNC | 
-                   NTP_CAP_WIFI_TRIGGERED | NTP_CAP_TIMEZONE_MGMT | NTP_CAP_EVENT_PUBLISH | 
-                   NTP_CAP_HEALTH_MONITOR,
-    .init_func = ntp_tool_init,
-    .deinit_func = ntp_tool_deinit,
+// Constitutional NTP Tool Context (Handle-based pattern)
+struct ntp_tool {
+    bool is_initialized;
+    bool is_active;
+    bool sntp_initialized;
+    bool time_valid;
+    ntp_tool_config_t config;
+    ntp_tool_status_t status;
+    uint64_t init_timestamp_us;
+    uint32_t sync_attempts;
+    uint32_t sync_failures;
+    
+    // Current synchronization state
+    ntp_state_t current_state;
+    time_t last_sync_time;
+    time_t system_boot_time;
+    int64_t time_offset_us;
+    char current_server[64];
+    
+    // Constitutional task management
+    TaskHandle_t sync_task_handle;
+    TimerHandle_t periodic_timer;
+    esp_event_loop_handle_t event_loop;
+    
+    // Synchronization control
+    bool sync_in_progress;
+    bool wifi_connected;
+    uint32_t current_server_index;
 };
 
 // =============================================================================
-// MCP Tool Interface Implementation
+// Constitutional NTP Event Handlers
+// =============================================================================
+
+/**
+ * @brief Constitutional network event handler
+ * Responds to WiFi connection for automatic sync
+ */
+static void constitutional_network_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+    ntp_tool_handle_t handle = (ntp_tool_handle_t)arg;
+    if (!handle) {
+        ESP_LOGE(TAG, "Invalid handle in network event handler");
+        return;
+    }
+    
+    // Listen for network tool connection events
+    if (event_base == NETWORK_TOOL_EVENTS) {
+        switch (event_id) {
+            case 1: // NETWORK_TOOL_EVENT_CONNECTED
+                ESP_LOGI(TAG, "📡 WiFi connected - triggering NTP sync");
+                handle->wifi_connected = true;
+                
+                if (handle->config.wifi_triggered_sync && !handle->sync_in_progress) {
+                    // Trigger sync via task notification (non-blocking)
+                    if (handle->sync_task_handle) {
+                        xTaskNotify(handle->sync_task_handle, 1, eSetBits);
+                    }
+                }
+                break;
+                
+            case 2: // NETWORK_TOOL_EVENT_DISCONNECTED
+                ESP_LOGW(TAG, "📡 WiFi disconnected - NTP sync disabled");
+                handle->wifi_connected = false;
+                break;
+                
+            default:
+                break;
+        }
+    }
+}
+
+// =============================================================================
+// Constitutional NTP Synchronization
+// =============================================================================
+
+/**
+ * @brief SNTP notification callback
+ * Called when SNTP sync completes (success or failure)
+ */
+static void constitutional_sntp_sync_callback(struct timeval *tv)
+{
+    // Note: This runs in SNTP context, keep minimal
+    ESP_LOGI(TAG, "🕐 SNTP sync notification received");
+}
+
+/**
+ * @brief Constitutional NTP synchronization implementation
+ */
+static esp_err_t constitutional_perform_ntp_sync(ntp_tool_handle_t handle)
+{
+    if (!handle || !handle->wifi_connected) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (handle->sync_in_progress) {
+        ESP_LOGW(TAG, "NTP sync already in progress");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    handle->sync_in_progress = true;
+    handle->current_state = NTP_STATE_SYNCING;
+    handle->status.sync_state = NTP_STATE_SYNCING;
+    handle->sync_attempts++;
+    
+    ESP_LOGI(TAG, "🕐 Starting NTP synchronization");
+    
+    // Initialize SNTP if not already done
+    if (!handle->sntp_initialized) {
+        esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+        
+        // Configure NTP servers
+        uint32_t server_count = 0;
+        for (int i = 0; i < 4; i++) {
+            if (strlen(handle->config.servers[i].hostname) > 0) {
+                ESP_LOGI(TAG, "📡 Configuring NTP server %d: %s", i, handle->config.servers[i].hostname);
+                esp_sntp_setservername(i, handle->config.servers[i].hostname);
+                server_count++;
+            }
+        }
+        
+        if (server_count == 0) {
+            ESP_LOGE(TAG, "No NTP servers configured");
+            handle->sync_in_progress = false;
+            handle->current_state = NTP_STATE_FAILED;
+            handle->status.sync_state = NTP_STATE_FAILED;
+            return ESP_ERR_INVALID_ARG;
+        }
+        
+        // Set sync notification callback
+        esp_sntp_set_time_sync_notification_cb(constitutional_sntp_sync_callback);
+        
+        // Initialize SNTP
+        esp_sntp_init();
+        handle->sntp_initialized = true;
+        
+        ESP_LOGI(TAG, "✅ SNTP initialized with %" PRIu32 " servers", server_count);
+    }
+    
+    // Publish sync started event
+    ntp_tool_event_t sync_event = {
+        .state = NTP_STATE_SYNCING,
+        .timestamp_us = esp_timer_get_time()
+    };
+    esp_event_post(NTP_TOOL_EVENTS, NTP_TOOL_EVENT_SYNC_STARTED, &sync_event, sizeof(sync_event), 0);
+    
+    // Wait for synchronization with timeout
+    uint32_t timeout_ticks = pdMS_TO_TICKS(handle->config.sync_timeout_ms);
+    uint32_t start_time = xTaskGetTickCount();
+    
+    while ((xTaskGetTickCount() - start_time) < timeout_ticks) {
+        time_t now = 0;
+        time(&now);
+        
+        // Check if time is reasonable (after year 2020)
+        if (now > 1577836800) { // Jan 1, 2020
+            // Successful sync
+            handle->current_state = NTP_STATE_SYNCED;
+            handle->status.sync_state = NTP_STATE_SYNCED;
+            handle->status.time_valid = true;
+            handle->time_valid = true;
+            handle->last_sync_time = now;
+            handle->status.last_sync_time = now;
+            handle->status.system_time = now;
+            handle->status.sync_count++;
+            handle->status.last_sync_timestamp_us = esp_timer_get_time();
+            handle->sync_in_progress = false;
+            
+            // Store current server (simplified - use first configured server)
+            if (strlen(handle->config.servers[0].hostname) > 0) {
+                snprintf(handle->current_server, sizeof(handle->current_server), 
+                        "%s", handle->config.servers[0].hostname);
+                snprintf(handle->status.current_server, sizeof(handle->status.current_server), 
+                        "%s", handle->config.servers[0].hostname);
+            }
+            
+            ESP_LOGI(TAG, "✅ NTP sync successful - Time: %" PRIu32, (uint32_t)now);
+            
+            // Set timezone if configured
+            if (strlen(handle->config.timezone) > 0) {
+                setenv("TZ", handle->config.timezone, 1);
+                tzset();
+                ESP_LOGI(TAG, "🌍 Timezone set: %s", handle->config.timezone);
+            }
+            
+            // Publish success event
+            ntp_tool_event_t success_event = {
+                .state = NTP_STATE_SYNCED,
+                .system_time = now,
+                .timestamp_us = esp_timer_get_time()
+            };
+            snprintf(success_event.server_used, sizeof(success_event.server_used), "%s", handle->current_server);
+            esp_event_post(NTP_TOOL_EVENTS, NTP_TOOL_EVENT_SYNC_SUCCESS, &success_event, sizeof(success_event), 0);
+            esp_event_post(NTP_TOOL_EVENTS, NTP_TOOL_EVENT_TIME_UPDATED, &success_event, sizeof(success_event), 0);
+            
+            return ESP_OK;
+        }
+        
+        // Constitutional task yield
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    
+    // Timeout or failure
+    handle->current_state = NTP_STATE_FAILED;
+    handle->status.sync_state = NTP_STATE_FAILED;
+    handle->status.sync_failures++;
+    handle->sync_failures++;
+    handle->sync_in_progress = false;
+    
+    ESP_LOGE(TAG, "❌ NTP sync failed - timeout after %" PRIu32 "ms", handle->config.sync_timeout_ms);
+    
+    // Publish failure event
+    ntp_tool_event_t failure_event = {
+        .state = NTP_STATE_FAILED,
+        .timestamp_us = esp_timer_get_time()
+    };
+    esp_event_post(NTP_TOOL_EVENTS, NTP_TOOL_EVENT_SYNC_FAILED, &failure_event, sizeof(failure_event), 0);
+    
+    return ESP_ERR_TIMEOUT;
+}
+
+// =============================================================================
+// Constitutional NTP Tasks
+// =============================================================================
+
+/**
+ * @brief Constitutional NTP synchronization task
+ */
+static void constitutional_ntp_sync_task(void *arg)
+{
+    ntp_tool_handle_t handle = (ntp_tool_handle_t)arg;
+    if (!handle) {
+        ESP_LOGE(TAG, "Invalid handle in NTP sync task");
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    ESP_LOGI(TAG, "🕐 Constitutional NTP sync task started");
+    
+    while (handle->is_active) {
+        uint32_t notification_value = 0;
+        
+        // Wait for sync trigger (manual or automatic)
+        BaseType_t result = xTaskNotifyWait(0, UINT32_MAX, &notification_value, 
+                                          pdMS_TO_TICKS(handle->config.sync_interval_s * 1000));
+        
+        if (!handle->is_active) {
+            break;
+        }
+        
+        if (result == pdTRUE || (handle->config.auto_sync_enabled && handle->wifi_connected)) {
+            // Perform NTP synchronization
+            esp_err_t sync_result = constitutional_perform_ntp_sync(handle);
+            
+            if (sync_result != ESP_OK && handle->config.retry_attempts > 1) {
+                // Retry logic
+                for (uint32_t retry = 1; retry < handle->config.retry_attempts; retry++) {
+                    ESP_LOGW(TAG, "🔄 NTP sync retry %" PRIu32 "/%" PRIu32, retry, handle->config.retry_attempts);
+                    vTaskDelay(pdMS_TO_TICKS(2000)); // 2 second delay between retries
+                    
+                    sync_result = constitutional_perform_ntp_sync(handle);
+                    if (sync_result == ESP_OK) {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Constitutional task yield
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    
+    ESP_LOGI(TAG, "🕐 Constitutional NTP sync task ended");
+    vTaskDelete(NULL);
+}
+
+/**
+ * @brief Periodic timer callback for automatic sync
+ */
+static void constitutional_periodic_timer_callback(TimerHandle_t timer)
+{
+    ntp_tool_handle_t handle = (ntp_tool_handle_t)pvTimerGetTimerID(timer);
+    
+    if (handle && handle->is_active && handle->config.auto_sync_enabled) {
+        ESP_LOGI(TAG, "⏰ Periodic NTP sync triggered");
+        
+        if (handle->sync_task_handle) {
+            xTaskNotify(handle->sync_task_handle, 2, eSetBits);
+        }
+    }
+}
+
+// =============================================================================
+// Constitutional NTP Tool Interface Implementation
 // =============================================================================
 
 const char* ntp_tool_get_id(void)
 {
-    return NTP_TOOL_ID;
+    return "ntp_tool";
 }
 
 const char* ntp_tool_get_version(void)
 {
-    return NTP_TOOL_VERSION;
+    return "6.1.0";
 }
 
 ntp_tool_config_t ntp_tool_create_default_config(void)
 {
-    ntp_tool_config_t config = {0};
+    ntp_tool_config_t config = {
+        .sync_interval_s = 3600,      // 1 hour
+        .sync_timeout_ms = 10000,     // 10 seconds
+        .retry_attempts = 3,
+        .auto_sync_enabled = true,
+        .wifi_triggered_sync = true,
+        .publish_events = true
+    };
     
-    // Default NTP servers
-    config.server_count = 3;
+    // Default NTP servers (80/20 rule - simple and reliable)
     snprintf(config.servers[0].hostname, sizeof(config.servers[0].hostname), "pool.ntp.org");
     config.servers[0].priority = 100;
-    config.servers[0].timeout_ms = 5000;
-    config.servers[0].enabled = true;
     
     snprintf(config.servers[1].hostname, sizeof(config.servers[1].hostname), "time.nist.gov");
     config.servers[1].priority = 90;
-    config.servers[1].timeout_ms = 5000;
-    config.servers[1].enabled = true;
     
     snprintf(config.servers[2].hostname, sizeof(config.servers[2].hostname), "time.google.com");
     config.servers[2].priority = 80;
-    config.servers[2].timeout_ms = 5000;
-    config.servers[2].enabled = true;
     
-    
-    // Sync settings
-    config.sync_interval_s = NTP_TOOL_DEFAULT_SYNC_INTERVAL_S;
-    config.sync_timeout_ms = 10000;
-    config.max_retry_attempts = 3;
-    config.retry_delay_ms = 2000;
-    config.auto_sync_enabled = true;
-    config.wifi_triggered_sync = true;
-    
-    // Timezone (UTC by default, can be customized per location)
+    // Default timezone (UTC for ecosystem consistency)
     snprintf(config.timezone, sizeof(config.timezone), "UTC0");
-    snprintf(config.timezone_description, sizeof(config.timezone_description), "Coordinated Universal Time");
-    
-    // Event publishing
-    config.publish_events = true;
-    config.event_stack_size = 4096;
-    
-    // Health monitoring
-    config.max_drift_threshold_s = 300; // 5 minutes
-    config.drift_monitoring_enabled = true;
     
     return config;
 }
 
 ntp_tool_handle_t ntp_tool_init(const ntp_tool_config_t *config)
 {
-    ESP_LOGI(TAG, "🕐 Initializing NTP tool v%s", NTP_TOOL_VERSION);
-    
     if (!config) {
-        ESP_LOGE(TAG, "❌ Invalid configuration");
+        ESP_LOGE(TAG, "Invalid configuration");
         return NULL;
     }
     
-    // Validate configuration
-    if (config->server_count == 0 || config->server_count > NTP_TOOL_MAX_SERVERS) {
-        ESP_LOGE(TAG, "❌ Invalid server count: %" PRIu8, config->server_count);
+    ESP_LOGI(TAG, "🏗️ Constitutional NTP tool initializing");
+    
+    // Allocate handle with constitutional memory safety
+    ntp_tool_handle_t handle = malloc(sizeof(struct ntp_tool));
+    if (!handle) {
+        ESP_LOGE(TAG, "Failed to allocate NTP tool handle");
         return NULL;
     }
     
-    // Allocate context
-    ntp_tool_context_t *ctx = malloc(sizeof(ntp_tool_context_t));
-    if (!ctx) {
-        ESP_LOGE(TAG, "❌ Failed to allocate tool context");
+    // Initialize handle with constitutional patterns
+    memset(handle, 0, sizeof(struct ntp_tool));
+    memcpy(&handle->config, config, sizeof(ntp_tool_config_t));
+    handle->init_timestamp_us = esp_timer_get_time();
+    handle->current_state = NTP_STATE_NOT_SYNCED;
+    handle->status.sync_state = NTP_STATE_NOT_SYNCED;
+    
+    // Store boot time for uptime calculations
+    time(&handle->system_boot_time);
+    
+    // Register network event handlers for WiFi triggers
+    esp_err_t ret = esp_event_handler_register(NETWORK_TOOL_EVENTS, ESP_EVENT_ANY_ID, 
+                                             &constitutional_network_event_handler, handle);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register network event handler: %s", esp_err_to_name(ret));
+        // Continue initialization - network integration is optional
+    }
+    
+    // Set control flags BEFORE task creation (constitutional race condition fix)
+    handle->is_active = true;
+    handle->is_initialized = true;
+    handle->status.is_initialized = true;
+    handle->status.is_active = true;
+    
+    // Create constitutional sync task
+    BaseType_t task_ret = xTaskCreate(constitutional_ntp_sync_task,
+                                     "ntp_sync",
+                                     4096,
+                                     handle,
+                                     5,
+                                     &handle->sync_task_handle);
+    
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create NTP sync task");
+        esp_event_handler_unregister(NETWORK_TOOL_EVENTS, ESP_EVENT_ANY_ID, &constitutional_network_event_handler);
+        free(handle);
         return NULL;
     }
     
-    memset(ctx, 0, sizeof(ntp_tool_context_t));
-    memcpy(&ctx->config, config, sizeof(ntp_tool_config_t));
-    
-    // Initialize state
-    ctx->capabilities = ntp_tool_registry.capabilities;
-    ctx->sync_status = NTP_STATUS_NOT_SYNCED;
-    ctx->uptime_start = (uint32_t)(esp_timer_get_time() / 1000);
-    
-    // Set timezone
-    if (strlen(ctx->config.timezone) > 0) {
-        setenv("TZ", ctx->config.timezone, 1);
-        tzset();
-        ESP_LOGI(TAG, "🌍 Timezone set: %s", ctx->config.timezone_description);
-    }
-    
-    // Log NTP server configuration (Phase 5.2 - infrastructure only)
-    for (uint8_t i = 0; i < ctx->config.server_count; i++) {
-        if (ctx->config.servers[i].enabled) {
-            ESP_LOGI(TAG, "📡 NTP server %d: %s (priority %" PRIu8 ")", 
-                     i, ctx->config.servers[i].hostname, ctx->config.servers[i].priority);
-        }
-    }
-    
-    // Create sync timer
-    if (ctx->config.auto_sync_enabled && ctx->config.sync_interval_s > 0) {
-        ctx->sync_timer = xTimerCreate(
-            "ntp_sync_timer",
-            pdMS_TO_TICKS(ctx->config.sync_interval_s * 1000),
-            pdTRUE, // Auto-reload
-            ctx,    // Timer ID
-            ntp_sync_timer_callback
-        );
+    // Create periodic timer for automatic sync
+    if (handle->config.auto_sync_enabled) {
+        handle->periodic_timer = xTimerCreate("ntp_periodic",
+                                            pdMS_TO_TICKS(handle->config.sync_interval_s * 1000),
+                                            pdTRUE,  // Auto-reload
+                                            handle,  // Timer ID
+                                            constitutional_periodic_timer_callback);
         
-        if (!ctx->sync_timer) {
-            ESP_LOGE(TAG, "❌ Failed to create sync timer");
-            free(ctx);
-            return NULL;
+        if (handle->periodic_timer) {
+            xTimerStart(handle->periodic_timer, 0);
+            ESP_LOGI(TAG, "⏰ Periodic sync timer started (interval: %" PRIu32 "s)", handle->config.sync_interval_s);
         }
     }
     
-    // Register WiFi event handler for automatic sync triggers
-    if (ctx->config.wifi_triggered_sync) {
-        esp_err_t ret = esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &wifi_event_handler, ctx);
-        if (ret == ESP_OK) {
-            ret = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, ctx);
-        }
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to register WiFi event handlers: %s", esp_err_to_name(ret));
-        } else {
-            ESP_LOGI(TAG, "📶 WiFi-triggered sync enabled");
-        }
-    }
+    ESP_LOGI(TAG, "✅ Constitutional NTP tool: %s v%s initialized", 
+             ntp_tool_get_id(), ntp_tool_get_version());
+    ESP_LOGI(TAG, "🕐 Servers: %s, %s, %s", 
+             handle->config.servers[0].hostname, 
+             handle->config.servers[1].hostname, 
+             handle->config.servers[2].hostname);
     
-    ctx->is_initialized = true;
-    ctx->is_active = true;
-    
-    ESP_LOGI(TAG, "✅ NTP tool initialized successfully");
-    ESP_LOGI(TAG, "🔧 Auto-sync: %s, WiFi-triggered: %s, Timezone: %s",
-             ctx->config.auto_sync_enabled ? "enabled" : "disabled",
-             ctx->config.wifi_triggered_sync ? "enabled" : "disabled",
-             ctx->config.timezone_description);
-    
-    return (ntp_tool_handle_t)ctx;
+    return handle;
 }
 
 esp_err_t ntp_tool_deinit(ntp_tool_handle_t handle)
@@ -238,47 +452,36 @@ esp_err_t ntp_tool_deinit(ntp_tool_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
     
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)handle;
+    ESP_LOGI(TAG, "🕐 Constitutional NTP tool deinitializing");
     
-    ESP_LOGI(TAG, "🕐 Deinitializing NTP tool");
-    
-    // Stop auto-sync timer
-    if (ctx->sync_timer) {
-        xTimerStop(ctx->sync_timer, portMAX_DELAY);
-        xTimerDelete(ctx->sync_timer, portMAX_DELAY);
+    // Stop sync task
+    handle->is_active = false;
+    if (handle->sync_task_handle) {
+        vTaskDelete(handle->sync_task_handle);
+        handle->sync_task_handle = NULL;
     }
     
-    // Cleanup SNTP service
-    if (ctx->sntp_initialized) {
-        esp_netif_sntp_deinit();
-        ctx->sntp_initialized = false;
+    // Stop periodic timer
+    if (handle->periodic_timer) {
+        xTimerDelete(handle->periodic_timer, pdMS_TO_TICKS(1000));
+        handle->periodic_timer = NULL;
     }
     
-    // Unregister WiFi event handlers
-    if (ctx->config.wifi_triggered_sync) {
-        esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &wifi_event_handler);
-        esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler);
+    // Deinitialize SNTP
+    if (handle->sntp_initialized) {
+        esp_sntp_stop();
+        handle->sntp_initialized = false;
     }
     
-    // Mark as inactive
-    ctx->is_active = false;
-    ctx->is_initialized = false;
+    // Unregister event handlers
+    esp_event_handler_unregister(NETWORK_TOOL_EVENTS, ESP_EVENT_ANY_ID, &constitutional_network_event_handler);
     
-    // Free context
-    free(ctx);
+    // Constitutional cleanup
+    free(handle);
     
-    ESP_LOGI(TAG, "✅ NTP tool deinitialized");
+    ESP_LOGI(TAG, "✅ Constitutional NTP tool deinitialized");
+    
     return ESP_OK;
-}
-
-ntp_tool_capabilities_t ntp_tool_get_capabilities(ntp_tool_handle_t handle)
-{
-    if (!handle) {
-        return 0;
-    }
-    
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)handle;
-    return ctx->capabilities;
 }
 
 esp_err_t ntp_tool_get_status(ntp_tool_handle_t handle, ntp_tool_status_t *status)
@@ -287,35 +490,13 @@ esp_err_t ntp_tool_get_status(ntp_tool_handle_t handle, ntp_tool_status_t *statu
         return ESP_ERR_INVALID_ARG;
     }
     
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)handle;
+    // Update current system time
+    time(&handle->status.system_time);
     
-    memset(status, 0, sizeof(ntp_tool_status_t));
-    
-    status->is_initialized = ctx->is_initialized;
-    status->is_active = ctx->is_active;
-    status->sync_status = ctx->sync_status;
-    status->last_sync_time = ctx->last_sync_time;
-    status->next_sync_time = ctx->next_sync_time;
-    status->last_offset_us = ctx->last_offset_us;
-    status->sync_attempts = ctx->sync_attempts;
-    status->successful_syncs = ctx->successful_syncs;
-    status->failed_syncs = ctx->failed_syncs;
-    status->capabilities = ctx->capabilities;
-    status->uptime_ms = (uint32_t)(esp_timer_get_time() / 1000) - ctx->uptime_start;
-    
-    snprintf(status->active_server, sizeof(status->active_server), "%s", ctx->active_server);
+    memcpy(status, &handle->status, sizeof(ntp_tool_status_t));
     
     return ESP_OK;
 }
-
-const ntp_tool_registry_t* ntp_tool_get_registry_entry(void)
-{
-    return &ntp_tool_registry;
-}
-
-// =============================================================================
-// Time Synchronization Implementation
-// =============================================================================
 
 esp_err_t ntp_tool_sync_now(ntp_tool_handle_t handle)
 {
@@ -323,267 +504,77 @@ esp_err_t ntp_tool_sync_now(ntp_tool_handle_t handle)
         return ESP_ERR_INVALID_ARG;
     }
     
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)handle;
+    ESP_LOGI(TAG, "🕐 Manual NTP sync requested");
     
-    if (!ctx->is_initialized || !ctx->is_active) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    
-    // Skip manual sync if we recently succeeded
-    if (ctx->sync_status == NTP_STATUS_SYNCED && ctx->last_sync_time > 0) {
-        time_t now = time(NULL);
-        if ((now - ctx->last_sync_time) < 60) { // Within last 60 seconds
-            ESP_LOGI(TAG, "⏭️ Skipping manual sync - recently synced %" PRId64 "s ago", (int64_t)(now - ctx->last_sync_time));
-            return ESP_OK;
-        }
-    }
-    
-    ESP_LOGI(TAG, "🔄 Starting manual NTP sync");
-    return ntp_tool_perform_sync(handle);
-}
-
-esp_err_t ntp_tool_set_auto_sync(ntp_tool_handle_t handle, bool enable)
-{
-    if (!handle) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)handle;
-    
-    ctx->config.auto_sync_enabled = enable;
-    
-    if (ctx->sync_timer) {
-        if (enable) {
-            xTimerStart(ctx->sync_timer, portMAX_DELAY);
-            ESP_LOGI(TAG, "✅ Auto-sync enabled");
-        } else {
-            xTimerStop(ctx->sync_timer, portMAX_DELAY);
-            ESP_LOGI(TAG, "⏸️  Auto-sync disabled");
-        }
-    }
-    
-    return ESP_OK;
-}
-
-esp_err_t ntp_tool_get_timestamp(ntp_tool_handle_t handle, time_t *timestamp)
-{
-    if (!handle || !timestamp) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    *timestamp = time(NULL);
-    return ESP_OK;
-}
-
-// =============================================================================
-// Internal Implementation
-// =============================================================================
-
-static esp_err_t ntp_tool_perform_sync(ntp_tool_handle_t handle)
-{
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)handle;
-    
-    ctx->sync_status = NTP_STATUS_SYNCING;
-    ctx->sync_attempts++;
-    
-    ESP_LOGI(TAG, "🔄 Starting real NTP synchronization...");
-    
-    // Publish sync started event
-    ntp_tool_event_t event = {
-        .type = NTP_TOOL_EVENT_SYNC_STARTED,
-        .data.sync_info = {
-            .response_time_ms = 0
-        }
-    };
-    ntp_tool_publish_event(handle, NTP_TOOL_EVENT_SYNC_STARTED, &event);
-    
-    // Store old time for offset calculation
-    time_t old_time = time(NULL);
-    
-    // Initialize basic SNTP configuration
-    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-    config.start = false;
-    config.server_from_dhcp = false;
-    config.renew_servers_after_new_IP = false;
-    
-    // Set sync notification callback
-    esp_sntp_set_time_sync_notification_cb(ntp_sync_notification_cb);
-    
-    // Initialize SNTP only if not already initialized
-    esp_err_t ret = ESP_OK;
-    if (!ctx->sntp_initialized) {
-        ret = esp_netif_sntp_init(&config);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "❌ Failed to initialize SNTP: %s", esp_err_to_name(ret));
-            ctx->sync_status = NTP_STATUS_SYNC_FAILED;
-            ctx->failed_syncs++;
-            return ret;
-        }
-        ctx->sntp_initialized = true;
-        ESP_LOGI(TAG, "📅 SNTP service initialized");
-        
-        // Add multiple NTP servers for fallback
-        uint8_t server_index = 0;
-        for (uint8_t i = 0; i < ctx->config.server_count && server_index < SNTP_MAX_SERVERS; i++) {
-            if (ctx->config.servers[i].enabled) {
-                esp_sntp_setservername(server_index, ctx->config.servers[i].hostname);
-                ESP_LOGI(TAG, "📡 NTP server %d: %s", server_index, ctx->config.servers[i].hostname);
-                server_index++;
-            }
-        }
-        
-        if (server_index == 0) {
-            ESP_LOGW(TAG, "⚠️  No custom servers configured, using default pool.ntp.org");
-        }
-    }
-    
-    esp_netif_sntp_start();
-    
-    // Wait for synchronization with timeout
-    int retry = 0;
-    while (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(1000)) == ESP_ERR_TIMEOUT && ++retry < (ctx->config.sync_timeout_ms / 1000)) {
-        ESP_LOGI(TAG, "⏳ Waiting for NTP sync... (%d/%" PRIu32 ")", retry, ctx->config.sync_timeout_ms / 1000);
-    }
-    
-    if (retry >= (ctx->config.sync_timeout_ms / 1000)) {
-        ESP_LOGE(TAG, "❌ NTP sync timeout after %" PRIu32 "ms", ctx->config.sync_timeout_ms);
-        ctx->sync_status = NTP_STATUS_SYNC_FAILED;
-        ctx->failed_syncs++;
-        
-        // Publish failure event
-        ntp_tool_event_t fail_event = {
-            .type = NTP_TOOL_EVENT_SYNC_FAILED,
-            .data.error_info = {
-                .error_code = ESP_ERR_TIMEOUT,
-                .retry_count = ctx->failed_syncs
-            }
-        };
-        ntp_tool_publish_event(handle, NTP_TOOL_EVENT_SYNC_FAILED, &fail_event);
-        
-        return ESP_ERR_TIMEOUT;
-    }
-    
-    // Sync successful
-    time_t new_time = time(NULL);
-    int64_t offset_us = (new_time - old_time) * 1000000LL;
-    
-    ctx->sync_status = NTP_STATUS_SYNCED;
-    ctx->successful_syncs++;
-    ctx->last_sync_time = new_time;
-    ctx->last_offset_us = offset_us;
-    ctx->next_sync_time = new_time + ctx->config.sync_interval_s;
-    
-    // Store active server (use first configured server)
-    if (ctx->config.server_count > 0) {
-        snprintf(ctx->active_server, sizeof(ctx->active_server), "%s", ctx->config.servers[0].hostname);
-    }
-    
-    ESP_LOGI(TAG, "✅ NTP sync successful - Time: %" PRId64 ", Offset: %" PRId64 " μs", (int64_t)new_time, offset_us);
-    
-    // Publish success event
-    ntp_tool_event_t success_event = {
-        .type = NTP_TOOL_EVENT_SYNC_SUCCESS,
-        .data.time_info = {
-            .old_time = old_time,
-            .new_time = new_time,
-            .offset_us = offset_us
-        }
-    };
-    ntp_tool_publish_event(handle, NTP_TOOL_EVENT_SYNC_SUCCESS, &success_event);
-    
-    return ESP_OK;
-}
-
-
-static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
-{
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)arg;
-    
-    if (!ctx || !ctx->is_active) {
-        return;
-    }
-    
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
-        ESP_LOGI(TAG, "📶 WiFi connected - preparing for NTP sync");
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ESP_LOGI(TAG, "🌐 IP acquired - triggering NTP sync");
-        
-        // Trigger immediate sync on WiFi connection
-        esp_err_t ret = ntp_tool_perform_sync((ntp_tool_handle_t)ctx);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "WiFi-triggered NTP sync failed: %s", esp_err_to_name(ret));
-        }
-    }
-}
-
-static void ntp_sync_notification_cb(struct timeval *tv)
-{
-    ESP_LOGI(TAG, "📅 SNTP notification: time is set to %" PRId64 ".%06ld", (int64_t)tv->tv_sec, tv->tv_usec);
-}
-
-static void ntp_sync_timer_callback(TimerHandle_t timer)
-{
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)pvTimerGetTimerID(timer);
-    
-    if (ctx && ctx->is_active) {
-        ESP_LOGI(TAG, "⏰ Auto-sync timer triggered");
-        ntp_tool_perform_sync((ntp_tool_handle_t)ctx);
-    }
-}
-
-static esp_err_t ntp_tool_publish_event(ntp_tool_handle_t handle, ntp_tool_event_type_t event_type, const void* event_data)
-{
-    ntp_tool_context_t *ctx = (ntp_tool_context_t *)handle;
-    
-    if (!ctx->config.publish_events) {
+    if (handle->sync_task_handle) {
+        xTaskNotify(handle->sync_task_handle, 3, eSetBits);
         return ESP_OK;
     }
     
-    esp_err_t ret = esp_event_post(NTP_TOOL_EVENTS, event_type, event_data, sizeof(ntp_tool_event_t), portMAX_DELAY);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to publish event: %s", esp_err_to_name(ret));
+    return ESP_ERR_INVALID_STATE;
+}
+
+bool ntp_tool_is_time_valid(ntp_tool_handle_t handle)
+{
+    if (!handle) {
+        return false;
     }
     
-    return ret;
+    return handle->time_valid && (handle->current_state == NTP_STATE_SYNCED);
 }
 
-// =============================================================================
-// Utility Functions
-// =============================================================================
-
-const char* ntp_tool_event_to_string(ntp_tool_event_type_t event_type)
+esp_err_t ntp_tool_get_time(ntp_tool_handle_t handle, time_t *current_time)
 {
-    switch (event_type) {
-        case NTP_TOOL_EVENT_SYNC_STARTED: return "SYNC_STARTED";
-        case NTP_TOOL_EVENT_SYNC_SUCCESS: return "SYNC_SUCCESS";
-        case NTP_TOOL_EVENT_SYNC_FAILED: return "SYNC_FAILED";
-        case NTP_TOOL_EVENT_TIMEZONE_CHANGED: return "TIMEZONE_CHANGED";
-        case NTP_TOOL_EVENT_TIME_UPDATED: return "TIME_UPDATED";
-        default: return "UNKNOWN";
-    }
-}
-
-const char* ntp_tool_status_to_string(ntp_sync_status_t status)
-{
-    switch (status) {
-        case NTP_STATUS_NOT_SYNCED: return "NOT_SYNCED";
-        case NTP_STATUS_SYNCING: return "SYNCING";
-        case NTP_STATUS_SYNCED: return "SYNCED";
-        case NTP_STATUS_SYNC_FAILED: return "SYNC_FAILED";
-        case NTP_STATUS_DRIFT_WARNING: return "DRIFT_WARNING";
-        default: return "UNKNOWN";
-    }
-}
-
-esp_err_t ntp_tool_format_time(time_t timestamp, char* buffer, size_t buffer_size)
-{
-    if (!buffer || buffer_size == 0) {
+    if (!handle || !current_time) {
         return ESP_ERR_INVALID_ARG;
     }
     
-    struct tm timeinfo;
-    localtime_r(&timestamp, &timeinfo);
+    if (!ntp_tool_is_time_valid(handle)) {
+        return ESP_ERR_INVALID_STATE;
+    }
     
-    size_t ret = strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
-    return (ret > 0) ? ESP_OK : ESP_ERR_INVALID_SIZE;
+    time(current_time);
+    return ESP_OK;
+}
+
+esp_err_t ntp_tool_get_precise_timestamp(ntp_tool_handle_t handle, uint64_t *timestamp_us)
+{
+    if (!handle || !timestamp_us) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!ntp_tool_is_time_valid(handle)) {
+        ESP_LOGE(TAG, "Time not valid - cannot provide precise timestamp");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    // Get high-precision timestamp for payload creation
+    *timestamp_us = esp_timer_get_time();
+    
+    return ESP_OK;
+}
+
+esp_err_t ntp_tool_set_timezone(ntp_tool_handle_t handle, const char* timezone)
+{
+    if (!handle || !timezone) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    snprintf(handle->config.timezone, sizeof(handle->config.timezone), "%s", timezone);
+    
+    // Apply timezone immediately if time is valid
+    if (handle->time_valid) {
+        setenv("TZ", timezone, 1);
+        tzset();
+        ESP_LOGI(TAG, "🌍 Timezone updated: %s", timezone);
+        
+        // Publish timezone change event
+        ntp_tool_event_t tz_event = {
+            .state = handle->current_state,
+            .timestamp_us = esp_timer_get_time()
+        };
+        esp_event_post(NTP_TOOL_EVENTS, NTP_TOOL_EVENT_TIMEZONE_CHANGED, &tz_event, sizeof(tz_event), 0);
+    }
+    
+    return ESP_OK;
 }
