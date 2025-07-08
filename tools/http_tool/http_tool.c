@@ -115,7 +115,7 @@ static esp_err_t constitutional_generate_device_id(char* device_id, size_t buffe
         snprintf(device_id, buffer_size, "%02X%02X%02X%02X%02X%02X", 
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     } else {
-        snprintf(device_id, buffer_size, "ESP32_UNKNOWN");
+        snprintf(device_id, buffer_size, "UNKNOWN");
         ESP_LOGW(TAG, "🌐 Failed to read MAC address, using default device ID");
     }
     
@@ -123,7 +123,7 @@ static esp_err_t constitutional_generate_device_id(char* device_id, size_t buffe
 }
 
 /**
- * @brief Constitutional JSON payload creation with stack safety
+ * @brief Constitutional JSON payload creation with server-compatible format
  */
 static esp_err_t constitutional_create_session_payload(http_tool_handle_t handle,
                                                      const char* tag_uid,
@@ -135,68 +135,62 @@ static esp_err_t constitutional_create_session_payload(http_tool_handle_t handle
         return ESP_ERR_INVALID_ARG;
     }
     
-    // Create payload on heap for stack safety
-    payload_work_session_t *session = malloc(sizeof(payload_work_session_t));
-    if (!session) {
-        ESP_LOGE(TAG, "  ❌ Failed to allocate session memory");
-        return ESP_ERR_NO_MEM;
-    }
+    ESP_LOGI(TAG, "📦 Creating server-compatible RFID payload for %s event", event_type);
     
-    // Initialize session structure
-    memset(session, 0, sizeof(payload_work_session_t));
-    session->timestamp_us = timestamp_us;
-    snprintf(session->rfid_uid, sizeof(session->rfid_uid), "%s", tag_uid);
+    // Map event types to RFID event types
+    payload_rfid_event_type_t rfid_event_type;
+    bool tag_present;
     
-    // Set event type
     if (strcmp(event_type, "APPEARED") == 0) {
-        session->type = PAYLOAD_SESSION_START;
-        session->session_duration_ms = 0;
+        rfid_event_type = PAYLOAD_RFID_TAG_INSERT;
+        tag_present = true;
     } else if (strcmp(event_type, "DISAPPEARED") == 0) {
-        session->type = PAYLOAD_SESSION_END;
-        session->session_duration_ms = 0; // Calculate from start time in real implementation
+        rfid_event_type = PAYLOAD_RFID_TAG_REMOVED;
+        tag_present = false;
     } else {
         ESP_LOGE(TAG, "  ❌ Unknown event type: %s", event_type);
-        free(session);
         return ESP_ERR_INVALID_ARG;
     }
-    
-    // Set project metadata
-    snprintf(session->project_id, sizeof(session->project_id), "default_project");
-    snprintf(session->task_description, sizeof(session->task_description), 
-             "RFID work session %s", event_type);
     
     // Allocate payload data structure on heap
     payload_data_t *payload_data = malloc(sizeof(payload_data_t));
     if (!payload_data) {
         ESP_LOGE(TAG, "  ❌ Failed to allocate payload data structure");
-        free(session);
         return ESP_ERR_NO_MEM;
     }
     
-    // Create JSON payload using payload_tool
-    esp_err_t ret = payload_tool_create_session_payload(handle->payload_tool, session, payload_data);
+    // Create server-compatible RFID payload
+    esp_err_t ret = payload_tool_create_rfid_payload(handle->payload_tool, 
+                                                    rfid_event_type, 
+                                                    tag_uid, 
+                                                    tag_present, 
+                                                    payload_data);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "  ❌ Failed to create session payload: %s", esp_err_to_name(ret));
-        free(session);
+        ESP_LOGE(TAG, "  ❌ Failed to create RFID payload: %s", esp_err_to_name(ret));
         free(payload_data);
         return ret;
     }
     
-    // Allocate JSON string buffer and copy formatted payload
+    // Allocate JSON string buffer 
     char *payload_buffer = malloc(HTTP_TOOL_MAX_PAYLOAD_SIZE);
     if (!payload_buffer) {
         ESP_LOGE(TAG, "  ❌ Failed to allocate JSON buffer");
-        free(session);
         free(payload_data);
         return ESP_ERR_NO_MEM;
     }
     
-    // Copy JSON payload from payload_data structure
-    snprintf(payload_buffer, HTTP_TOOL_MAX_PAYLOAD_SIZE, "%s", payload_data->json_payload);
+    // Format payload to JSON string
+    ret = payload_tool_format_to_json(handle->payload_tool, payload_data, 
+                                     payload_buffer, HTTP_TOOL_MAX_PAYLOAD_SIZE);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "  ❌ Failed to format payload to JSON: %s", esp_err_to_name(ret));
+        free(payload_buffer);
+        free(payload_data);
+        return ret;
+    }
     
     // Return allocated payload (caller must free)
     *json_payload = payload_buffer;
-    free(session);
     free(payload_data);
     
     ESP_LOGI(TAG, "📦 Created %s payload for UID=%s (%" PRIu32 " bytes)", 
@@ -285,6 +279,10 @@ static esp_err_t constitutional_http_post_request(http_tool_handle_t handle,
         ESP_LOGI(TAG, "🌐 HTTP POST completed: status=%d, length=%d, time=%" PRIu32 "ms",
                  status_code, content_length, response_time_ms);
         
+        // CONSTITUTIONAL FIX: Always close connection after use to prevent stale connection reuse
+        ESP_LOGI(TAG, "🔄 Closing HTTP connection to prevent stale connection reuse");
+        esp_http_client_close(handle->http_client);
+        
         if (status_code >= 200 && status_code < 300) {
             handle->payloads_sent++;
             
@@ -335,20 +333,27 @@ const char* http_tool_get_version(void)
 
 http_tool_config_t http_tool_create_default_config(void)
 {
-    http_tool_config_t config = {
-        .webhook_url = CONFIG_HTTP_TOOL_WEBHOOK_URL,
-        .timeout_ms = CONFIG_HTTP_TOOL_TIMEOUT_MS,
-        .max_retries = CONFIG_HTTP_TOOL_MAX_RETRIES,
-        .retry_delay_ms = CONFIG_HTTP_TOOL_RETRY_DELAY_MS,
-        .exponential_backoff = true,
-        .enable_payload_processing = true,
-        .max_payload_size = HTTP_TOOL_MAX_PAYLOAD_SIZE,
-        .validate_json = true,
-        .publish_events = true,
-        .event_queue_size = 10,
-        .require_network_tool = true,
-        .require_ntp_time = true,
-    };
+    http_tool_config_t config = {0};
+    
+    // Use HTTP tool webhook URL as single source of truth
+#ifdef CONFIG_HTTP_TOOL_WEBHOOK_URL
+    snprintf(config.webhook_url, sizeof(config.webhook_url), CONFIG_HTTP_TOOL_WEBHOOK_URL);
+#else
+    snprintf(config.webhook_url, sizeof(config.webhook_url), "http://nicolasdb.eu/webhook"); // Constitutional fallback
+#endif
+    
+    // Set other configuration values
+    config.timeout_ms = CONFIG_HTTP_TOOL_TIMEOUT_MS;
+    config.max_retries = CONFIG_HTTP_TOOL_MAX_RETRIES;
+    config.retry_delay_ms = CONFIG_HTTP_TOOL_RETRY_DELAY_MS;
+    config.exponential_backoff = true;
+    config.enable_payload_processing = true;
+    config.max_payload_size = HTTP_TOOL_MAX_PAYLOAD_SIZE;
+    config.validate_json = true;
+    config.publish_events = true;
+    config.event_queue_size = 10;
+    config.require_network_tool = true;
+    config.require_ntp_time = true;
     
     // Generate device ID
     constitutional_generate_device_id(config.device_id, sizeof(config.device_id));

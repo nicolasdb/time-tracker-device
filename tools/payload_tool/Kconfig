@@ -1,0 +1,70 @@
+menu "Payload Tool Configuration"
+
+    config PAYLOAD_USE_SERVER_FORMAT
+        bool "Use server-compatible format"
+        default y
+        help
+            Use the server-compatible rfid_poll_result format instead of the legacy
+            session/device/metadata format. This enables Pydantic validation compliance
+            with the webhook server.
+
+    config PAYLOAD_MINIMAL_MODE
+        bool "Minimal payload mode"
+        default n
+        help
+            Include only the core required fields for server validation.
+            Reduces payload size but removes diagnostic information.
+
+    config PAYLOAD_INCLUDE_DIAGNOSTICS
+        bool "Include diagnostic fields"
+        default y
+        depends on !PAYLOAD_MINIMAL_MODE
+        help
+            Include supplemental diagnostic fields like memory usage, uptime,
+            event confidence, and processing time for server-side analysis.
+
+    config PAYLOAD_INCLUDE_NETWORK_INFO
+        bool "Include network information"
+        default y
+        depends on !PAYLOAD_MINIMAL_MODE
+        help
+            Include WiFi signal strength and connection status information
+            for network quality monitoring.
+
+    config PAYLOAD_TIMESTAMP_FORMAT
+        int "Timestamp format"
+        range 0 2
+        default 1
+        help
+            Timestamp format to use in payloads:
+            0 = Unix timestamp (microseconds)
+            1 = ISO 8601 format (YYYY-MM-DDTHH:MM:SS)
+            2 = ISO 8601 with timezone (YYYY-MM-DDTHH:MM:SS+TZ)
+
+    config PAYLOAD_EVENT_CONFIDENCE_THRESHOLD
+        int "Event confidence threshold"
+        range 0 100
+        default 95
+        help
+            Minimum event confidence percentage (0-100) for valid events.
+            Events below this threshold will be marked with lower confidence.
+
+    config PAYLOAD_SESSION_ID_FORMAT
+        int "Session ID format"
+        range 0 2
+        default 0
+        help
+            Session ID generation format:
+            0 = Simple timestamp + tag (sess_1234567890_TAG)
+            1 = UUID4 format
+            2 = Custom format with device ID
+
+    config PAYLOAD_MAX_PAYLOAD_SIZE
+        int "Maximum payload size"
+        range 512 2048
+        default 1024
+        help
+            Maximum size in bytes for JSON payload buffer.
+            Larger payloads support more diagnostic information.
+
+endmenu

@@ -139,10 +139,10 @@ static esp_err_t constitutional_collect_device_metadata(payload_tool_handle_t ha
     esp_err_t ret = esp_read_mac(mac, ESP_MAC_WIFI_STA);
     if (ret == ESP_OK) {
         snprintf(metadata->device_id, sizeof(metadata->device_id),
-                "TTD-%02X%02X%02X%02X%02X%02X",
+                "%02X%02X%02X%02X%02X%02X",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     } else {
-        snprintf(metadata->device_id, sizeof(metadata->device_id), "TTD-UNKNOWN");
+        snprintf(metadata->device_id, sizeof(metadata->device_id), "UNKNOWN");
     }
     
     // Firmware version
@@ -243,13 +243,40 @@ payload_tool_config_t payload_tool_create_default_config(void)
     config.enable_payload_validation = true;
     config.require_ntp_sync = true;
     
-    // Timezone settings (Issue #6) - Use Kconfig as single source of truth
-    config.use_local_time = true;
-    snprintf(config.timezone, sizeof(config.timezone), CONFIG_HTTP_TOOL_TIMEZONE);
-    
     // Event publishing
     config.publish_events = true;
     config.event_queue_size = 8;
+    
+    // Server integration settings (use Kconfig as source of truth)
+#ifdef CONFIG_PAYLOAD_USE_SERVER_FORMAT
+    config.use_server_format = CONFIG_PAYLOAD_USE_SERVER_FORMAT;
+#else
+    config.use_server_format = true; // Default to server format for compatibility
+#endif
+
+#ifdef CONFIG_PAYLOAD_MINIMAL_MODE
+    config.minimal_mode = CONFIG_PAYLOAD_MINIMAL_MODE;
+#else
+    config.minimal_mode = false;
+#endif
+
+#ifdef CONFIG_PAYLOAD_INCLUDE_DIAGNOSTICS
+    config.include_diagnostics = CONFIG_PAYLOAD_INCLUDE_DIAGNOSTICS;
+#else
+    config.include_diagnostics = true;
+#endif
+
+#ifdef CONFIG_PAYLOAD_INCLUDE_NETWORK_INFO
+    config.include_network_info = CONFIG_PAYLOAD_INCLUDE_NETWORK_INFO;
+#else
+    config.include_network_info = true;
+#endif
+
+#ifdef CONFIG_PAYLOAD_EVENT_CONFIDENCE_THRESHOLD
+    config.event_confidence_threshold = CONFIG_PAYLOAD_EVENT_CONFIDENCE_THRESHOLD;
+#else
+    config.event_confidence_threshold = 95;
+#endif
     
     return config;
 }
@@ -486,60 +513,82 @@ esp_err_t payload_tool_format_to_json(payload_tool_handle_t handle,
         return ESP_ERR_NO_MEM;
     }
     
-    // Add session information using pre-calculated timestamp
-    cJSON *session = cJSON_CreateObject();
-    cJSON_AddStringToObject(session, "type", payload_tool_session_type_to_string(payload->session.type));
-    cJSON_AddStringToObject(session, "rfid_uid", payload->session.rfid_uid);
-    
-    // Use the pre-calculated creation timestamp (already includes timezone conversion if configured)
-    uint64_t final_timestamp_us = payload->creation_timestamp_us;
-    
-    // Log human-readable timestamp for debugging (no additional conversion needed)
-    time_t readable_time = (time_t)(final_timestamp_us / 1000000ULL);
-    
-    if (handle->config.use_local_time) {
-        ESP_LOGI(TAG, "🕐 Using pre-calculated local timestamp (already converted in payload creation)");
+    // Check if we should use server format
+    if (payload->use_server_format) {
+        ESP_LOGI(TAG, "Using server-compatible format (rfid_poll_result)");
+        
+        // Create rfid_poll_result object
+        cJSON *rfid_poll_result = cJSON_CreateObject();
+        
+        // Add core required fields
+        cJSON_AddStringToObject(rfid_poll_result, "event_type", payload->rfid_poll_result.event_type);
+        cJSON_AddStringToObject(rfid_poll_result, "tag_id", payload->rfid_poll_result.tag_id);
+        cJSON_AddStringToObject(rfid_poll_result, "device_id", payload->rfid_poll_result.device_id);
+        cJSON_AddStringToObject(rfid_poll_result, "timestamp", payload->rfid_poll_result.timestamp);
+        cJSON_AddBoolToObject(rfid_poll_result, "tag_present", payload->rfid_poll_result.tag_present);
+        
+        // Add strategic supplemental fields
+        cJSON_AddBoolToObject(rfid_poll_result, "ntp_synced", payload->rfid_poll_result.ntp_synced);
+        cJSON_AddStringToObject(rfid_poll_result, "session_id", payload->rfid_poll_result.session_id);
+        cJSON_AddNumberToObject(rfid_poll_result, "sequence_number", payload->rfid_poll_result.sequence_number);
+        cJSON_AddNumberToObject(rfid_poll_result, "wifi_rssi", payload->rfid_poll_result.wifi_rssi);
+        cJSON_AddStringToObject(rfid_poll_result, "wifi_status", payload->rfid_poll_result.wifi_status);
+        cJSON_AddNumberToObject(rfid_poll_result, "free_memory_bytes", payload->rfid_poll_result.free_memory_bytes);
+        cJSON_AddStringToObject(rfid_poll_result, "firmware_version", payload->rfid_poll_result.firmware_version);
+        cJSON_AddNumberToObject(rfid_poll_result, "uptime_ms", payload->rfid_poll_result.uptime_ms);
+        cJSON_AddNumberToObject(rfid_poll_result, "event_confidence", payload->rfid_poll_result.event_confidence);
+        cJSON_AddNumberToObject(rfid_poll_result, "processing_time_ms", payload->rfid_poll_result.processing_time_ms);
+        
+        // Add to root object
+        cJSON_AddItemToObject(root, "rfid_poll_result", rfid_poll_result);
+        
+    } else {
+        ESP_LOGI(TAG, "Using legacy format (session/device/metadata)");
+        
+        // Legacy format - existing code
+        // Add session information using pre-calculated timestamp
+        cJSON *session = cJSON_CreateObject();
+        cJSON_AddStringToObject(session, "type", payload_tool_session_type_to_string(payload->session.type));
+        cJSON_AddStringToObject(session, "rfid_uid", payload->session.rfid_uid);
+        
+        // Use the pre-calculated creation timestamp (NTP correlation-based)
+        uint64_t final_timestamp_us = payload->creation_timestamp_us;
+        
+        // Log human-readable timestamp for debugging (uses system timezone set by NTP tool)
+        time_t readable_time = (time_t)(final_timestamp_us / 1000000ULL);
         struct tm *timeinfo = localtime(&readable_time);
         if (timeinfo) {
-            ESP_LOGI(TAG, "🕐 Human-readable local time: %04d-%02d-%02d %02d:%02d:%02d", 
+            ESP_LOGI(TAG, "🕐 Timestamp (NTP correlation): %04d-%02d-%02d %02d:%02d:%02d", 
                      timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
                      timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
         }
-    } else {
-        ESP_LOGI(TAG, "🕐 Using pre-calculated UTC timestamp");
-        struct tm *timeinfo = gmtime(&readable_time);
-        if (timeinfo) {
-            ESP_LOGI(TAG, "🕐 Human-readable UTC time: %04d-%02d-%02d %02d:%02d:%02d", 
-                     timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
-                     timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+        
+        cJSON_AddNumberToObject(session, "timestamp_us", (double)final_timestamp_us);
+        
+        cJSON_AddNumberToObject(session, "duration_ms", payload->session.session_duration_ms);
+        cJSON_AddStringToObject(session, "project_id", payload->session.project_id);
+        cJSON_AddStringToObject(session, "task_description", payload->session.task_description);
+        cJSON_AddItemToObject(root, "session", session);
+        
+        // Add device metadata if enabled
+        if (handle->config.include_device_metadata) {
+            cJSON *device = cJSON_CreateObject();
+            cJSON_AddStringToObject(device, "device_id", payload->device.device_id);
+            cJSON_AddStringToObject(device, "firmware_version", payload->device.firmware_version);
+            cJSON_AddStringToObject(device, "hardware_revision", payload->device.hardware_revision);
+            cJSON_AddNumberToObject(device, "uptime_us", (double)payload->device.uptime_us);
+            cJSON_AddNumberToObject(device, "free_memory_bytes", payload->device.free_memory_bytes);
+            cJSON_AddNumberToObject(device, "wifi_rssi", payload->device.wifi_rssi);
+            cJSON_AddItemToObject(root, "device", device);
         }
+        
+        // Add metadata using the same final timestamp (avoid duplicate conversion)
+        cJSON *metadata = cJSON_CreateObject();
+        cJSON_AddNumberToObject(metadata, "creation_timestamp_us", (double)final_timestamp_us);
+        cJSON_AddNumberToObject(metadata, "checksum", payload->checksum);
+        cJSON_AddBoolToObject(metadata, "is_valid", payload->is_valid);
+        cJSON_AddItemToObject(root, "metadata", metadata);
     }
-    
-    cJSON_AddNumberToObject(session, "timestamp_us", (double)final_timestamp_us);
-    
-    cJSON_AddNumberToObject(session, "duration_ms", payload->session.session_duration_ms);
-    cJSON_AddStringToObject(session, "project_id", payload->session.project_id);
-    cJSON_AddStringToObject(session, "task_description", payload->session.task_description);
-    cJSON_AddItemToObject(root, "session", session);
-    
-    // Add device metadata if enabled
-    if (handle->config.include_device_metadata) {
-        cJSON *device = cJSON_CreateObject();
-        cJSON_AddStringToObject(device, "device_id", payload->device.device_id);
-        cJSON_AddStringToObject(device, "firmware_version", payload->device.firmware_version);
-        cJSON_AddStringToObject(device, "hardware_revision", payload->device.hardware_revision);
-        cJSON_AddNumberToObject(device, "uptime_us", (double)payload->device.uptime_us);
-        cJSON_AddNumberToObject(device, "free_memory_bytes", payload->device.free_memory_bytes);
-        cJSON_AddNumberToObject(device, "wifi_rssi", payload->device.wifi_rssi);
-        cJSON_AddItemToObject(root, "device", device);
-    }
-    
-    // Add metadata using the same final timestamp (avoid duplicate conversion)
-    cJSON *metadata = cJSON_CreateObject();
-    cJSON_AddNumberToObject(metadata, "creation_timestamp_us", (double)final_timestamp_us);
-    cJSON_AddNumberToObject(metadata, "checksum", payload->checksum);
-    cJSON_AddBoolToObject(metadata, "is_valid", payload->is_valid);
-    cJSON_AddItemToObject(root, "metadata", metadata);
     
     // Convert to string
     char *json_string = cJSON_Print(root);
@@ -717,6 +766,125 @@ const char* payload_tool_session_type_to_string(payload_session_type_t session_t
     }
 }
 
+const char* payload_tool_rfid_event_type_to_string(payload_rfid_event_type_t event_type)
+{
+    switch (event_type) {
+        case PAYLOAD_RFID_TAG_INSERT:   return "tag_insert";
+        case PAYLOAD_RFID_TAG_REMOVED:  return "tag_removed";
+        case PAYLOAD_RFID_EVENT_UNKNOWN: return "unknown";
+        default:                        return "invalid";
+    }
+}
+
+esp_err_t payload_tool_create_rfid_payload(payload_tool_handle_t handle,
+                                          payload_rfid_event_type_t event_type,
+                                          const char *tag_id,
+                                          bool tag_present,
+                                          payload_data_t *payload)
+{
+    if (!handle || !tag_id || !payload) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_LOGI(TAG, "Creating RFID payload for event type: %s, tag: %s", 
+             payload_tool_rfid_event_type_to_string(event_type), tag_id);
+
+    // Initialize payload structure
+    memset(payload, 0, sizeof(payload_data_t));
+    payload->use_server_format = handle->config.use_server_format;
+
+    // Set core required fields
+    snprintf(payload->rfid_poll_result.event_type, sizeof(payload->rfid_poll_result.event_type), 
+             "%s", payload_tool_rfid_event_type_to_string(event_type));
+    snprintf(payload->rfid_poll_result.tag_id, sizeof(payload->rfid_poll_result.tag_id), 
+             "%s", tag_id);
+    payload->rfid_poll_result.tag_present = tag_present;
+
+    // Generate device ID
+    esp_err_t ret = payload_tool_generate_device_id(payload->rfid_poll_result.device_id, 
+                                                   sizeof(payload->rfid_poll_result.device_id));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to generate device ID");
+        return ret;
+    }
+
+    // Get current time and format as ISO 8601 (local time using NTP tool timezone)
+    time_t current_time_sec = 0;
+    bool ntp_synced = false;
+    
+    if (handle->ntp_tool) {
+        // Use system time() function which returns UTC seconds since epoch
+        time(&current_time_sec);
+        
+        // Check if time is reasonable (after 2020-01-01)
+        ntp_synced = (current_time_sec > 1577836800);
+    } else {
+        // Fallback to esp_timer converted to Unix timestamp
+        current_time_sec = esp_timer_get_time() / 1000000ULL;
+        ntp_synced = false;
+    }
+
+    // Format timestamp as ISO 8601 local time (uses timezone set by NTP tool)
+    struct tm *timeinfo = localtime(&current_time_sec);
+    if (timeinfo) {
+        // Constitutional compliance: Use strftime for safe timestamp formatting
+        strftime(payload->rfid_poll_result.timestamp, sizeof(payload->rfid_poll_result.timestamp),
+                "%Y-%m-%dT%H:%M:%S", timeinfo);
+    } else {
+        // Constitutional fallback with safe string copy
+        strncpy(payload->rfid_poll_result.timestamp, "1970-01-01T00:00:00", 
+                sizeof(payload->rfid_poll_result.timestamp) - 1);
+        payload->rfid_poll_result.timestamp[sizeof(payload->rfid_poll_result.timestamp) - 1] = '\0';
+    }
+
+    // Set strategic supplemental fields based on configuration
+    payload->rfid_poll_result.ntp_synced = ntp_synced;
+    
+    if (!handle->config.minimal_mode) {
+        // Generate session ID (simple approach using timestamp + tag)
+        snprintf(payload->rfid_poll_result.session_id, sizeof(payload->rfid_poll_result.session_id),
+                 "sess_%lu_%s", (unsigned long)current_time_sec, tag_id);
+        
+        payload->rfid_poll_result.sequence_number = (uint32_t)(current_time_sec & 0xFFFFFFFF);
+        
+        // Include network information if enabled
+        if (handle->config.include_network_info) {
+            payload->rfid_poll_result.wifi_rssi = -50; // TODO: Get actual WiFi RSSI
+            snprintf(payload->rfid_poll_result.wifi_status, sizeof(payload->rfid_poll_result.wifi_status), "good");
+        }
+        
+        // Include diagnostic information if enabled
+        if (handle->config.include_diagnostics) {
+            payload->rfid_poll_result.free_memory_bytes = esp_get_free_heap_size();
+            snprintf(payload->rfid_poll_result.firmware_version, sizeof(payload->rfid_poll_result.firmware_version), 
+                     PAYLOAD_TOOL_VERSION);
+            payload->rfid_poll_result.uptime_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+            payload->rfid_poll_result.processing_time_ms = 10; // TODO: Measure actual processing time
+        }
+        
+        // Set event confidence based on threshold
+        float confidence = 0.95f;
+        if (confidence * 100 >= handle->config.event_confidence_threshold) {
+            payload->rfid_poll_result.event_confidence = confidence;
+        } else {
+            payload->rfid_poll_result.event_confidence = (float)handle->config.event_confidence_threshold / 100.0f;
+        }
+    } else {
+        // Minimal mode: only set basic session info
+        snprintf(payload->rfid_poll_result.session_id, sizeof(payload->rfid_poll_result.session_id),
+                 "minimal_%lu", (unsigned long)current_time_sec);
+        payload->rfid_poll_result.event_confidence = 1.0f;
+    }
+
+    // Set validation status
+    payload->is_valid = true;
+    payload->creation_timestamp_us = (uint64_t)current_time_sec * 1000000ULL;
+    payload->checksum = payload_tool_calculate_checksum(handle, payload);
+
+    ESP_LOGI(TAG, "RFID payload created successfully");
+    return ESP_OK;
+}
+
 esp_err_t payload_tool_generate_device_id(char *device_id, size_t buffer_size)
 {
     if (!device_id || buffer_size < 33) {
@@ -727,10 +895,10 @@ esp_err_t payload_tool_generate_device_id(char *device_id, size_t buffer_size)
     esp_err_t ret = esp_read_mac(mac, ESP_MAC_WIFI_STA);
     if (ret == ESP_OK) {
         snprintf(device_id, buffer_size,
-                "TTD-%02X%02X%02X%02X%02X%02X",
+                "%02X%02X%02X%02X%02X%02X",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     } else {
-        snprintf(device_id, buffer_size, "TTD-UNKNOWN");
+        snprintf(device_id, buffer_size, "UNKNOWN");
     }
     
     return ESP_OK;

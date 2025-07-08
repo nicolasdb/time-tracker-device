@@ -9,6 +9,12 @@ menu "Time Tracker Device Configuration"
     # Include Filesystem Tool Configuration
     source "$PROJECT_PATH/tools/fs_tool/Kconfig"
 
+    # Include NTP Tool Configuration
+    source "$PROJECT_PATH/tools/ntp_tool/Kconfig"
+
+    # Include Payload Tool Configuration
+    source "$PROJECT_PATH/tools/payload_tool/Kconfig"
+
     # Include Webhook Tool Configuration
     source "$PROJECT_PATH/tools/webhook_tool/Kconfig"
 

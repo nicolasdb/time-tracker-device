@@ -388,7 +388,11 @@ ntp_tool_config_t ntp_tool_create_default_config(void)
     config.servers[2].priority = 80;
     
     // Default timezone from Kconfig (Issue #6)
-    snprintf(config.timezone, sizeof(config.timezone), CONFIG_HTTP_TOOL_TIMEZONE);
+#ifdef CONFIG_SYSTEM_TIMEZONE
+    snprintf(config.timezone, sizeof(config.timezone), CONFIG_SYSTEM_TIMEZONE);
+#else
+    snprintf(config.timezone, sizeof(config.timezone), "CET-1CEST,M3.5.0,M10.5.0/3"); // Constitutional fallback
+#endif
     
     return config;
 }

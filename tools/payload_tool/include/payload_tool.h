@@ -64,6 +64,15 @@ typedef enum {
 } payload_session_type_t;
 
 /**
+ * @brief RFID Event Types for Server Integration
+ */
+typedef enum {
+    PAYLOAD_RFID_TAG_INSERT = 0,           ///< RFID tag insert event (server validation)
+    PAYLOAD_RFID_TAG_REMOVED,              ///< RFID tag removed event
+    PAYLOAD_RFID_EVENT_UNKNOWN             ///< Unknown RFID event type
+} payload_rfid_event_type_t;
+
+/**
  * @brief Constitutional Work Session Data
  */
 typedef struct {
@@ -88,14 +97,41 @@ typedef struct {
 } payload_device_metadata_t;
 
 /**
+ * @brief RFID Poll Result for Server Integration
+ */
+typedef struct {
+    // Core required fields (server Pydantic validation)
+    char event_type[16];                   ///< "tag_insert" or "tag_removed"
+    char tag_id[PAYLOAD_TOOL_MAX_RFID_UID_LEN + 1]; ///< RFID tag UID
+    char device_id[PAYLOAD_TOOL_MAX_DEVICE_ID_LEN + 1]; ///< Device identifier
+    char timestamp[32];                    ///< ISO 8601 timestamp
+    bool tag_present;                      ///< Tag presence status
+    
+    // Strategic supplemental fields
+    bool ntp_synced;                       ///< NTP synchronization status
+    char session_id[32];                   ///< Session tracking ID
+    uint32_t sequence_number;              ///< Event sequence number
+    int8_t wifi_rssi;                      ///< WiFi signal strength
+    char wifi_status[16];                  ///< WiFi connection quality
+    uint32_t free_memory_bytes;            ///< Available memory
+    char firmware_version[16];             ///< Firmware version
+    uint32_t uptime_ms;                    ///< Device uptime in milliseconds
+    float event_confidence;                ///< Event confidence (0.0-1.0)
+    uint32_t processing_time_ms;           ///< Event processing time
+} payload_rfid_poll_result_t;
+
+/**
  * @brief Constitutional Payload Structure
  */
 typedef struct {
-    // Core session data
+    // Core session data (legacy format)
     payload_work_session_t session;
     
-    // Device metadata
+    // Device metadata (legacy format)
     payload_device_metadata_t device;
+    
+    // Server integration format
+    payload_rfid_poll_result_t rfid_poll_result;
     
     // Formatted output
     char json_payload[PAYLOAD_TOOL_MAX_PAYLOAD_SIZE];
@@ -105,6 +141,9 @@ typedef struct {
     bool is_valid;
     uint32_t checksum;
     uint64_t creation_timestamp_us;
+    
+    // Format selection
+    bool use_server_format;                ///< Use server-compatible format
 } payload_data_t;
 
 /**
@@ -154,13 +193,16 @@ typedef struct {
     bool enable_payload_validation;        ///< Enable payload validation
     bool require_ntp_sync;                 ///< Require NTP time synchronization
     
-    // Timezone settings (Issue #6)
-    bool use_local_time;                   ///< Convert timestamps to local time
-    char timezone[64];                     ///< Timezone string (e.g., "CET-1CEST,M3.5.0,M10.5.0/3")
-    
     // Event publishing
     bool publish_events;                   ///< Enable event publishing
     uint32_t event_queue_size;             ///< Event queue size
+    
+    // Server integration settings
+    bool use_server_format;                ///< Use server-compatible format
+    bool minimal_mode;                     ///< Include only required fields
+    bool include_diagnostics;              ///< Include diagnostic fields
+    bool include_network_info;             ///< Include network information
+    uint32_t event_confidence_threshold;   ///< Minimum event confidence (0-100)
 } payload_tool_config_t;
 
 // =============================================================================
@@ -270,6 +312,21 @@ esp_err_t payload_tool_create_session_payload(payload_tool_handle_t handle,
                                              payload_data_t *payload);
 
 /**
+ * @brief Create RFID poll result payload for server integration
+ * @param handle Tool handle
+ * @param event_type RFID event type (tag_insert/tag_removed)
+ * @param tag_id RFID tag identifier
+ * @param tag_present Tag presence status
+ * @param payload Output payload structure
+ * @return ESP_OK on success, error code on failure
+ */
+esp_err_t payload_tool_create_rfid_payload(payload_tool_handle_t handle,
+                                          payload_rfid_event_type_t event_type,
+                                          const char *tag_id,
+                                          bool tag_present,
+                                          payload_data_t *payload);
+
+/**
  * @brief Format payload to JSON string
  * @param handle Tool handle
  * @param payload Payload data to format
@@ -346,6 +403,13 @@ const char* payload_tool_event_to_string(payload_tool_event_type_t event_type);
  * @return String representation  
  */
 const char* payload_tool_session_type_to_string(payload_session_type_t session_type);
+
+/**
+ * @brief Convert RFID event type to string
+ * @param event_type RFID event type
+ * @return String representation
+ */
+const char* payload_tool_rfid_event_type_to_string(payload_rfid_event_type_t event_type);
 
 /**
  * @brief Generate device ID from hardware MAC address

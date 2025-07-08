@@ -1,0 +1,23 @@
+menu "NTP Tool Configuration"
+
+    config SYSTEM_TIMEZONE
+        string "Device Timezone Configuration"
+        default "CET-1CEST,M3.5.0,M10.5.0/3"
+        help
+            NTP Tool timezone configuration - single source of truth for device timezone.
+            Default is set for Belgium/Central European Time (UTC+1) with DST.
+            
+            Examples:
+            - UTC: "UTC0"
+            - Central European Time (Belgium): "CET-1CEST,M3.5.0,M10.5.0/3"
+            - Pacific Standard Time: "PST8PDT,M3.2.0,M11.1.0"
+            - Eastern Standard Time: "EST5EDT,M3.2.0,M11.1.0"
+            
+            Format: <std><offset><dst>,<start>,<end>
+            Where:
+            - std: Standard timezone name (3+ chars)
+            - offset: Hours offset from UTC (positive = west of UTC)
+            - dst: Daylight saving time name (optional)
+            - start/end: DST transition rules (optional)
+
+endmenu
