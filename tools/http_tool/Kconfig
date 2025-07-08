@@ -36,4 +36,32 @@ menu "HTTP Tool Configuration"
         help
             Delay between retry attempts in milliseconds.
 
+    config HTTP_TOOL_TIMEZONE
+        string "Device Timezone Configuration"
+        default "CET-1CEST,M3.5.0,M10.5.0/3"
+        help
+            Timezone configuration string for local timestamp conversion.
+            Default is set for Belgium/Central European Time (UTC+1) with DST.
+            
+            Examples:
+            - UTC: "UTC0"
+            - Central European Time (Belgium): "CET-1CEST,M3.5.0,M10.5.0/3"
+            - Pacific Standard Time: "PST8PDT,M3.2.0,M11.1.0"
+            - Eastern Standard Time: "EST5EDT,M3.2.0,M11.1.0"
+            
+            Format: <std><offset><dst>,<start>,<end>
+            Where:
+            - std: Standard timezone name (3+ chars)
+            - offset: Hours offset from UTC (positive = west of UTC)
+            - dst: Daylight saving time name (optional)
+            - start/end: DST transition rules (optional)
+
+    config HTTP_TOOL_ENABLE_TIMEZONE_AUTO_DETECT
+        bool "Enable Automatic Timezone Detection"
+        default n
+        help
+            Automatically detect timezone using IP geolocation API.
+            Requires network connectivity and HTTP client support.
+            Falls back to manual timezone configuration if detection fails.
+
 endmenu

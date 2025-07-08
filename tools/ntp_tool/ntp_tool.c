@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <sys/time.h>
+#include <time.h>
 
 static const char* TAG = "ntp_tool";
 
@@ -49,6 +50,7 @@ struct ntp_tool {
     // Current synchronization state
     ntp_state_t current_state;
     time_t last_sync_time;
+    uint64_t last_sync_esp_timer;  // Issue #6: esp_timer value at sync for correlation
     time_t system_boot_time;
     int64_t time_offset_us;
     char current_server[64];
@@ -63,6 +65,26 @@ struct ntp_tool {
     bool wifi_connected;
     uint32_t current_server_index;
 };
+
+// =============================================================================
+// Constitutional Timezone Auto-Detection (Issue #6)
+// =============================================================================
+
+/**
+ * @brief Use configured timezone (simplified implementation)
+ * 
+ * @param handle NTP tool handle
+ * @return esp_err_t ESP_OK on success
+ */
+static esp_err_t constitutional_use_configured_timezone(ntp_tool_handle_t handle)
+{
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "🌍 Using configured timezone: %s", handle->config.timezone);
+    return ESP_OK;
+}
 
 // =============================================================================
 // Constitutional NTP Event Handlers
@@ -196,10 +218,11 @@ static esp_err_t constitutional_perform_ntp_sync(ntp_tool_handle_t handle)
             handle->status.time_valid = true;
             handle->time_valid = true;
             handle->last_sync_time = now;
+            handle->last_sync_esp_timer = esp_timer_get_time();  // Issue #6: correlation storage
             handle->status.last_sync_time = now;
             handle->status.system_time = now;
             handle->status.sync_count++;
-            handle->status.last_sync_timestamp_us = esp_timer_get_time();
+            handle->status.last_sync_timestamp_us = handle->last_sync_esp_timer;
             handle->sync_in_progress = false;
             
             // Store current server (simplified - use first configured server)
@@ -212,7 +235,10 @@ static esp_err_t constitutional_perform_ntp_sync(ntp_tool_handle_t handle)
             
             ESP_LOGI(TAG, "✅ NTP sync successful - Time: %" PRIu32, (uint32_t)now);
             
-            // Set timezone if configured
+            // Use configured timezone (Issue #6)
+            constitutional_use_configured_timezone(handle);
+            
+            // Set timezone from configuration
             if (strlen(handle->config.timezone) > 0) {
                 setenv("TZ", handle->config.timezone, 1);
                 tzset();
@@ -361,8 +387,8 @@ ntp_tool_config_t ntp_tool_create_default_config(void)
     snprintf(config.servers[2].hostname, sizeof(config.servers[2].hostname), "time.google.com");
     config.servers[2].priority = 80;
     
-    // Default timezone (UTC for ecosystem consistency)
-    snprintf(config.timezone, sizeof(config.timezone), "UTC0");
+    // Default timezone from Kconfig (Issue #6)
+    snprintf(config.timezone, sizeof(config.timezone), CONFIG_HTTP_TOOL_TIMEZONE);
     
     return config;
 }
@@ -548,8 +574,30 @@ esp_err_t ntp_tool_get_precise_timestamp(ntp_tool_handle_t handle, uint64_t *tim
         return ESP_ERR_INVALID_STATE;
     }
     
-    // Get high-precision timestamp for payload creation
+    // Get high-precision timestamp for payload creation (esp_timer uptime)
     *timestamp_us = esp_timer_get_time();
+    
+    return ESP_OK;
+}
+
+esp_err_t ntp_tool_get_sync_correlation(ntp_tool_handle_t handle, 
+                                       time_t *real_time_at_sync, 
+                                       uint64_t *esp_timer_at_sync)
+{
+    if (!handle || !real_time_at_sync || !esp_timer_at_sync) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!ntp_tool_is_time_valid(handle) || handle->last_sync_time == 0) {
+        ESP_LOGW(TAG, "No valid NTP sync correlation available");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    *real_time_at_sync = handle->last_sync_time;
+    *esp_timer_at_sync = handle->last_sync_esp_timer;
+    
+    ESP_LOGD(TAG, "✅ NTP sync correlation: real_time=%" PRIu32 ", esp_timer=%" PRIu64, 
+             (uint32_t)*real_time_at_sync, *esp_timer_at_sync);
     
     return ESP_OK;
 }

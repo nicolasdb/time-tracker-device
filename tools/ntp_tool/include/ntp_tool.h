@@ -161,6 +161,19 @@ esp_err_t ntp_tool_get_time(ntp_tool_handle_t handle, time_t *current_time);
 esp_err_t ntp_tool_get_precise_timestamp(ntp_tool_handle_t handle, uint64_t *timestamp_us);
 
 /**
+ * @brief Get NTP sync correlation data for timestamp calculation
+ * Implements Issue #6 requirement for real timestamp calculation
+ * 
+ * @param handle NTP tool handle
+ * @param real_time_at_sync Output real time when sync occurred (Unix time_t)
+ * @param esp_timer_at_sync Output esp_timer value when sync occurred
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if no sync
+ */
+esp_err_t ntp_tool_get_sync_correlation(ntp_tool_handle_t handle, 
+                                       time_t *real_time_at_sync, 
+                                       uint64_t *esp_timer_at_sync);
+
+/**
  * @brief Set timezone configuration
  */
 esp_err_t ntp_tool_set_timezone(ntp_tool_handle_t handle, const char* timezone);

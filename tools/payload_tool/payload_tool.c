@@ -27,6 +27,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <sys/time.h>
+#include <time.h>
+#include <stdlib.h>
 
 static const char* TAG = "payload_tool";
 
@@ -57,6 +60,64 @@ struct payload_tool {
     SemaphoreHandle_t state_mutex;
     esp_event_loop_handle_t event_loop;
 };
+
+// =============================================================================
+// Constitutional Timestamp Functions  
+// =============================================================================
+
+/**
+ * @brief Calculate real Unix timestamp from esp_timer using NTP correlation
+ * Implements Issue #6 correct timestamp calculation approach
+ * Formula: real_timestamp = real_time_at_sync + (current_esp_timer - esp_timer_at_sync)
+ */
+static uint64_t constitutional_calculate_real_timestamp_us(payload_tool_handle_t handle, uint64_t esp_timer_us)
+{
+    if (!handle || !handle->ntp_tool) {
+        ESP_LOGW(TAG, "⚠️ No NTP tool available - using esp_timer: %" PRIu64, esp_timer_us);
+        return esp_timer_us;
+    }
+    
+    // Get NTP sync correlation data
+    time_t real_time_at_sync = 0;
+    uint64_t esp_timer_at_sync = 0;
+    
+    // Call ntp_tool_get_sync_correlation to get correlation data
+    esp_err_t ret = ntp_tool_get_sync_correlation((ntp_tool_handle_t)handle->ntp_tool, 
+                                                  &real_time_at_sync, 
+                                                  &esp_timer_at_sync);
+    
+    if (ret == ESP_OK) {
+        // Calculate real timestamp using NTP correlation
+        // Formula: real_timestamp = real_time_at_sync + (current_esp_timer - esp_timer_at_sync)
+        uint64_t time_elapsed_us = esp_timer_us - esp_timer_at_sync;
+        uint64_t real_timestamp_us = (uint64_t)real_time_at_sync * 1000000ULL + time_elapsed_us;
+        
+        ESP_LOGI(TAG, "✅ Calculated real timestamp using NTP correlation: %" PRIu64 
+                 " (sync_time=%" PRIu32 ", elapsed=%" PRIu64 ")", 
+                 real_timestamp_us, (uint32_t)real_time_at_sync, time_elapsed_us);
+        
+        return real_timestamp_us;
+    }
+    
+    // Fallback: try system time if NTP correlation not available
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) == 0) {
+        uint64_t current_unix_us = (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;
+        
+        // Validate timestamp is reasonable (after 2024-01-01)
+        if (current_unix_us > 1704067200000000ULL) {
+            ESP_LOGI(TAG, "✅ Using fallback system time: %" PRIu64, current_unix_us);
+            return current_unix_us;
+        }
+    }
+    
+    // Final fallback to esp_timer if nothing else works
+    ESP_LOGW(TAG, "⚠️ No valid time source - using esp_timer: %" PRIu64, esp_timer_us);
+    return esp_timer_us;
+}
+
+// Note: Timezone conversion is now handled in the NTP tool's timezone setup
+// This ensures single point of timezone application via setenv()/tzset()
 
 // =============================================================================
 // Constitutional Device Metadata Functions
@@ -181,6 +242,10 @@ payload_tool_config_t payload_tool_create_default_config(void)
     // Validation settings
     config.enable_payload_validation = true;
     config.require_ntp_sync = true;
+    
+    // Timezone settings (Issue #6) - Use Kconfig as single source of truth
+    config.use_local_time = true;
+    snprintf(config.timezone, sizeof(config.timezone), CONFIG_HTTP_TOOL_TIMEZONE);
     
     // Event publishing
     config.publish_events = true;
@@ -347,8 +412,8 @@ esp_err_t payload_tool_create_session_payload(payload_tool_handle_t handle,
         // Copy device metadata
         memcpy(&payload->device, &handle->cached_device_metadata, sizeof(payload_device_metadata_t));
         
-        // Set creation timestamp
-        payload->creation_timestamp_us = current_time;
+        // Calculate real Unix timestamp from session's esp_timer timestamp
+        payload->creation_timestamp_us = constitutional_calculate_real_timestamp_us(handle, payload->session.timestamp_us);
         
         // Format to JSON
         esp_err_t format_ret = payload_tool_format_to_json(handle, payload, 
@@ -421,11 +486,37 @@ esp_err_t payload_tool_format_to_json(payload_tool_handle_t handle,
         return ESP_ERR_NO_MEM;
     }
     
-    // Add session information
+    // Add session information using pre-calculated timestamp
     cJSON *session = cJSON_CreateObject();
     cJSON_AddStringToObject(session, "type", payload_tool_session_type_to_string(payload->session.type));
     cJSON_AddStringToObject(session, "rfid_uid", payload->session.rfid_uid);
-    cJSON_AddNumberToObject(session, "timestamp_us", (double)payload->session.timestamp_us);
+    
+    // Use the pre-calculated creation timestamp (already includes timezone conversion if configured)
+    uint64_t final_timestamp_us = payload->creation_timestamp_us;
+    
+    // Log human-readable timestamp for debugging (no additional conversion needed)
+    time_t readable_time = (time_t)(final_timestamp_us / 1000000ULL);
+    
+    if (handle->config.use_local_time) {
+        ESP_LOGI(TAG, "🕐 Using pre-calculated local timestamp (already converted in payload creation)");
+        struct tm *timeinfo = localtime(&readable_time);
+        if (timeinfo) {
+            ESP_LOGI(TAG, "🕐 Human-readable local time: %04d-%02d-%02d %02d:%02d:%02d", 
+                     timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+                     timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+        }
+    } else {
+        ESP_LOGI(TAG, "🕐 Using pre-calculated UTC timestamp");
+        struct tm *timeinfo = gmtime(&readable_time);
+        if (timeinfo) {
+            ESP_LOGI(TAG, "🕐 Human-readable UTC time: %04d-%02d-%02d %02d:%02d:%02d", 
+                     timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+                     timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+        }
+    }
+    
+    cJSON_AddNumberToObject(session, "timestamp_us", (double)final_timestamp_us);
+    
     cJSON_AddNumberToObject(session, "duration_ms", payload->session.session_duration_ms);
     cJSON_AddStringToObject(session, "project_id", payload->session.project_id);
     cJSON_AddStringToObject(session, "task_description", payload->session.task_description);
@@ -443,9 +534,9 @@ esp_err_t payload_tool_format_to_json(payload_tool_handle_t handle,
         cJSON_AddItemToObject(root, "device", device);
     }
     
-    // Add metadata
+    // Add metadata using the same final timestamp (avoid duplicate conversion)
     cJSON *metadata = cJSON_CreateObject();
-    cJSON_AddNumberToObject(metadata, "creation_timestamp_us", (double)payload->creation_timestamp_us);
+    cJSON_AddNumberToObject(metadata, "creation_timestamp_us", (double)final_timestamp_us);
     cJSON_AddNumberToObject(metadata, "checksum", payload->checksum);
     cJSON_AddBoolToObject(metadata, "is_valid", payload->is_valid);
     cJSON_AddItemToObject(root, "metadata", metadata);

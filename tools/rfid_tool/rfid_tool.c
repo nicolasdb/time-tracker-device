@@ -26,6 +26,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <sys/time.h>
 
 // RC522 Library Integration  
 #include "rc522.h"

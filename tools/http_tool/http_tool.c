@@ -230,11 +230,53 @@ static esp_err_t constitutional_http_post_request(http_tool_handle_t handle,
     // Set Content-Type header
     esp_http_client_set_header(handle->http_client, "Content-Type", "application/json");
     
-    // Perform HTTP request
+    // Perform HTTP request with connection recreation on failure
     uint64_t start_time = esp_timer_get_time();
     ret = esp_http_client_perform(handle->http_client);
     uint64_t end_time = esp_timer_get_time();
     uint32_t response_time_ms = (uint32_t)((end_time - start_time) / 1000);
+    
+    // Handle connection timeout/failure by recreating HTTP client
+    if (ret == ESP_ERR_HTTP_EAGAIN || ret == ESP_ERR_HTTP_FETCH_HEADER || ret == ESP_FAIL) {
+        ESP_LOGW(TAG, "🔄 HTTP connection failed (%s), recreating client for retry", esp_err_to_name(ret));
+        
+        // Close current connection
+        esp_http_client_close(handle->http_client);
+        esp_http_client_cleanup(handle->http_client);
+        
+        // Recreate HTTP client with same configuration
+        esp_http_client_config_t http_config = {
+            .url = handle->config.webhook_url,
+            .timeout_ms = handle->config.timeout_ms,           // Request and connection timeout
+            .method = HTTP_METHOD_POST,
+            .event_handler = constitutional_http_event_handler,
+            .user_data = handle
+        };
+        
+        handle->http_client = esp_http_client_init(&http_config);
+        if (!handle->http_client) {
+            ESP_LOGE(TAG, "❌ Failed to recreate HTTP client");
+            return ESP_ERR_NO_MEM;
+        }
+        
+        ESP_LOGI(TAG, "✅ HTTP client recreated, retrying request");
+        
+        // Reset POST data and headers for retry
+        esp_http_client_set_post_field(handle->http_client, json_payload, payload_size);
+        esp_http_client_set_header(handle->http_client, "Content-Type", "application/json");
+        
+        // Retry the request once with fresh connection
+        start_time = esp_timer_get_time();
+        ret = esp_http_client_perform(handle->http_client);
+        end_time = esp_timer_get_time();
+        response_time_ms = (uint32_t)((end_time - start_time) / 1000);
+        
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "❌ HTTP retry also failed: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "✅ HTTP retry successful after client recreation");
+        }
+    }
     
     if (ret == ESP_OK) {
         int status_code = esp_http_client_get_status_code(handle->http_client);
@@ -346,7 +388,7 @@ http_tool_handle_t http_tool_init(const http_tool_config_t *config)
     esp_http_client_config_t http_config = {
         .url = handle->config.webhook_url,
         .event_handler = constitutional_http_event_handler,
-        .timeout_ms = handle->config.timeout_ms,
+        .timeout_ms = handle->config.timeout_ms,           // Request and connection timeout
         .method = HTTP_METHOD_POST,
     };
     

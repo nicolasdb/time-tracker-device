@@ -154,6 +154,10 @@ typedef struct {
     bool enable_payload_validation;        ///< Enable payload validation
     bool require_ntp_sync;                 ///< Require NTP time synchronization
     
+    // Timezone settings (Issue #6)
+    bool use_local_time;                   ///< Convert timestamps to local time
+    char timezone[64];                     ///< Timezone string (e.g., "CET-1CEST,M3.5.0,M10.5.0/3")
+    
     // Event publishing
     bool publish_events;                   ///< Enable event publishing
     uint32_t event_queue_size;             ///< Event queue size
