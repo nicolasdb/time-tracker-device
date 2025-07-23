@@ -1,6 +1,10 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Development Context & Architecture Authority
 
-> *This file provides guidance to Claude Code when working on the Time Tracker Device*
+> *ESP32-C3 Time Tracker Device - Cognitive Wealth Ecosystem Layer 1*
 
 ## 🏗️ **Ecosystem Position**
 
@@ -166,13 +170,31 @@ led_strip_rmt_config_t rmt_config = {
 🔄 SYNC: offline-resilient|retry-logic|graceful-degradation|status-reporting
 ```
 
-## 🛠️ **Build System & User/Claude Separation**
+## 🛠️ **Build System & Development Commands**
 
-**IMPORTANT**: Claude should NOT execute build commands directly.
+**IMPORTANT**: Claude should NOT execute build commands directly. User handles all building, flashing, and hardware testing.
+
+### **Key Commands for Development**
+```bash
+# Build the project (PlatformIO CLI - if needed)
+pio run -e esp32c3_mcp
+
+# Upload to device (PlatformIO CLI - if needed) 
+pio run -e esp32c3_mcp -t upload
+
+# Monitor serial output (PlatformIO CLI - if needed)
+pio device monitor -b 115200
+
+# ESP-IDF Configuration (when needed)
+idf.py menuconfig
+
+# Clean build
+pio run -e esp32c3_mcp -t clean
+```
 
 ### **User's Role (VSCode + PlatformIO)**
-- Building: User builds via PlatformIO GUI in VSCode
-- Flashing: User flashes via PlatformIO GUI in VSCode
+- Building: User builds via PlatformIO GUI in VSCode or CLI commands above
+- Flashing: User flashes via PlatformIO GUI in VSCode  
 - Monitoring: User monitors hardware via PlatformIO serial monitor
 - Configuration: User runs `idf.py menuconfig` when needed
 - Testing: User validates hardware behavior and ecosystem integration

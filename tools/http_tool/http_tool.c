@@ -202,6 +202,11 @@ static esp_err_t constitutional_create_session_payload(http_tool_handle_t handle
 
 /**
  * @brief Constitutional HTTP POST request with retry logic
+ * 
+ * CONSTITUTIONAL REQUIREMENT: This function MUST BE CALLED with http_mutex already acquired.
+ * The mutex protects against concurrent access to the shared http_client handle, which is
+ * not thread-safe according to ESP-IDF lwIP documentation. Calling this function without
+ * mutex protection violates constitutional thread safety requirements.
  */
 static esp_err_t constitutional_http_post_request(http_tool_handle_t handle,
                                                 const char* json_payload,
@@ -231,7 +236,7 @@ static esp_err_t constitutional_http_post_request(http_tool_handle_t handle,
     uint32_t response_time_ms = (uint32_t)((end_time - start_time) / 1000);
     
     // Handle connection timeout/failure by recreating HTTP client
-    if (ret == ESP_ERR_HTTP_EAGAIN || ret == ESP_ERR_HTTP_FETCH_HEADER || ret == ESP_FAIL) {
+    if (ret == ESP_ERR_HTTP_CONNECT || ret == ESP_ERR_HTTP_EAGAIN || ret == ESP_ERR_HTTP_FETCH_HEADER || ret == ESP_FAIL) {
         ESP_LOGW(TAG, "🔄 HTTP connection failed (%s), recreating client for retry", esp_err_to_name(ret));
         
         // Close current connection
@@ -395,6 +400,8 @@ http_tool_handle_t http_tool_init(const http_tool_config_t *config)
         .event_handler = constitutional_http_event_handler,
         .timeout_ms = handle->config.timeout_ms,           // Request and connection timeout
         .method = HTTP_METHOD_POST,
+        .is_async = false,                                 // CONSTITUTIONAL FIX: Force synchronous mode
+        .use_global_ca_store = false,                      // CONSTITUTIONAL FIX: Disable global CA for HTTP
     };
     
     // Constitutional HTTPS detection and SSL configuration
@@ -403,7 +410,8 @@ http_tool_handle_t http_tool_init(const http_tool_config_t *config)
         ESP_LOGI(TAG, "🔒 HTTPS detected - SSL configured via Kconfig (insecure mode for testing)");
     } else {
         http_config.transport_type = HTTP_TRANSPORT_OVER_TCP;
-        ESP_LOGI(TAG, "🔓 HTTP detected - plain TCP transport");
+        http_config.skip_cert_common_name_check = true;    // CONSTITUTIONAL FIX: Ensure no SSL for HTTP
+        ESP_LOGI(TAG, "🔓 HTTP detected - plain TCP transport (SSL disabled)");
     }
     
     handle->http_client = esp_http_client_init(&http_config);
@@ -412,6 +420,18 @@ http_tool_handle_t http_tool_init(const http_tool_config_t *config)
         vSemaphoreDelete(handle->http_mutex);
         free(handle);
         return NULL;
+    }
+    
+    // CONSTITUTIONAL FIX: Pre-establish connection to avoid first-request-fails bug
+    ESP_LOGI(TAG, "🔄 Pre-warming HTTP client connection");
+    esp_http_client_set_method(handle->http_client, HTTP_METHOD_HEAD);
+    esp_err_t warmup_result = esp_http_client_perform(handle->http_client);
+    esp_http_client_set_method(handle->http_client, HTTP_METHOD_POST);
+    
+    if (warmup_result == ESP_OK) {
+        ESP_LOGI(TAG, "✅ HTTP client connection pre-warmed successfully");
+    } else {
+        ESP_LOGW(TAG, "⚠️ HTTP client warmup failed (may be expected): %s", esp_err_to_name(warmup_result));
     }
     
     handle->is_initialized = true;
@@ -524,6 +544,12 @@ esp_err_t http_tool_process_deferred_payload(http_tool_handle_t handle,
         return ESP_ERR_INVALID_STATE;
     }
     
+    // CONSTITUTIONAL FIX: Acquire mutex for thread-safe HTTP operations
+    if (xSemaphoreTake(handle->http_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "❌ Failed to acquire HTTP mutex for payload processing");
+        return ESP_ERR_TIMEOUT;
+    }
+    
     ESP_LOGI(TAG, "📦 Processing deferred payload: UID=%s, type=%s", tag_uid, event_type);
     
     // Check network connectivity (if network tool available)
@@ -532,6 +558,7 @@ esp_err_t http_tool_process_deferred_payload(http_tool_handle_t handle,
         esp_err_t ret = network_tool_get_status((network_tool_handle_t)handle->network_tool, &net_status);
         if (ret != ESP_OK || net_status.state != NETWORK_STATE_CONNECTED) {
             ESP_LOGW(TAG, "📦 Network not available, deferring payload");
+            xSemaphoreGive(handle->http_mutex);  // Release mutex on early return
             return ESP_ERR_WIFI_NOT_CONNECT;
         }
     }
@@ -541,6 +568,7 @@ esp_err_t http_tool_process_deferred_payload(http_tool_handle_t handle,
     esp_err_t ret = constitutional_create_session_payload(handle, tag_uid, event_type, 
                                                         timestamp_us, &json_payload);
     if (ret != ESP_OK) {
+        xSemaphoreGive(handle->http_mutex);  // Release mutex on payload creation failure
         return ret;
     }
     
@@ -549,6 +577,9 @@ esp_err_t http_tool_process_deferred_payload(http_tool_handle_t handle,
     
     // Free allocated payload
     free(json_payload);
+    
+    // CONSTITUTIONAL FIX: Release mutex after HTTP operations complete
+    xSemaphoreGive(handle->http_mutex);
     
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "✅ Payload sent successfully for %s event", event_type);
@@ -575,13 +606,30 @@ esp_err_t http_tool_send_payload(http_tool_handle_t handle,
     
     ESP_LOGI(TAG, "📤 Sending JSON payload (%" PRIu32 " bytes)", (uint32_t)payload_size);
     
-    return constitutional_http_post_request(handle, json_payload, payload_size);
+    // CONSTITUTIONAL FIX: Acquire mutex for thread-safe HTTP operations
+    if (xSemaphoreTake(handle->http_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "❌ Failed to acquire HTTP mutex for payload send");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    esp_err_t ret = constitutional_http_post_request(handle, json_payload, payload_size);
+    
+    // CONSTITUTIONAL FIX: Release mutex after HTTP operations complete
+    xSemaphoreGive(handle->http_mutex);
+    
+    return ret;
 }
 
 esp_err_t http_tool_check_connectivity(http_tool_handle_t handle)
 {
     if (!handle || !handle->is_initialized) {
         return ESP_ERR_INVALID_ARG;
+    }
+    
+    // CONSTITUTIONAL FIX: Acquire mutex for thread-safe HTTP operations
+    if (xSemaphoreTake(handle->http_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "❌ Failed to acquire HTTP mutex for connectivity check");
+        return ESP_ERR_TIMEOUT;
     }
     
     ESP_LOGI(TAG, "🔍 Checking webhook server connectivity");
@@ -600,6 +648,9 @@ esp_err_t http_tool_check_connectivity(http_tool_handle_t handle)
         handle->server_reachable = false;
         ESP_LOGW(TAG, "🔍 Server connectivity check failed: %s", esp_err_to_name(ret));
     }
+    
+    // CONSTITUTIONAL FIX: Release mutex after HTTP operations complete
+    xSemaphoreGive(handle->http_mutex);
     
     return handle->server_reachable ? ESP_OK : ESP_FAIL;
 }

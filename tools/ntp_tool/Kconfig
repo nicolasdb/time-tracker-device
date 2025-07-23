@@ -2,7 +2,7 @@ menu "NTP Tool Configuration"
 
     config SYSTEM_TIMEZONE
         string "Device Timezone Configuration"
-        default "CET-1CEST,M3.5.0,M10.5.0/3"
+        default "UTC0"
         help
             NTP Tool timezone configuration - single source of truth for device timezone.
             Default is set for Belgium/Central European Time (UTC+1) with DST.
