@@ -140,7 +140,8 @@ static void constitutional_rfid_tag_detected_handler(void* event_handler_arg, es
         esp_err_t ret = http_tool_process_deferred_payload(context->http_tool, 
                                                          tag_event->tag_info.uid_string,
                                                          "APPEARED",
-                                                         tag_event->timestamp_us);
+                                                         tag_event->timestamp_us,
+                                                         tag_event->session_id);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "📦 APPEARED payload processed and sent successfully");
         } else if (ret == ESP_ERR_WIFI_NOT_CONNECT) {
@@ -182,7 +183,8 @@ static void constitutional_rfid_tag_removed_handler(void* event_handler_arg, esp
         esp_err_t ret = http_tool_process_deferred_payload(context->http_tool, 
                                                          tag_event->tag_info.uid_string,
                                                          "DISAPPEARED",
-                                                         tag_event->timestamp_us);
+                                                         tag_event->timestamp_us,
+                                                         tag_event->session_id);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "📦 DISAPPEARED payload processed and sent successfully");
         } else if (ret == ESP_ERR_WIFI_NOT_CONNECT) {

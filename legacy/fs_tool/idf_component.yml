@@ -1,3 +1,0 @@
-dependencies:
-  joltwallet/littlefs:
-    version: "^1.14.8"

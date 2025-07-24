@@ -18,6 +18,7 @@
 #include "esp_event.h"
 #include "esp_timer.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -27,6 +28,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <sys/time.h>
+#include "cJSON.h"
 
 // RC522 Library Integration  
 #include "rc522.h"
@@ -82,6 +84,13 @@ struct rfid_tool {
     char last_tag_id[21];                // Last confirmed tag state
     bool debounce_confirmed;             // Debounce confirmation flag
     
+    // Session UUID tracking (certified session pairing)
+    char current_session_id[37];         // Current session UUID (RFC4122 format)
+    
+    // Session persistence for crash recovery
+    bool session_persistence_enabled;    // Whether to use flash persistence
+    bool session_recovery_pending;       // Recovery deferred until fs_tool available
+    
     // RC522 Library handles
     rc522_driver_handle_t driver;
     rc522_handle_t scanner;
@@ -102,6 +111,189 @@ struct rfid_tool {
 // Forward declarations for constitutional presence detection
 static void constitutional_presence_detection_task(void *arg);
 static void constitutional_process_tag_event(rfid_tool_handle_t handle);
+
+// Session UUID generation using ESP32 hardware random
+static esp_err_t constitutional_generate_session_uuid(char* uuid_buf, size_t buf_size);
+
+// Session persistence for crash recovery
+typedef struct {
+    char tag_id[21];                     // Tag UID
+    char session_uuid[37];               // Session UUID
+    bool active;                         // true=present, false=removed
+    uint64_t timestamp_us;               // State change timestamp
+    bool sent_to_server;                 // Delivery confirmation (future use)
+} rfid_session_state_t;
+
+#define RFID_SESSION_STATE_FILE "rfid_session.json"
+
+// Session persistence helper functions
+static esp_err_t constitutional_save_session_state(rfid_tool_handle_t handle, 
+                                                  const char* tag_id, 
+                                                  const char* session_uuid,
+                                                  bool active);
+static esp_err_t constitutional_load_session_state(rfid_tool_handle_t handle, 
+                                                  rfid_session_state_t* state);
+static esp_err_t constitutional_clear_session_state(rfid_tool_handle_t handle);
+
+/**
+ * @brief Generate UUID v4 using ESP32 hardware random number generator
+ * RFC4122 compliant UUID v4 with constitutional memory safety
+ */
+static esp_err_t constitutional_generate_session_uuid(char* uuid_buf, size_t buf_size)
+{
+    if (!uuid_buf || buf_size < 37) {
+        ESP_LOGE(TAG, "❌ Invalid UUID buffer parameters");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Generate 16 random bytes using ESP32 hardware RNG
+    uint8_t uuid_bytes[16];
+    esp_fill_random(uuid_bytes, sizeof(uuid_bytes));
+    
+    // Set version (4) and variant bits per RFC4122
+    uuid_bytes[6] = (uuid_bytes[6] & 0x0F) | 0x40;  // Version 4
+    uuid_bytes[8] = (uuid_bytes[8] & 0x3F) | 0x80;  // Variant bits
+    
+    // Format as RFC4122 string: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+    int ret = snprintf(uuid_buf, buf_size,
+                      "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                      uuid_bytes[0], uuid_bytes[1], uuid_bytes[2], uuid_bytes[3],
+                      uuid_bytes[4], uuid_bytes[5], uuid_bytes[6], uuid_bytes[7],
+                      uuid_bytes[8], uuid_bytes[9], uuid_bytes[10], uuid_bytes[11],
+                      uuid_bytes[12], uuid_bytes[13], uuid_bytes[14], uuid_bytes[15]);
+    
+    if (ret < 0 || ret >= buf_size) {
+        ESP_LOGE(TAG, "❌ UUID formatting failed");
+        uuid_buf[0] = '\0';  // Clear buffer on failure
+        return ESP_ERR_INVALID_SIZE;
+    }
+    
+    ESP_LOGI(TAG, "🆔 Generated session UUID: %s", uuid_buf);
+    return ESP_OK;
+}
+
+/**
+ * @brief Save session state to flash for crash recovery
+ */
+static esp_err_t constitutional_save_session_state(rfid_tool_handle_t handle, 
+                                                  const char* tag_id, 
+                                                  const char* session_uuid,
+                                                  bool active)
+{
+    if (!handle || !handle->fs_tool || !tag_id || !session_uuid) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!handle->session_persistence_enabled) {
+        return ESP_OK; // Persistence disabled, skip silently
+    }
+    
+    // Create JSON object for session state
+    cJSON* session_json = cJSON_CreateObject();
+    if (!session_json) {
+        ESP_LOGE(TAG, "❌ Failed to create session JSON object");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    cJSON_AddStringToObject(session_json, "tag_id", tag_id);
+    cJSON_AddStringToObject(session_json, "session_uuid", session_uuid);
+    cJSON_AddBoolToObject(session_json, "active", active);
+    cJSON_AddNumberToObject(session_json, "timestamp_us", (double)esp_timer_get_time());
+    cJSON_AddBoolToObject(session_json, "sent_to_server", false);
+    
+    // Save to flash
+    esp_err_t ret = fs_tool_save_json_config(handle->fs_tool, RFID_SESSION_STATE_FILE, session_json);
+    cJSON_Delete(session_json);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "💾 Session state saved: %s (UUID: %s, active: %s)", 
+                tag_id, session_uuid, active ? "true" : "false");
+    } else {
+        ESP_LOGE(TAG, "❌ Failed to save session state: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
+}
+
+/**
+ * @brief Load session state from flash for crash recovery
+ */
+static esp_err_t constitutional_load_session_state(rfid_tool_handle_t handle, 
+                                                  rfid_session_state_t* state)
+{
+    if (!handle || !handle->fs_tool || !state) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!handle->session_persistence_enabled) {
+        return ESP_ERR_NOT_SUPPORTED; // Persistence disabled
+    }
+    
+    // Initialize state structure
+    memset(state, 0, sizeof(rfid_session_state_t));
+    
+    // Load JSON from flash
+    cJSON* session_json = NULL;
+    esp_err_t ret = fs_tool_load_json_config(handle->fs_tool, RFID_SESSION_STATE_FILE, &session_json);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "⚠️ No previous session state found or failed to load: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Parse JSON fields
+    cJSON* tag_id_item = cJSON_GetObjectItem(session_json, "tag_id");
+    cJSON* uuid_item = cJSON_GetObjectItem(session_json, "session_uuid");
+    cJSON* active_item = cJSON_GetObjectItem(session_json, "active");
+    cJSON* timestamp_item = cJSON_GetObjectItem(session_json, "timestamp_us");
+    cJSON* sent_item = cJSON_GetObjectItem(session_json, "sent_to_server");
+    
+    if (!tag_id_item || !uuid_item || !active_item || !timestamp_item) {
+        ESP_LOGE(TAG, "❌ Invalid session state JSON format");
+        cJSON_Delete(session_json);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Copy data to state structure
+    snprintf(state->tag_id, sizeof(state->tag_id), "%s", cJSON_GetStringValue(tag_id_item));
+    snprintf(state->session_uuid, sizeof(state->session_uuid), "%s", cJSON_GetStringValue(uuid_item));
+    state->active = cJSON_IsTrue(active_item);
+    state->timestamp_us = (uint64_t)cJSON_GetNumberValue(timestamp_item);
+    state->sent_to_server = sent_item ? cJSON_IsTrue(sent_item) : false;
+    
+    cJSON_Delete(session_json);
+    
+    ESP_LOGI(TAG, "📥 Session state loaded: %s (UUID: %s, active: %s)", 
+            state->tag_id, state->session_uuid, state->active ? "true" : "false");
+    
+    return ESP_OK;
+}
+
+/**
+ * @brief Clear session state from flash
+ */
+static esp_err_t constitutional_clear_session_state(rfid_tool_handle_t handle)
+{
+    if (!handle || !handle->fs_tool) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!handle->session_persistence_enabled) {
+        return ESP_OK; // Persistence disabled, skip silently
+    }
+    
+    // Delete session state file
+    esp_err_t ret = fs_tool_delete_file(handle->fs_tool, RFID_SESSION_STATE_FILE);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "🧹 Session state cleared from flash");
+    } else if (ret == ESP_ERR_NOT_FOUND) {
+        ESP_LOGD(TAG, "📭 No session state file to clear");
+        ret = ESP_OK; // Not an error if file doesn't exist
+    } else {
+        ESP_LOGE(TAG, "❌ Failed to clear session state: %s", esp_err_to_name(ret));
+    }
+    
+    return ret;
+}
 
 /**
  * @brief Map SPI host configuration to ESP-IDF enum
@@ -215,20 +407,42 @@ static void constitutional_presence_detection_task(void *arg)
                         if (strcmp(handle->actual_tag_id, handle->last_tag_id) != 0) {
                             // Change confirmed - determine direction
                             if (strlen(handle->actual_tag_id) > 0 && strlen(handle->last_tag_id) == 0) {
-                                // none → tagID = APPEARED
+                                // none → tagID = APPEARED - Clear any stale UUID and generate fresh one
+                                handle->current_session_id[0] = '\0';  // Preventive clear before generation
+                                esp_err_t uuid_ret = constitutional_generate_session_uuid(handle->current_session_id, sizeof(handle->current_session_id));
+                                if (uuid_ret != ESP_OK) {
+                                    ESP_LOGE(TAG, "❌ Failed to generate session UUID: %s", esp_err_to_name(uuid_ret));
+                                    handle->current_session_id[0] = '\0';  // Fallback to empty
+                                }
                                 handle->detection_state = TAG_STATE_APPEARED;
-                                ESP_LOGI(TAG, "✅ APPEARED confirmed: %s", handle->actual_tag_id);
+                                
+                                // Save session state to flash only if UUID generation succeeded
+                                if (uuid_ret == ESP_OK && strlen(handle->current_session_id) > 0) {
+                                    constitutional_save_session_state(handle, handle->actual_tag_id, 
+                                                                     handle->current_session_id, true);
+                                }
+                                
+                                ESP_LOGI(TAG, "✅ APPEARED confirmed: %s (session: %s)", handle->actual_tag_id, handle->current_session_id);
                             } else if (strlen(handle->actual_tag_id) == 0 && strlen(handle->last_tag_id) > 0) {
-                                // tagID → none = DISAPPEARED  
+                                // tagID → none = DISAPPEARED - Use current session UUID
                                 handle->detection_state = TAG_STATE_DISAPPEARED;
-                                ESP_LOGI(TAG, "❌ DISAPPEARED confirmed: %s", handle->last_tag_id);
+                                
+                                // Save DISAPPEARED state to flash temporarily (Option B approach)
+                                constitutional_save_session_state(handle, handle->last_tag_id, 
+                                                                 handle->current_session_id, false);
+                                
+                                ESP_LOGI(TAG, "❌ DISAPPEARED confirmed: %s (session: %s)", handle->last_tag_id, handle->current_session_id);
                             } else if (strlen(handle->actual_tag_id) > 0 && strlen(handle->last_tag_id) > 0) {
                                 // tagID → tagID = direct transition (treat as DISAPPEARED then APPEARED)
+                                // Keep same session UUID for continuity - this will end the old session and start new one
                                 handle->detection_state = TAG_STATE_DISAPPEARED;
-                                ESP_LOGI(TAG, "🔄 Tag change: %s → %s", handle->last_tag_id, handle->actual_tag_id);
+                                ESP_LOGI(TAG, "🔄 Tag change: %s → %s (session: %s)", handle->last_tag_id, handle->actual_tag_id, handle->current_session_id);
                             } else {
                                 // none → none (should not happen, but return to scanning)
+                                // Clear any stale session UUID
+                                handle->current_session_id[0] = '\0';
                                 handle->detection_state = TAG_STATE_SCANNING;
+                                ESP_LOGI(TAG, "⚠️ none → none transition - session cleared");
                             }
                         } else {
                             // False alarm - return to scanning
@@ -261,6 +475,32 @@ static void constitutional_presence_detection_task(void *arg)
             
             // Update last_tag_id and return to SCANNING
             if (xSemaphoreTake(handle->state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                // Handle session UUID after events
+                if (handle->pending_event_type == TAG_STATE_DISAPPEARED) {
+                    if (strlen(handle->actual_tag_id) == 0) {
+                        // True DISAPPEARED (tagID → none) - clear session
+                        handle->current_session_id[0] = '\0';
+                        
+                        // Clear session state from flash (Option B cleanup)
+                        constitutional_clear_session_state(handle);
+                        
+                        ESP_LOGI(TAG, "🧹 Session UUID cleared after DISAPPEARED event");
+                    } else {
+                        // Tag change (tagID → tagID) - generate new session for the new tag
+                        esp_err_t uuid_ret = constitutional_generate_session_uuid(handle->current_session_id, sizeof(handle->current_session_id));
+                        if (uuid_ret != ESP_OK) {
+                            ESP_LOGE(TAG, "❌ Failed to generate replacement session UUID: %s", esp_err_to_name(uuid_ret));
+                            handle->current_session_id[0] = '\0';  // Fallback to empty
+                        }
+                        
+                        // Save new session state for the replacement tag
+                        constitutional_save_session_state(handle, handle->actual_tag_id, 
+                                                         handle->current_session_id, true);
+                        
+                        ESP_LOGI(TAG, "🔄 New session UUID generated for tag change");
+                    }
+                }
+                
                 snprintf(handle->last_tag_id, sizeof(handle->last_tag_id), 
                         "%s", handle->actual_tag_id);
                 handle->last_event_timestamp_us = esp_timer_get_time(); // Record event time for anti-bounce
@@ -290,6 +530,20 @@ static void constitutional_process_tag_event(rfid_tool_handle_t handle)
     tag_event.timestamp_us = esp_timer_get_time(); // uptime_stamp per process map
     tag_event.error_code = ESP_OK;
     
+    // CRITICAL FIX: Read session UUID with mutex protection
+    if (xSemaphoreTake(handle->state_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        snprintf(tag_event.session_id, sizeof(tag_event.session_id), "%s", handle->current_session_id);
+        xSemaphoreGive(handle->state_mutex);
+    } else {
+        ESP_LOGE(TAG, "❌ Failed to acquire mutex for session ID - using empty");
+        tag_event.session_id[0] = '\0';
+    }
+    
+    // Validate session UUID is present
+    if (strlen(tag_event.session_id) == 0) {
+        ESP_LOGE(TAG, "❌ Empty session UUID - event may be malformed");
+    }
+    
     // Determine event type and tag_id logic using stored pending_event_type (Process Map 08 authority)
     if (handle->pending_event_type == TAG_STATE_APPEARED) {
         tag_event.type = RFID_TOOL_EVENT_TAG_DETECTED;
@@ -297,14 +551,14 @@ static void constitutional_process_tag_event(rfid_tool_handle_t handle)
         snprintf(tag_event.tag_info.uid_string, sizeof(tag_event.tag_info.uid_string), 
                 "%s", handle->actual_tag_id);
         handle->tag_detection_count++;
-        ESP_LOGI(TAG, "🏷️ Constitutional APPEARED: %s", handle->actual_tag_id);
+        ESP_LOGI(TAG, "🏷️ Constitutional APPEARED: %s (session: %s)", handle->actual_tag_id, tag_event.session_id);
         
     } else if (handle->pending_event_type == TAG_STATE_DISAPPEARED) {
         tag_event.type = RFID_TOOL_EVENT_TAG_REMOVED;
         // If DISAPPEARED: tag_id = last_tag (Process Map 08)
         snprintf(tag_event.tag_info.uid_string, sizeof(tag_event.tag_info.uid_string), 
                 "%s", handle->last_tag_id);
-        ESP_LOGI(TAG, "🏷️ Constitutional DISAPPEARED: %s", handle->last_tag_id);
+        ESP_LOGI(TAG, "🏷️ Constitutional DISAPPEARED: %s (session: %s)", handle->last_tag_id, tag_event.session_id);
     } else {
         // Safety fallback - should never happen
         ESP_LOGE(TAG, "❌ Invalid pending_event_type: %d", handle->pending_event_type);
@@ -537,6 +791,13 @@ rfid_tool_handle_t rfid_tool_init(const rfid_tool_config_t *config)
     handle->last_tag_id[0] = '\0';
     handle->debounce_confirmed = false;
     
+    // Initialize session UUID tracking
+    handle->current_session_id[0] = '\0';  // No active session initially
+    
+    // Initialize session persistence state
+    handle->session_persistence_enabled = false;  // Enabled when fs_tool is set
+    handle->session_recovery_pending = true;      // Defer recovery until fs_tool available
+    
     // Create state mutex
     handle->state_mutex = xSemaphoreCreateMutex();
     if (!handle->state_mutex) {
@@ -614,6 +875,8 @@ rfid_tool_handle_t rfid_tool_init(const rfid_tool_config_t *config)
     handle->hardware_ok = true;
     handle->status.hardware_ok = true;
     ESP_LOGI(TAG, "✅ RC522 library initialized successfully");
+    
+    // Session recovery will be attempted when fs_tool dependency is set
     
     // Initialize status
     handle->status.is_initialized = true;
@@ -703,7 +966,40 @@ esp_err_t rfid_tool_set_fs_dependency(rfid_tool_handle_t handle, void* fs_tool)
     }
     
     handle->fs_tool = (fs_tool_handle_t)fs_tool;
-    ESP_LOGI(TAG, "✅ FS tool dependency set for configuration logging");
+    handle->session_persistence_enabled = (fs_tool != NULL);
+    ESP_LOGI(TAG, "✅ FS tool dependency set - session persistence %s", 
+             handle->session_persistence_enabled ? "enabled" : "disabled");
+    
+    // Attempt deferred session recovery if fs_tool is now available
+    if (handle->session_persistence_enabled && handle->session_recovery_pending) {
+        handle->session_recovery_pending = false;
+        
+        rfid_session_state_t recovered_state;
+        esp_err_t recovery_ret = constitutional_load_session_state(handle, &recovered_state);
+        
+        if (recovery_ret == ESP_OK) {
+            // Take mutex for safe state checking
+            if (xSemaphoreTake(handle->state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                // Check if the recovered tag is still present
+                if (strlen(handle->actual_tag_id) > 0 && 
+                    strcmp(recovered_state.tag_id, handle->actual_tag_id) == 0) {
+                    
+                    // Tag is still present - recover session
+                    snprintf(handle->current_session_id, sizeof(handle->current_session_id), 
+                            "%s", recovered_state.session_uuid);
+                    
+                    ESP_LOGI(TAG, "🔄 Session recovered after reboot: %s (UUID: %s)", 
+                            recovered_state.tag_id, recovered_state.session_uuid);
+                    
+                } else {
+                    // Tag changed or no longer present - clear stale state
+                    ESP_LOGI(TAG, "🧹 Clearing stale session state (tag changed or removed)");
+                    constitutional_clear_session_state(handle);
+                }
+                xSemaphoreGive(handle->state_mutex);
+            }
+        }
+    }
     
     return ESP_OK;
 }

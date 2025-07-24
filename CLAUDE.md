@@ -163,6 +163,23 @@ led_strip_rmt_config_t rmt_config = {
 
 **Constitutional Authority**: ESP32-C3 RMT peripheral requires explicit memory allocation for WS2812B LED strip timing. `mem_block_symbols = 0` causes silent hardware failures where LED strip APIs return success but no visual output occurs. This constraint is derived from ESP-IDF official documentation via Context7 validation and represents a critical hardware integration requirement for constitutional LED feedback operations.
 
+### **Constitutional ESP-IDF Configuration Precedence Requirements**
+```ini
+; platformio.ini - CRITICAL: ESP-IDF lwIP component defaults override sdkconfig.defaults
+; Only these 2 values need compiler-flag override (others work from sdkconfig.defaults)
+build_flags = 
+    -Wno-error=macro-redefined         ; Allow macro redefinition without error
+    -UCONFIG_LWIP_TCP_MSL -DCONFIG_LWIP_TCP_MSL=2000         ; TCP MSL: 2 seconds (not 60!)
+    -UCONFIG_LWIP_MAX_SOCKETS -DCONFIG_LWIP_MAX_SOCKETS=16   ; Socket pool: 16 (not 10)
+```
+
+**Constitutional Authority**: ESP-IDF configuration precedence hierarchy causes lwIP component Kconfig defaults to override `sdkconfig.defaults`. Specifically:
+- `CONFIG_LWIP_TCP_MSL` defaults to **60000ms** in component (causes socket exhaustion)
+- `CONFIG_LWIP_MAX_SOCKETS` defaults to **10** in component (insufficient for HTTP + health checks)
+- **Compiler flags have highest precedence** and successfully override component defaults
+- Other lwIP settings work normally from `sdkconfig.defaults` (no component conflicts)
+- This prevents HTTP DISAPPEARED events from failing after ~10 seconds due to socket pool exhaustion
+
 ### **Ecosystem Integration Standards**
 ```txt
 🔗 INTERFACE: standard-json-events|iso8601-timestamps|device-metadata|error-codes

@@ -2,14 +2,15 @@ menu "HTTP Tool Configuration"
 
     config HTTP_TOOL_WEBHOOK_URL
         string "Webhook Server URL"
-        default "http://nicolasdb.eu/webhook"
+        default "http://192.168.1.8/webhook/google"
         help
             HTTP Tool webhook server URL configuration - single source of truth for webhook endpoint.
             
             Examples:
             - Production: http://nicolasdb.eu/webhook
             - Testing: http://httpbin.org/post
-            - Local development: http://192.168.1.100:3000/webhook
+            - Local development: http://192.168.1.8/webhook/google
+
             
             Note: HTTPS URLs require proper SSL/TLS configuration.
 

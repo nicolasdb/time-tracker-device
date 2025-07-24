@@ -780,9 +780,10 @@ esp_err_t payload_tool_create_rfid_payload(payload_tool_handle_t handle,
                                           payload_rfid_event_type_t event_type,
                                           const char *tag_id,
                                           bool tag_present,
+                                          const char *session_id,
                                           payload_data_t *payload)
 {
-    if (!handle || !tag_id || !payload) {
+    if (!handle || !tag_id || !session_id || !payload) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -841,9 +842,9 @@ esp_err_t payload_tool_create_rfid_payload(payload_tool_handle_t handle,
     payload->rfid_poll_result.ntp_synced = ntp_synced;
     
     if (!handle->config.minimal_mode) {
-        // Generate session ID (simple approach using timestamp + tag)
+        // Use certified session ID from RFID tool
         snprintf(payload->rfid_poll_result.session_id, sizeof(payload->rfid_poll_result.session_id),
-                 "sess_%lu_%s", (unsigned long)current_time_sec, tag_id);
+                 "%s", session_id);
         
         payload->rfid_poll_result.sequence_number = (uint32_t)(current_time_sec & 0xFFFFFFFF);
         
@@ -870,9 +871,9 @@ esp_err_t payload_tool_create_rfid_payload(payload_tool_handle_t handle,
             payload->rfid_poll_result.event_confidence = (float)handle->config.event_confidence_threshold / 100.0f;
         }
     } else {
-        // Minimal mode: only set basic session info
+        // Minimal mode: use certified session ID from RFID tool
         snprintf(payload->rfid_poll_result.session_id, sizeof(payload->rfid_poll_result.session_id),
-                 "minimal_%lu", (unsigned long)current_time_sec);
+                 "%s", session_id);
         payload->rfid_poll_result.event_confidence = 1.0f;
     }
 

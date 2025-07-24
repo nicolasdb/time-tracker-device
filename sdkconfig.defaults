@@ -1,0 +1,57 @@
+# ESP-IDF Configuration Defaults for Time Tracker Device
+# Constitutional Memory Management - Stack Safety Configuration
+
+# ESP Event System Stack Size (Constitutional RAM Utilization)
+# Default: 2304 bytes (2.3KB) - Too small for payload processing
+# Constitutional: 16384 bytes (16KB) - Safe for JSON creation + HTTP POST
+# RAM Impact: +14KB (still only ~14% total RAM usage with 294KB free)
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=16384
+
+# Main Task Stack Size (ensure adequate for HOST orchestrator)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Constitutional Memory Safety - Stack Overflow Protection
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2
+CONFIG_ESP_SYSTEM_HW_STACK_GUARD=y
+
+# LittleFS Configuration for Constitutional FS Tool
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Constitutional Hardware Support
+CONFIG_SOC_RMT_SUPPORTED=y
+CONFIG_SOC_SPI_FLASH_SUPPORTED=y
+CONFIG_SOC_WIFI_SUPPORTED=y
+
+# WiFi Configuration
+CONFIG_ESP32C3_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP32C3_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+
+# HTTP Client Configuration
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# JSON Support
+CONFIG_CJSON_ENABLE_LOCALES=y
+
+# SSL/TLS Configuration (Constitutional Testing - Skip Certificate Verification)
+CONFIG_ESP_TLS_INSECURE=y
+CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y
+
+# Constitutional lwIP Network Stack Configuration (Critical for ESP32-C3)
+# These settings prevent socket exhaustion that causes HTTP failures
+# NOTE: CONFIG_LWIP_TCP_MSL and CONFIG_LWIP_MAX_SOCKETS are overridden by ESP-IDF 
+# component defaults and must be forced via compiler flags in platformio.ini
+CONFIG_LWIP_TCP_MSL=2000                    # TCP Maximum Segment Lifetime (2 seconds, not 60!)
+CONFIG_LWIP_TCP_FIN_WAIT_TIMEOUT=5000       # Faster socket cleanup (5 seconds)
+CONFIG_LWIP_MAX_SOCKETS=16                  # Sufficient socket pool for HTTP + health checks
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=8            # Increase from 6 for better throughput
+CONFIG_LWIP_TCP_ACCEPTMBOX_SIZE=8          # Increase from 6 for concurrent connections
+
+# HTTP Client Timeout Configuration
+CONFIG_HTTP_TOOL_TIMEOUT_MS=10000          # HTTP request timeout
+CONFIG_HTTP_TOOL_MAX_RETRIES=3             # Retry attempts
+CONFIG_HTTP_TOOL_RETRY_DELAY_MS=1000       # Delay between retries
+
+# Note: HTTP Tool configuration is handled in tools/http_tool/Kconfig
+# Users should run 'idf.py menuconfig' to change webhook URL and other HTTP settings

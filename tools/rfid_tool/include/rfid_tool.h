@@ -86,6 +86,7 @@ typedef struct {
     uint64_t timestamp_us;
     esp_err_t error_code;
     char error_message[64];
+    char session_id[37];                   ///< Session UUID for event pairing
 } rfid_tool_event_t;
 
 // =============================================================================

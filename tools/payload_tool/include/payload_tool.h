@@ -324,6 +324,7 @@ esp_err_t payload_tool_create_rfid_payload(payload_tool_handle_t handle,
                                           payload_rfid_event_type_t event_type,
                                           const char *tag_id,
                                           bool tag_present,
+                                          const char *session_id,
                                           payload_data_t *payload);
 
 /**

@@ -129,9 +129,10 @@ static esp_err_t constitutional_create_session_payload(http_tool_handle_t handle
                                                      const char* tag_uid,
                                                      const char* event_type,
                                                      uint64_t timestamp_us,
+                                                     const char* session_id,
                                                      char** json_payload)
 {
-    if (!handle || !tag_uid || !event_type || !json_payload) {
+    if (!handle || !tag_uid || !event_type || !session_id || !json_payload) {
         return ESP_ERR_INVALID_ARG;
     }
     
@@ -163,7 +164,8 @@ static esp_err_t constitutional_create_session_payload(http_tool_handle_t handle
     esp_err_t ret = payload_tool_create_rfid_payload(handle->payload_tool, 
                                                     rfid_event_type, 
                                                     tag_uid, 
-                                                    tag_present, 
+                                                    tag_present,
+                                                    session_id,
                                                     payload_data);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "  ❌ Failed to create RFID payload: %s", esp_err_to_name(ret));
@@ -533,9 +535,10 @@ esp_err_t http_tool_set_dependencies(http_tool_handle_t handle, void* network_to
 esp_err_t http_tool_process_deferred_payload(http_tool_handle_t handle,
                                            const char* tag_uid,
                                            const char* event_type,
-                                           uint64_t timestamp_us)
+                                           uint64_t timestamp_us,
+                                           const char* session_id)
 {
-    if (!handle || !tag_uid || !event_type) {
+    if (!handle || !tag_uid || !event_type || !session_id) {
         return ESP_ERR_INVALID_ARG;
     }
     
@@ -566,7 +569,7 @@ esp_err_t http_tool_process_deferred_payload(http_tool_handle_t handle,
     // Create JSON payload with stack safety
     char *json_payload = NULL;
     esp_err_t ret = constitutional_create_session_payload(handle, tag_uid, event_type, 
-                                                        timestamp_us, &json_payload);
+                                                        timestamp_us, session_id, &json_payload);
     if (ret != ESP_OK) {
         xSemaphoreGive(handle->http_mutex);  // Release mutex on payload creation failure
         return ret;

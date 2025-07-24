@@ -232,7 +232,8 @@ esp_err_t http_tool_set_dependencies(http_tool_handle_t handle, void* network_to
 esp_err_t http_tool_process_deferred_payload(http_tool_handle_t handle,
                                            const char* tag_uid,
                                            const char* event_type,
-                                           uint64_t timestamp_us);
+                                           uint64_t timestamp_us,
+                                           const char* session_id);
 
 /**
  * @brief Send formatted JSON payload to webhook server

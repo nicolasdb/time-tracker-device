@@ -10,9 +10,12 @@
 .vscode/settings.json
 
 # ESP-IDF Generated Files
-sdkconfig*
+sdkconfig.*
 build/
 dependencies.lock
+
+# Keep critical configuration in version control
+!sdkconfig.defaults    
 
 # Runtime Data
 terminal_logs.txt
